@@ -169,8 +169,8 @@
       "reload_referenzmarktpreise": {
         "name": "Reload reference market prices"
       },
-      "recompute_aktuelles_quartal": {
-        "name": "Recompute current quarter"
+      "recompute_letztes_publiziertes_quartal": {
+        "name": "Recompute most recent published quarter"
       },
       "recompute_historie": {
         "name": "Recompute full history"

@@ -153,8 +153,8 @@
       "reload_referenzmarktpreise": {
         "name": "Recharger les prix de référence"
       },
-      "recompute_aktuelles_quartal": {
-        "name": "Recalculer le trimestre actuel"
+      "recompute_letztes_publiziertes_quartal": {
+        "name": "Recalculer le dernier trimestre publié"
       },
       "recompute_historie": {
         "name": "Recalculer tout l'historique"

@@ -169,8 +169,8 @@
       "reload_referenzmarktpreise": {
         "name": "Referenz-Marktpreise jetzt laden"
       },
-      "recompute_aktuelles_quartal": {
-        "name": "Aktuelles Quartal neu berechnen"
+      "recompute_letztes_publiziertes_quartal": {
+        "name": "Letztes publiziertes Quartal neu berechnen"
       },
       "recompute_historie": {
         "name": "Gesamte Historie neu berechnen"

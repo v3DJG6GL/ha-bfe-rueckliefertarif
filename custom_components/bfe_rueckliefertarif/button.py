@@ -2,14 +2,15 @@
 
 Three one-shot actions exposed on the integration's device page:
 - Reload Referenz-Marktpreise (calls the ``refresh`` service).
-- Recompute current quarter's Rückliefervergütung.
+- Recompute the most recently *published* quarter (BFE publishes ~10 working
+  days after each quarter end, so the running quarter usually has no price
+  yet — picking the latest published quarter is what users actually want).
 - Recompute entire history.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity
@@ -17,7 +18,6 @@ from homeassistant.components.persistent_notification import async_create as not
 from homeassistant.const import EntityCategory
 
 from .const import CONF_NAMENSPRAEFIX, DOMAIN
-from .quarters import quarter_of
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -40,7 +40,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             ReloadReferenzmarktpreiseButton(entry, prefix),
-            RecomputeAktuellesQuartalButton(entry, prefix),
+            RecomputeLetztesPubliziertesQuartalButton(entry, prefix),
             RecomputeHistorieButton(entry, prefix),
         ]
     )
@@ -82,19 +82,37 @@ class ReloadReferenzmarktpreiseButton(_BaseButton):
         )
 
 
-class RecomputeAktuellesQuartalButton(_BaseButton):
+class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
+    """Recompute the most recently *published* quarter.
+
+    Uses ``max(coordinator.quarterly.keys())`` instead of ``quarter_of(now())``.
+    BFE publishes ~10 working days after each quarter end, so the running
+    quarter (what ``quarter_of(now())`` returns) almost never has a price
+    yet — picking the latest published quarter is what users want.
+    """
+
     def __init__(self, entry: "ConfigEntry", prefix: str) -> None:
         super().__init__(
             entry,
             prefix,
-            "recompute_aktuelles_quartal",
-            "recompute_aktuelles_quartal",
+            "recompute_letztes_publiziertes_quartal",
+            "recompute_letztes_publiziertes_quartal",
         )
 
     async def async_press(self) -> None:
         from .services import _reimport_quarter
 
-        q = quarter_of(datetime.now(UTC))
+        coordinator = self.hass.data[DOMAIN][self._entry.entry_id].get("coordinator")
+        if coordinator is None or not coordinator.quarterly:
+            notify(
+                self.hass,
+                "Keine Referenz-Marktpreise verfügbar — zuerst 'Referenz-Marktpreise jetzt laden' ausführen.",
+                title="BFE Rückliefertarif",
+                notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_quarter",
+            )
+            return
+
+        q = max(coordinator.quarterly.keys())
         try:
             await _reimport_quarter(self.hass, q)
             msg = f"Rückliefervergütung für {q} neu berechnet."

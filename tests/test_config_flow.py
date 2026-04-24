@@ -297,7 +297,7 @@ class TestStringsAndTranslations:
         "key",
         [
             "reload_referenzmarktpreise",
-            "recompute_aktuelles_quartal",
+            "recompute_letztes_publiziertes_quartal",
             "recompute_historie",
         ],
     )
