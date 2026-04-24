@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import DOMAIN
+from .const import _V1_TO_V2_KEY_MAP, _V1_TO_V2_VALUE_MAP, DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "button"]
 
 
 async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool:
@@ -24,7 +24,6 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool
     hass.data[DOMAIN][entry.entry_id] = {"config": dict(entry.data)}
     await async_register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
 
 
@@ -36,5 +35,15 @@ async def async_unload_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> boo
     return unload_ok
 
 
-async def _async_reload(hass: "HomeAssistant", entry: "ConfigEntry") -> None:
-    await hass.config_entries.async_reload(entry.entry_id)
+async def async_migrate_entry(
+    hass: "HomeAssistant", entry: "ConfigEntry"
+) -> bool:
+    """Migrate v1 entries (English keys + values) to v2 (German keys + values)."""
+    if entry.version == 1:
+        data = {_V1_TO_V2_KEY_MAP.get(k, k): v for k, v in entry.data.items()}
+        for field, mapping in _V1_TO_V2_VALUE_MAP.items():
+            if field in data and data[field] in mapping:
+                data[field] = mapping[data[field]]
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+        _LOGGER.info("Migrated %s entry %s from v1 to v2", DOMAIN, entry.entry_id)
+    return True

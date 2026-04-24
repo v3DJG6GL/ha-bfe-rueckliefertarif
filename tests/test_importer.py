@@ -13,10 +13,10 @@ import pytest
 
 from custom_components.bfe_rueckliefertarif.bfe import BfePrice
 from custom_components.bfe_rueckliefertarif.const import (
-    BASE_MODE_FIXED,
-    BASE_MODE_RMP,
-    BILLING_MODE_MONTHLY,
-    BILLING_MODE_QUARTERLY,
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    ABRECHNUNGS_RHYTHMUS_QUARTAL,
+    BASISVERGUETUNG_FIXPREIS,
+    BASISVERGUETUNG_REFERENZMARKTPREIS,
 )
 from custom_components.bfe_rueckliefertarif.importer import (
     TariffConfig,
@@ -64,10 +64,10 @@ def realistic_hourly(q: Quarter, monthly_totals_kwh: dict[Month, float]) -> dict
 
 
 EKZ_CFG = TariffConfig(
-    segment=Segment.SMALL_MIT_EV,
-    kw=10.0,
-    base_mode=BASE_MODE_RMP,
-    hkn_bonus_rp_kwh=0.0,
+    anlagenkategorie=Segment.SMALL_MIT_EV,
+    installierte_leistung_kw=10.0,
+    basisverguetung=BASISVERGUETUNG_REFERENZMARKTPREIS,
+    hkn_verguetung_rp_kwh=0.0,
 )
 
 EKZ_Q1_2026_PRICE = BfePrice(chf_per_mwh=102.66, days=90, volume_mwh=683957.0)
@@ -83,7 +83,7 @@ class TestQuarterlyMode:
     def test_uniform_kwh_produces_flat_compensation(self):
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
         # Every hour's rate should be the same flat quarterly effective rate
@@ -98,7 +98,7 @@ class TestQuarterlyMode:
         kwh_per_hour = 1.0
         kwh = uniform_hourly(Q, kwh_per_hour=kwh_per_hour)
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
         q_rate_rp = effective_rp_kwh_rmp(
@@ -111,7 +111,7 @@ class TestQuarterlyMode:
     def test_anchor_is_applied(self):
         kwh = uniform_hourly(Q, kwh_per_hour=0.5)
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=42.0, old_post_quarter_first_sum_chf=None,
         )
         assert plan.anchor_sum_chf == 42.0
@@ -131,11 +131,11 @@ class TestMonthlyMode:
         kwh = realistic_hourly(Q, monthly_totals)
         plan_m = compute_quarter_plan(
             Q, kwh, EKZ_Q1_2026_PRICE, EKZ_MONTHLY_Q1_2026, EKZ_CFG,
-            BILLING_MODE_MONTHLY, 0.0, None,
+            ABRECHNUNGS_RHYTHMUS_MONAT, 0.0, None,
         )
         plan_q = compute_quarter_plan(
             Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG,
-            BILLING_MODE_QUARTERLY, 0.0, None,
+            ABRECHNUNGS_RHYTHMUS_QUARTAL, 0.0, None,
         )
         assert plan_m.final_sum_chf == pytest.approx(plan_q.final_sum_chf, rel=1e-9)
 
@@ -149,7 +149,7 @@ class TestMonthlyMode:
         kwh = realistic_hourly(Q, monthly_totals)
         plan = compute_quarter_plan(
             Q, kwh, EKZ_Q1_2026_PRICE, EKZ_MONTHLY_Q1_2026, EKZ_CFG,
-            BILLING_MODE_MONTHLY, 0.0, None,
+            ABRECHNUNGS_RHYTHMUS_MONAT, 0.0, None,
         )
         # Separate hours by month
         m1_s, m1_e = month_bounds_utc(Month(2026, 1))
@@ -174,7 +174,7 @@ class TestMonthlyMode:
         kwh = realistic_hourly(Q, monthly_totals)
         plan = compute_quarter_plan(
             Q, kwh, EKZ_Q1_2026_PRICE, EKZ_MONTHLY_Q1_2026, EKZ_CFG,
-            BILLING_MODE_MONTHLY, 0.0, None,
+            ABRECHNUNGS_RHYTHMUS_MONAT, 0.0, None,
         )
         # Verify sum = Q_kWh × Q_rate exactly
         q_rate_rp = effective_rp_kwh_rmp(
@@ -189,7 +189,7 @@ class TestTransitionSpike:
     def test_no_post_quarter_data_delta_zero(self):
         kwh = uniform_hourly(Q, kwh_per_hour=0.1)
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
         assert plan.post_quarter_delta_chf == 0.0
@@ -198,7 +198,7 @@ class TestTransitionSpike:
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         # Imagine old compensation LTS had sum=50 at q_end
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=50.0,
         )
         # new final sum = 2159 hours × 1 kWh × 0.10266 CHF/kWh ≈ 221.64
@@ -209,32 +209,32 @@ class TestTransitionSpike:
 class TestFixedMode:
     def test_fixed_mode_rate_constant_across_hours(self):
         cfg = TariffConfig(
-            segment=Segment.SMALL_MIT_EV,
-            kw=10.0,
-            base_mode=BASE_MODE_FIXED,
-            hkn_bonus_rp_kwh=0.0,
-            fixed_rate_rp_kwh=10.96,  # SIG
+            anlagenkategorie=Segment.SMALL_MIT_EV,
+            installierte_leistung_kw=10.0,
+            basisverguetung=BASISVERGUETUNG_FIXPREIS,
+            hkn_verguetung_rp_kwh=0.0,
+            fixpreis_rp_kwh=10.96,  # SIG
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         plan = compute_quarter_plan(
             Q, kwh, EKZ_Q1_2026_PRICE, EKZ_MONTHLY_Q1_2026, cfg,
-            BILLING_MODE_QUARTERLY, 0.0, None,
+            ABRECHNUNGS_RHYTHMUS_QUARTAL, 0.0, None,
         )
         rates = {r.rate_rp_kwh for r in plan.records}
         assert rates == {10.96}
 
     def test_iwb_fixed_capped_at_cap(self):
         cfg = TariffConfig(
-            segment=Segment.SMALL_MIT_EV,
-            kw=10.0,
-            base_mode=BASE_MODE_FIXED,
-            hkn_bonus_rp_kwh=0.0,
-            fixed_rate_rp_kwh=14.0,  # IWB
+            anlagenkategorie=Segment.SMALL_MIT_EV,
+            installierte_leistung_kw=10.0,
+            basisverguetung=BASISVERGUETUNG_FIXPREIS,
+            hkn_verguetung_rp_kwh=0.0,
+            fixpreis_rp_kwh=14.0,  # IWB
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         plan = compute_quarter_plan(
             Q, kwh, EKZ_Q1_2026_PRICE, None, cfg,
-            BILLING_MODE_QUARTERLY, 0.0, None,
+            ABRECHNUNGS_RHYTHMUS_QUARTAL, 0.0, None,
         )
         rates = {r.rate_rp_kwh for r in plan.records}
         assert rates == {10.96}  # capped
@@ -244,7 +244,7 @@ class TestHourCoverage:
     def test_all_hours_covered(self):
         kwh = uniform_hourly(Q, kwh_per_hour=0.0)
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             0.0, None,
         )
         # Q1 2026 with DST spring-forward = 2159 hours
@@ -253,7 +253,7 @@ class TestHourCoverage:
     def test_records_are_hour_aligned_and_ordered(self):
         kwh = uniform_hourly(Q, kwh_per_hour=0.0)
         plan = compute_quarter_plan(
-            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, BILLING_MODE_QUARTERLY,
+            Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             0.0, None,
         )
         for i, r in enumerate(plan.records):

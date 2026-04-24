@@ -2,37 +2,137 @@
   "config": {
     "step": {
       "user": {
-        "title": "Rétribution de l'injection BFE — Choisir le fournisseur",
-        "description": "Sélectionnez votre fournisseur suisse. Le preset préremplit le mode de base et la prime GO ; vous pouvez les ajuster à l'étape suivante.",
-        "data": {
-          "preset": "Fournisseur"
+        "title": "BFE Rückliefertarif — Choisir le fournisseur",
+        "description": "## Aperçu des tarifs de reprise 2026\n\n| Fournisseur | Rétribution de base | Rétribution GO (opt-in) | Facturation |\n|---|---|---|---|\n| EKZ | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| BKW | Prix de référence du marché | jusqu'à 2.00 ct/kWh (naturemade star) | Trimestrielle |\n| CKW | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| Groupe E | Prix de référence du marché | jusqu'à 4.00 ct/kWh | Trimestrielle |\n| Romande Energie | Prix de référence du marché | 0.00 (1.50 uniquement T1 2026) | Trimestrielle |\n| SAK | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| SGSW | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| ewz | Tarif fixe 12.91 ct/kWh | inclus dans la rétribution de base | Trimestrielle |\n| IWB | Tarif fixe 14.00 ct/kWh | inclus dans la rétribution de base | Trimestrielle |\n| SIG | Tarif fixe 10.96 ct/kWh (au plafond) | 0.00 | Trimestrielle |\n| AEW | Tarif fixe 8.20 ct/kWh (GO inclus) | 0.00 | Trimestrielle |\n| Autre / Custom | — | — | — |\n\nVotre choix prérempli les valeurs à l'étape suivante — toutes les valeurs restent modifiables.",
+        "menu_options": {
+          "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
+          "preset_bkw": "BKW — Berner Kraftwerke",
+          "preset_ckw": "CKW — Centralschweizerische Kraftwerke",
+          "preset_groupe_e": "Groupe E",
+          "preset_romande_energie": "Romande Energie",
+          "preset_sak": "SAK — St. Galler Stadtwerke",
+          "preset_sgsw": "SGSW — Sankt Gallen Stadt",
+          "preset_ewz": "ewz — Elektrizitätswerk der Stadt Zürich",
+          "preset_iwb": "IWB — Industrielle Werke Basel",
+          "preset_sig": "SIG — Services Industriels Genève",
+          "preset_aew": "AEW Energie (Aargau)",
+          "preset_custom": "Autre / Custom"
         }
       },
-      "system": {
-        "title": "Détails de l'installation ({preset})",
-        "description": "Le segment détermine automatiquement la rémunération minimale (OEne art. 12) et le plafond (OApEl art. 4a). Pour 30–<150 kW avec autoconsommation, la puissance est requise (formule dégressive 180 ÷ kW).",
+      "tariff": {
+        "title": "Configuration du tarif ({utility_name})",
+        "description": "Configurez la manière dont votre fournisseur calcule la rétribution. Les valeurs sont préremplies depuis le fournisseur choisi — vous pouvez les ajuster.",
         "data": {
-          "segment": "Segment PV",
-          "kw": "Puissance installée (kWc)",
-          "base_mode": "Mode de base",
-          "hkn_bonus_rp_kwh": "Prime GO (ct/kWh)",
-          "fixed_rate_rp_kwh": "Tarif fixe (ct/kWh)",
-          "billing_mode": "Fréquence de facturation"
+          "anlagenkategorie": "Catégorie d'installation",
+          "installierte_leistung_kw": "Puissance installée (kW)",
+          "basisverguetung": "Rétribution de base",
+          "hkn_verguetung_rp_kwh": "Rétribution GO (ct/kWh)",
+          "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
+          "abrechnungs_rhythmus": "Fréquence de facturation"
+        },
+        "data_description": {
+          "anlagenkategorie": "Définit automatiquement la rémunération minimale (OEne art. 12) et le plafond de rétribution (OApEl art. 4).",
+          "installierte_leistung_kw": "Requis uniquement pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule 180 ÷ kW.",
+          "basisverguetung": "Prix de référence du marché : la plupart des fournisseurs. Tarif fixe : ewz, IWB, SIG, AEW.",
+          "hkn_verguetung_rp_kwh": "Rétribution pour les garanties d'origine (GO / HKN). Opt-in chez la plupart des fournisseurs — laissez 0.0 si vous ne vendez pas vos GO. Plafonné automatiquement si base + GO dépasse le plafond.",
+          "fixpreis_rp_kwh": "Uniquement avec rétribution de base 'Tarif fixe'. Le tarif forfaitaire en ct/kWh.",
+          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. La plupart des fournisseurs facturent par trimestre."
         }
       },
       "entities": {
         "title": "Entités Home Assistant",
-        "description": "Choisissez l'entité d'injection au réseau (compteur kWh) et l'entité de compensation créée automatiquement par Energy Dashboard (CHF).",
+        "description": "Reliez le compteur kWh d'injection au réseau et le capteur CHF auto-créé par Energy Dashboard.",
         "data": {
-          "export_entity": "Injection au réseau (kWh)",
-          "compensation_entity": "Entité de compensation (CHF)",
-          "entity_prefix": "Préfixe d'entité"
+          "stromnetzeinspeisung_kwh": "Injection au réseau (kWh)",
+          "rueckliefervergutung_chf": "Rétribution de l'injection (CHF)",
+          "namenspraefix": "Préfixe de nom"
+        },
+        "data_description": {
+          "stromnetzeinspeisung_kwh": "Le compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
+          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard quand 'Retour au réseau avec prix' est configuré (généralement `sensor.<injection>_compensation`).",
+          "namenspraefix": "Préfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
         }
       }
     },
     "error": {
-      "kw_required_for_degressive": "kW requis pour 30–<150 kW avec autoconsommation (formule dégressive 180/kW).",
-      "fixed_rate_required": "Le tarif fixe doit être > 0 en mode tarif fixe."
+      "kw_required_for_degressive": "Puissance installée requise pour 30–<150 kW avec autoconsommation (formule 180 ÷ kW).",
+      "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ajuster les paramètres tarifaires",
+        "description": "Modifier la configuration tarifaire. Le câblage des entités reste inchangé.",
+        "data": {
+          "anlagenkategorie": "Catégorie d'installation",
+          "installierte_leistung_kw": "Puissance installée (kW)",
+          "basisverguetung": "Rétribution de base",
+          "hkn_verguetung_rp_kwh": "Rétribution GO (ct/kWh)",
+          "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
+          "abrechnungs_rhythmus": "Fréquence de facturation"
+        }
+      }
+    },
+    "error": {
+      "kw_required_for_degressive": "Puissance installée requise pour 30–<150 kW avec autoconsommation.",
+      "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'."
+    }
+  },
+  "selector": {
+    "anlagenkategorie": {
+      "options": {
+        "small_mit_ev": "≤30 kW avec autoconsommation",
+        "small_ohne_ev": "≤30 kW sans autoconsommation (injection totale)",
+        "mid_mit_ev": "30–<100 kW avec autoconsommation",
+        "mid_ohne_ev": "30–<100 kW sans autoconsommation",
+        "large_mit_ev": "100–<150 kW avec autoconsommation",
+        "large_ohne_ev": "100–<150 kW sans autoconsommation",
+        "xl_mit_ev": "≥150 kW avec autoconsommation",
+        "xl_ohne_ev": "≥150 kW sans autoconsommation"
+      }
+    },
+    "basisverguetung": {
+      "options": {
+        "referenz_marktpreis": "Prix de référence du marché (BFE, trimestriel)",
+        "fixpreis": "Tarif fixe (défini par le fournisseur)"
+      }
+    },
+    "abrechnungs_rhythmus": {
+      "options": {
+        "quartal": "Trimestrielle",
+        "monat": "Mensuelle"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "basisverguetung": {
+        "name": "Rétribution de base"
+      },
+      "hkn_verguetung": {
+        "name": "Rétribution GO (configurée)"
+      },
+      "naechste_referenzmarktpreis_publikation": {
+        "name": "Prochaine publication du prix de référence"
+      },
+      "referenzmarktpreis_q": {
+        "name": "Prix de référence du marché (trimestre actuel)"
+      },
+      "referenzmarktpreis_m": {
+        "name": "Prix de référence du marché (mois actuel)"
+      }
+    },
+    "button": {
+      "reload_referenzmarktpreise": {
+        "name": "Recharger les prix de référence"
+      },
+      "recompute_aktuelles_quartal": {
+        "name": "Recalculer le trimestre actuel"
+      },
+      "recompute_historie": {
+        "name": "Recalculer tout l'historique"
+      }
     }
   }
 }

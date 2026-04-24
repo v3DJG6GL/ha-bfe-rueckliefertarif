@@ -14,10 +14,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    BILLING_MODE_MONTHLY,
-    CONF_BILLING_MODE,
-    CONF_ENTITY_PREFIX,
-    CONF_HKN_BONUS,
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    CONF_ABRECHNUNGS_RHYTHMUS,
+    CONF_HKN_VERGUETUNG_RP_KWH,
+    CONF_NAMENSPRAEFIX,
     DOMAIN,
 )
 from .coordinator import BfeCoordinator
@@ -37,10 +37,8 @@ async def async_setup_entry(
     async_add_entities: "AddEntitiesCallback",
 ) -> None:
     """Register diagnostic sensors for this config entry."""
-    from datetime import datetime, timezone
-
     cfg = hass.data[DOMAIN][entry.entry_id]["config"]
-    prefix = cfg.get(CONF_ENTITY_PREFIX, "bfe_rueckliefertarif")
+    prefix = cfg.get(CONF_NAMENSPRAEFIX, "bfe_rueckliefertarif")
 
     coordinator = BfeCoordinator(hass, entry)
     await coordinator.async_load_state()
@@ -48,31 +46,34 @@ async def async_setup_entry(
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
     sensors: list[SensorEntity] = [
-        BasisTarifSensor(coordinator, entry, prefix),
-        HknBonusSensor(entry, prefix, cfg.get(CONF_HKN_BONUS, 0.0)),
-        NextPublicationSensor(coordinator, entry, prefix),
-        ReferenzQSensor(coordinator, entry, prefix),
+        BasisVerguetungSensor(coordinator, entry, prefix),
+        HknVerguetungSensor(entry, prefix, cfg.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0)),
+        NaechsteReferenzmarktpreisPublikationSensor(coordinator, entry, prefix),
+        ReferenzmarktpreisQSensor(coordinator, entry, prefix),
     ]
-    if cfg.get(CONF_BILLING_MODE) == BILLING_MODE_MONTHLY:
-        sensors.append(ReferenzMSensor(coordinator, entry, prefix))
+    if cfg.get(CONF_ABRECHNUNGS_RHYTHMUS) == ABRECHNUNGS_RHYTHMUS_MONAT:
+        sensors.append(ReferenzmarktpreisMSensor(coordinator, entry, prefix))
 
     async_add_entities(sensors)
-
-    # Current time (local var) silences unused-import on release builds
-    _ = datetime.now(timezone.utc)
 
 
 class _BaseSensor(SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, entry: "ConfigEntry", prefix: str, suffix: str, name: str) -> None:
+    def __init__(
+        self,
+        entry: "ConfigEntry",
+        prefix: str,
+        suffix: str,
+        translation_key: str,
+    ) -> None:
         self._attr_unique_id = f"{entry.entry_id}_{suffix}"
         self.entity_id = f"sensor.{prefix}_{suffix}"
-        self._attr_name = name
+        self._attr_translation_key = translation_key
 
 
-class BasisTarifSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
-    """Current effective tariff in Rp/kWh (LTS-enabled for graphing)."""
+class BasisVerguetungSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
+    """Current effective Basisvergütung in Rp/kWh (LTS-enabled for graphing)."""
 
     _attr_native_unit_of_measurement = "Rp/kWh"
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -82,7 +83,7 @@ class BasisTarifSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
-        _BaseSensor.__init__(self, entry, prefix, "basis", "Effektiver Rückliefertarif")
+        _BaseSensor.__init__(self, entry, prefix, "basisverguetung", "basisverguetung")
 
     @property
     def native_value(self) -> float | None:
@@ -91,19 +92,21 @@ class BasisTarifSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         return self.coordinator.data.get("current_tariff_rp_kwh")
 
 
-class HknBonusSensor(_BaseSensor):
-    """Configured HKN bonus — diagnostic so user can spot staleness."""
+class HknVerguetungSensor(_BaseSensor):
+    """Configured HKN-Vergütung — diagnostic so user can spot staleness."""
 
     _attr_native_unit_of_measurement = "Rp/kWh"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, entry: "ConfigEntry", prefix: str, value: float) -> None:
-        super().__init__(entry, prefix, "hkn_bonus", "HKN-Vergütung (konfiguriert)")
+        super().__init__(entry, prefix, "hkn_verguetung", "hkn_verguetung")
         self._attr_native_value = value
 
 
-class NextPublicationSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
-    """Estimated datetime of next BFE publication."""
+class NaechsteReferenzmarktpreisPublikationSensor(
+    CoordinatorEntity[BfeCoordinator], _BaseSensor
+):
+    """Estimated datetime of next BFE Referenz-Marktpreis publication."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -112,7 +115,11 @@ class NextPublicationSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
         _BaseSensor.__init__(
-            self, entry, prefix, "next_publication", "Nächste BFE-Publikation"
+            self,
+            entry,
+            prefix,
+            "naechste_referenzmarktpreis_publikation",
+            "naechste_referenzmarktpreis_publikation",
         )
 
     @property
@@ -122,8 +129,8 @@ class NextPublicationSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         return self.coordinator.data.get("next_publication")
 
 
-class ReferenzQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
-    """Current quarterly BFE reference market price, CHF/MWh."""
+class ReferenzmarktpreisQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
+    """Current quarterly BFE Referenz-Marktpreis, CHF/MWh."""
 
     _attr_native_unit_of_measurement = "CHF/MWh"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -137,7 +144,7 @@ class ReferenzQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
             entry,
             prefix,
             "referenzmarktpreis_q",
-            "Referenz-Marktpreis aktuelles Quartal",
+            "referenzmarktpreis_q",
         )
 
     @property
@@ -150,8 +157,8 @@ class ReferenzQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         return price.chf_per_mwh if price else None
 
 
-class ReferenzMSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
-    """Current monthly BFE reference market price, CHF/MWh (monthly billing only)."""
+class ReferenzmarktpreisMSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
+    """Current monthly BFE Referenz-Marktpreis, CHF/MWh (monatlicher Rhythmus only)."""
 
     _attr_native_unit_of_measurement = "CHF/MWh"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -165,7 +172,7 @@ class ReferenzMSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
             entry,
             prefix,
             "referenzmarktpreis_m",
-            "Referenz-Marktpreis aktueller Monat",
+            "referenzmarktpreis_m",
         )
 
     @property

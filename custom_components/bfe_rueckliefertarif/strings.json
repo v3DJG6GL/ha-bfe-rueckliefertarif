@@ -2,37 +2,145 @@
   "config": {
     "step": {
       "user": {
-        "title": "BFE Rückliefertarif — Energieversorger wählen",
-        "description": "Wähle dein Schweizer EVU. Die Preset füllt Basismodus und HKN-Vergütung vor; du kannst sie im nächsten Schritt anpassen.",
-        "data": {
-          "preset": "Energieversorger"
+        "title": "BFE Rückliefertarif — choose utility",
+        "description": "## 2026 Swiss feed-in tariffs overview\n\n| Utility | Base price | HKN payment (opt-in) | Billing |\n|---|---|---|---|\n| EKZ | Reference market price | up to 3.00 Rp/kWh | Quarterly |\n| BKW | Reference market price | up to 2.00 Rp/kWh (naturemade star) | Quarterly |\n| CKW | Reference market price | up to 3.00 Rp/kWh | Quarterly |\n| Groupe E | Reference market price | up to 4.00 Rp/kWh | Quarterly |\n| Romande Energie | Reference market price | 0.00 (1.50 only Q1 2026) | Quarterly |\n| SAK | Reference market price | up to 3.00 Rp/kWh | Quarterly |\n| SGSW | Reference market price | up to 3.00 Rp/kWh | Quarterly |\n| ewz | Fixed price 12.91 Rp/kWh | included in base price | Quarterly |\n| IWB | Fixed price 14.00 Rp/kWh | included in base price | Quarterly |\n| SIG | Fixed price 10.96 Rp/kWh (at cap) | 0.00 | Quarterly |\n| AEW | Fixed price 8.20 Rp/kWh (HKN included) | 0.00 | Quarterly |\n| Other / Custom | — | — | — |\n\nYour selection pre-fills the next step — every value remains editable.",
+        "menu_options": {
+          "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
+          "preset_bkw": "BKW — Berner Kraftwerke",
+          "preset_ckw": "CKW — Centralschweizerische Kraftwerke",
+          "preset_groupe_e": "Groupe E",
+          "preset_romande_energie": "Romande Energie",
+          "preset_sak": "SAK — St. Galler Stadtwerke",
+          "preset_sgsw": "SGSW — Sankt Gallen Stadt",
+          "preset_ewz": "ewz — Elektrizitätswerk der Stadt Zürich",
+          "preset_iwb": "IWB — Industrielle Werke Basel",
+          "preset_sig": "SIG — Services Industriels Genève",
+          "preset_aew": "AEW Energie (Aargau)",
+          "preset_custom": "Other / custom utility"
         }
       },
-      "system": {
-        "title": "Anlagedetails ({preset})",
-        "description": "Segment bestimmt Mindestvergütung (EnV Art. 12) und Anrechenbarkeitsgrenze (StromVV Art. 4a) automatisch. Bei Anlagen 30–<150 kW mit Eigenverbrauch ist die Leistung für die degressive Formel (180 ÷ kW) nötig.",
+      "tariff": {
+        "title": "Tariff configuration ({utility_name})",
+        "description": "Configure how your utility calculates feed-in compensation. Every value comes pre-filled from the utility you picked — adjust as needed.",
         "data": {
-          "segment": "Anlagen-Segment",
-          "kw": "Installierte Leistung (kWp)",
-          "base_mode": "Basismodus",
-          "hkn_bonus_rp_kwh": "HKN-Vergütung (Rp/kWh)",
-          "fixed_rate_rp_kwh": "Fixpreis (Rp/kWh; nur bei Fixpreis-Modus)",
-          "billing_mode": "Abrechnungs-Rhythmus"
+          "anlagenkategorie": "Plant category",
+          "installierte_leistung_kw": "Installed power (kW)",
+          "basisverguetung": "Base price",
+          "hkn_verguetung_rp_kwh": "HKN payment (Rp/kWh)",
+          "fixpreis_rp_kwh": "Fixed price (Rp/kWh)",
+          "abrechnungs_rhythmus": "Billing period"
+        },
+        "data_description": {
+          "anlagenkategorie": "Sets the legal minimum compensation (EnV Art. 12) and compensation cap (StromVV Art. 4) automatically. Overview:\n• ≤30 kW with self-consumption: min 6.00 / max 10.96 Rp/kWh\n• ≤30 kW feed-in only: min 6.00 / max 8.20\n• 30–<100 kW with self-consumption: min 1.20–6.00 (180÷kW) / max 10.96\n• 30–<100 kW feed-in only: min 6.20 / max 8.20\n• 100–<150 kW with self-consumption: min 1.20–6.00 (180÷kW) / max 7.20\n• 100–<150 kW feed-in only: min 6.20 / max 5.40\n• ≥150 kW with self-consumption: no min. / max 7.20\n• ≥150 kW feed-in only: no min. / max 5.40",
+          "installierte_leistung_kw": "Only required for 30–<150 kW plants with self-consumption — the minimum compensation follows the formula 180 ÷ kW. Leave at 0 for other plant categories.",
+          "basisverguetung": "Reference market price: most utilities (EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie). Fixed price: ewz, IWB, SIG, AEW.",
+          "hkn_verguetung_rp_kwh": "Payment for HKN (Herkunftsnachweise — Swiss guarantees of origin). Opt-in at most utilities — set to 0.0 if you don't sell your HKN to your utility. Example EKZ: up to 3.00 Rp/kWh after enrolling on myEKZ. If the base price + HKN payment exceeds the compensation cap, the utility reduces the HKN payment automatically to the cap.",
+          "fixpreis_rp_kwh": "Only used when the base price is set to 'Fixed price'. The flat per-kWh rate your utility pays. 2026 examples: ewz 12.91, IWB 14.00, SIG 10.96, AEW 8.20.",
+          "abrechnungs_rhythmus": "Match your utility's invoice cycle. Most Swiss utilities settle quarterly."
         }
       },
       "entities": {
-        "title": "Home-Assistant-Entitäten",
-        "description": "Wähle die Netzrückspeisungs-Entität (kWh-Zähler) und die im Energy-Dashboard automatisch erzeugte Kompensations-Entität (CHF).",
+        "title": "Home Assistant entity wiring",
+        "description": "Link the kWh counter for your grid export and the CHF sensor that the Energy Dashboard auto-creates.",
         "data": {
-          "export_entity": "Netzrückspeisung (kWh)",
-          "compensation_entity": "Kompensations-Entität (CHF)",
-          "entity_prefix": "Entity-Präfix für Sensoren dieser Integration"
+          "stromnetzeinspeisung_kwh": "Grid export (kWh)",
+          "rueckliefervergutung_chf": "Feed-in earnings (CHF)",
+          "namenspraefix": "Name prefix"
+        },
+        "data_description": {
+          "stromnetzeinspeisung_kwh": "The kWh counter that tracks energy fed into the grid. Must already be wired into the Energy Dashboard under 'Return to grid'.",
+          "rueckliefervergutung_chf": "The CHF sensor that the Energy Dashboard auto-creates when you configure 'Return to grid with a price' (usually `sensor.<grid_export>_compensation`). This integration writes into its Long-Term Statistics.",
+          "namenspraefix": "Prefix for this integration's diagnostic sensors and action buttons (e.g. `sensor.<prefix>_basisverguetung`, `button.<prefix>_recompute_aktuelles_quartal`). Only change if the default collides."
         }
       }
     },
     "error": {
-      "kw_required_for_degressive": "Leistung in kW ist für 30–<150 kW mit Eigenverbrauch Pflicht (degressive Formel 180/kW).",
-      "fixed_rate_required": "Fixpreis muss > 0 sein bei Fixpreis-Modus."
+      "kw_required_for_degressive": "Installed power (kW) is required for 30–<150 kW plants with self-consumption — federal law uses the formula 180 ÷ kW to set the minimum compensation.",
+      "fixpreis_required": "Fixed price must be greater than 0 when the base price is set to 'Fixed price'."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Adjust tariff settings",
+        "description": "Edit your tariff configuration. Entity wiring is unchanged — to rewire entities, remove and re-add the integration.",
+        "data": {
+          "anlagenkategorie": "Plant category",
+          "installierte_leistung_kw": "Installed power (kW)",
+          "basisverguetung": "Base price",
+          "hkn_verguetung_rp_kwh": "HKN payment (Rp/kWh)",
+          "fixpreis_rp_kwh": "Fixed price (Rp/kWh)",
+          "abrechnungs_rhythmus": "Billing period"
+        },
+        "data_description": {
+          "anlagenkategorie": "Sets the legal minimum compensation (EnV Art. 12) and compensation cap (StromVV Art. 4) automatically.",
+          "installierte_leistung_kw": "Only required for 30–<150 kW plants with self-consumption (formula 180 ÷ kW).",
+          "basisverguetung": "Reference market price for most utilities; fixed price for ewz/IWB/SIG/AEW.",
+          "hkn_verguetung_rp_kwh": "Payment for HKN (Herkunftsnachweise). Set to 0.0 if you don't sell HKN to your utility. Cap binds automatically when base + HKN exceeds the compensation cap.",
+          "fixpreis_rp_kwh": "Only used with 'Fixed price' base.",
+          "abrechnungs_rhythmus": "Match your utility's invoice cycle."
+        }
+      }
+    },
+    "error": {
+      "kw_required_for_degressive": "Installed power (kW) is required for 30–<150 kW plants with self-consumption.",
+      "fixpreis_required": "Fixed price must be greater than 0 when the base price is set to 'Fixed price'."
+    }
+  },
+  "selector": {
+    "anlagenkategorie": {
+      "options": {
+        "small_mit_ev": "≤30 kW with self-consumption",
+        "small_ohne_ev": "≤30 kW feed-in only",
+        "mid_mit_ev": "30–<100 kW with self-consumption",
+        "mid_ohne_ev": "30–<100 kW feed-in only",
+        "large_mit_ev": "100–<150 kW with self-consumption",
+        "large_ohne_ev": "100–<150 kW feed-in only",
+        "xl_mit_ev": "≥150 kW with self-consumption",
+        "xl_ohne_ev": "≥150 kW feed-in only"
+      }
+    },
+    "basisverguetung": {
+      "options": {
+        "referenz_marktpreis": "Reference market price (BFE, quarterly)",
+        "fixpreis": "Fixed price (set by utility)"
+      }
+    },
+    "abrechnungs_rhythmus": {
+      "options": {
+        "quartal": "Quarterly",
+        "monat": "Monthly"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "basisverguetung": {
+        "name": "Base price"
+      },
+      "hkn_verguetung": {
+        "name": "HKN payment (configured)"
+      },
+      "naechste_referenzmarktpreis_publikation": {
+        "name": "Next reference market price publication"
+      },
+      "referenzmarktpreis_q": {
+        "name": "Reference market price (current quarter)"
+      },
+      "referenzmarktpreis_m": {
+        "name": "Reference market price (current month)"
+      }
+    },
+    "button": {
+      "reload_referenzmarktpreise": {
+        "name": "Reload reference market prices"
+      },
+      "recompute_aktuelles_quartal": {
+        "name": "Recompute current quarter"
+      },
+      "recompute_historie": {
+        "name": "Recompute full history"
+      }
     }
   }
 }

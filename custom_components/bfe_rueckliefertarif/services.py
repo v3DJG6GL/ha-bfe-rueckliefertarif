@@ -9,15 +9,15 @@ import voluptuous as vol
 
 from .bfe import PriceNotYetPublished, fetch_monthly, fetch_quarterly
 from .const import (
-    BILLING_MODE_MONTHLY,
-    CONF_BASE_MODE,
-    CONF_BILLING_MODE,
-    CONF_COMPENSATION_ENTITY,
-    CONF_EXPORT_ENTITY,
-    CONF_FIXED_RATE,
-    CONF_HKN_BONUS,
-    CONF_KW,
-    CONF_SEGMENT,
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    CONF_ABRECHNUNGS_RHYTHMUS,
+    CONF_ANLAGENKATEGORIE,
+    CONF_BASISVERGUETUNG,
+    CONF_FIXPREIS_RP_KWH,
+    CONF_HKN_VERGUETUNG_RP_KWH,
+    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_RUECKLIEFERVERGUETUNG_CHF,
+    CONF_STROMNETZEINSPEISUNG_KWH,
     DOMAIN,
 )
 from .ha_recorder import (
@@ -77,12 +77,12 @@ def _cfg_for_entry(hass: "HomeAssistant") -> tuple[dict, TariffConfig]:
     entry_data = next(iter(entries.values()))
     cfg = entry_data["config"]
     tariff_cfg = TariffConfig(
-        segment=Segment(cfg[CONF_SEGMENT]),
-        kw=float(cfg.get(CONF_KW, 0.0) or 0.0),
-        base_mode=cfg[CONF_BASE_MODE],
-        hkn_bonus_rp_kwh=float(cfg.get(CONF_HKN_BONUS, 0.0)),
-        fixed_rate_rp_kwh=(
-            float(cfg[CONF_FIXED_RATE]) if cfg.get(CONF_FIXED_RATE) else None
+        anlagenkategorie=Segment(cfg[CONF_ANLAGENKATEGORIE]),
+        installierte_leistung_kw=float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
+        basisverguetung=cfg[CONF_BASISVERGUETUNG],
+        hkn_verguetung_rp_kwh=float(cfg.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0)),
+        fixpreis_rp_kwh=(
+            float(cfg[CONF_FIXPREIS_RP_KWH]) if cfg.get(CONF_FIXPREIS_RP_KWH) else None
         ),
     )
     return cfg, tariff_cfg
@@ -93,16 +93,18 @@ async def _reimport_quarter(hass: "HomeAssistant", q: Quarter) -> None:
     import aiohttp
 
     cfg, tariff_cfg = _cfg_for_entry(hass)
-    export_id = cfg[CONF_EXPORT_ENTITY]
-    comp_id = cfg[CONF_COMPENSATION_ENTITY]
-    billing_mode = cfg[CONF_BILLING_MODE]
+    export_id = cfg[CONF_STROMNETZEINSPEISUNG_KWH]
+    comp_id = cfg[CONF_RUECKLIEFERVERGUETUNG_CHF]
+    abrechnungs_rhythmus = cfg[CONF_ABRECHNUNGS_RHYTHMUS]
 
     q_start, q_end = quarter_bounds_utc(q)
 
     async with aiohttp.ClientSession() as session:
         quarterly = await fetch_quarterly(session)
         monthly = (
-            await fetch_monthly(session) if billing_mode == BILLING_MODE_MONTHLY else None
+            await fetch_monthly(session)
+            if abrechnungs_rhythmus == ABRECHNUNGS_RHYTHMUS_MONAT
+            else None
         )
 
     if q not in quarterly:
@@ -124,7 +126,7 @@ async def _reimport_quarter(hass: "HomeAssistant", q: Quarter) -> None:
         quarterly_price=q_price,
         monthly_prices=monthly,
         cfg=tariff_cfg,
-        billing_mode=billing_mode,
+        billing_mode=abrechnungs_rhythmus,
         anchor_sum_chf=anchor,
         old_post_quarter_first_sum_chf=old_first_post,
     )

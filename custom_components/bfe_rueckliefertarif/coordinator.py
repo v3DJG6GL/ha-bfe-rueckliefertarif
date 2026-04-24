@@ -16,8 +16,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .bfe import BfePrice, fetch_monthly, fetch_quarterly
 from .const import (
-    BILLING_MODE_MONTHLY,
-    CONF_BILLING_MODE,
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    CONF_ABRECHNUNGS_RHYTHMUS,
     DOMAIN,
 )
 from .quarters import Month, Quarter, quarter_of
@@ -66,10 +66,10 @@ class BfeCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         import aiohttp
 
-        billing_mode = self._config.get(CONF_BILLING_MODE)
+        abrechnungs_rhythmus = self._config.get(CONF_ABRECHNUNGS_RHYTHMUS)
         async with aiohttp.ClientSession() as session:
             self.quarterly = await fetch_quarterly(session)
-            if billing_mode == BILLING_MODE_MONTHLY:
+            if abrechnungs_rhythmus == ABRECHNUNGS_RHYTHMUS_MONAT:
                 self.monthly = await fetch_monthly(session)
 
         await self._auto_import_newly_published()
@@ -102,20 +102,20 @@ class BfeCoordinator(DataUpdateCoordinator):
         await self._async_save_state()
 
     def _current_effective_tariff_rp_kwh(self) -> float | None:
-        """Basis-sensor value: effective Rp/kWh for the current quarter.
+        """Basisvergütung-sensor value: effective Rp/kWh for the current quarter.
 
         Returns the tariff the importer would apply right now. If the current
         quarter's BFE price hasn't been published yet, falls back to the
-        Mindestvergütung + HKN bonus (the conservative placeholder shown in HA
-        during the ~2-week publication gap).
+        Mindestvergütung + HKN-Vergütung (the conservative placeholder shown in
+        HA during the ~2-week publication gap).
         """
         from .const import (
-            BASE_MODE_FIXED,
-            CONF_BASE_MODE,
-            CONF_FIXED_RATE,
-            CONF_HKN_BONUS,
-            CONF_KW,
-            CONF_SEGMENT,
+            BASISVERGUETUNG_FIXPREIS,
+            CONF_ANLAGENKATEGORIE,
+            CONF_BASISVERGUETUNG,
+            CONF_FIXPREIS_RP_KWH,
+            CONF_HKN_VERGUETUNG_RP_KWH,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
         )
         from .tariff import (
             Segment,
@@ -126,16 +126,16 @@ class BfeCoordinator(DataUpdateCoordinator):
 
         now = datetime.now(timezone.utc)
         q = quarter_of(now)
-        seg = Segment(self._config[CONF_SEGMENT])
-        kw = float(self._config.get(CONF_KW, 0.0) or 0.0)
-        hkn = float(self._config.get(CONF_HKN_BONUS, 0.0))
-        base_mode = self._config[CONF_BASE_MODE]
+        seg = Segment(self._config[CONF_ANLAGENKATEGORIE])
+        kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
+        hkn = float(self._config.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0))
+        basisverguetung = self._config[CONF_BASISVERGUETUNG]
 
-        if base_mode == BASE_MODE_FIXED:
-            fixed = float(self._config.get(CONF_FIXED_RATE, 0.0) or 0.0)
+        if basisverguetung == BASISVERGUETUNG_FIXPREIS:
+            fixed = float(self._config.get(CONF_FIXPREIS_RP_KWH, 0.0) or 0.0)
             return effective_rp_kwh_fixed(fixed, seg, kw, hkn)
 
-        # RMP mode: need BFE price for current quarter, else fall back
+        # Referenz-Marktpreis mode: need BFE price for current quarter, else fall back
         if q in self.quarterly:
             ref = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
             return effective_rp_kwh_rmp(ref, seg, kw, hkn)

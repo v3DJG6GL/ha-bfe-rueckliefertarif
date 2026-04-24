@@ -17,7 +17,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from .bfe import BfePrice, PriceNotYetPublished
-from .const import BASE_MODE_FIXED, BASE_MODE_RMP, BILLING_MODE_MONTHLY
+from .const import (
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    BASISVERGUETUNG_FIXPREIS,
+    BASISVERGUETUNG_REFERENZMARKTPREIS,
+)
 from .quarters import Month, Quarter, hours_in_range, month_bounds_utc, quarter_bounds_utc
 from .tariff import (
     Segment,
@@ -30,11 +34,11 @@ from .tariff import (
 
 @dataclass(frozen=True)
 class TariffConfig:
-    segment: Segment
-    kw: float
-    base_mode: str                         # BASE_MODE_RMP | BASE_MODE_FIXED
-    hkn_bonus_rp_kwh: float
-    fixed_rate_rp_kwh: float | None = None
+    anlagenkategorie: Segment
+    installierte_leistung_kw: float
+    basisverguetung: str                       # BASISVERGUETUNG_REFERENZMARKTPREIS | BASISVERGUETUNG_FIXPREIS
+    hkn_verguetung_rp_kwh: float
+    fixpreis_rp_kwh: float | None = None
 
 
 @dataclass(frozen=True)
@@ -61,17 +65,23 @@ class QuarterPlan:
 def _effective_rate(
     cfg: TariffConfig, reference_or_fixed_rp_kwh: float
 ) -> float:
-    if cfg.base_mode == BASE_MODE_FIXED:
-        if cfg.fixed_rate_rp_kwh is None:
-            raise ValueError("fixed_rate_rp_kwh required for fixed base mode")
+    if cfg.basisverguetung == BASISVERGUETUNG_FIXPREIS:
+        if cfg.fixpreis_rp_kwh is None:
+            raise ValueError("fixpreis_rp_kwh required for fixpreis basisverguetung")
         return effective_rp_kwh_fixed(
-            cfg.fixed_rate_rp_kwh, cfg.segment, cfg.kw, cfg.hkn_bonus_rp_kwh
+            cfg.fixpreis_rp_kwh,
+            cfg.anlagenkategorie,
+            cfg.installierte_leistung_kw,
+            cfg.hkn_verguetung_rp_kwh,
         )
-    if cfg.base_mode == BASE_MODE_RMP:
+    if cfg.basisverguetung == BASISVERGUETUNG_REFERENZMARKTPREIS:
         return effective_rp_kwh_rmp(
-            reference_or_fixed_rp_kwh, cfg.segment, cfg.kw, cfg.hkn_bonus_rp_kwh
+            reference_or_fixed_rp_kwh,
+            cfg.anlagenkategorie,
+            cfg.installierte_leistung_kw,
+            cfg.hkn_verguetung_rp_kwh,
         )
-    raise ValueError(f"Unknown base_mode: {cfg.base_mode!r}")
+    raise ValueError(f"Unknown basisverguetung: {cfg.basisverguetung!r}")
 
 
 def _rate_rp_kwh_at_hour(
@@ -91,7 +101,7 @@ def _rate_rp_kwh_at_hour(
     """
     q_rp = chf_per_mwh_to_rp_per_kwh(quarterly_price.chf_per_mwh)
 
-    if cfg.base_mode == BASE_MODE_FIXED or billing_mode != BILLING_MODE_MONTHLY:
+    if cfg.basisverguetung == BASISVERGUETUNG_FIXPREIS or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
         return _effective_rate(cfg, q_rp)
 
     assert monthly_prices is not None
