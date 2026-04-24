@@ -3,6 +3,7 @@
   "name": "BFE Rückliefertarif (Art. 15 EnFV)",
   "codeowners": [],
   "config_flow": true,
+  "dependencies": ["recorder"],
   "documentation": "https://github.com/v3DJG6GL/ha-bfe-rueckliefertarif",
   "issue_tracker": "https://github.com/v3DJG6GL/ha-bfe-rueckliefertarif/issues",
   "iot_class": "cloud_polling",

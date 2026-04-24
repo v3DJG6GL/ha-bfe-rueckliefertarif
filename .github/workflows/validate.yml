@@ -35,3 +35,5 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # brands: submit to home-assistant/brands before HACS default-repo submission.
+          ignore: brands
