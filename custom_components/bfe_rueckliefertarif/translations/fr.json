@@ -62,8 +62,17 @@
   "options": {
     "step": {
       "init": {
+        "title": "BFE Rückliefertarif — options",
+        "description": "Que voulez-vous faire ?",
+        "menu_options": {
+          "tariff": "Ajuster les paramètres tarifaires",
+          "reimport_quarter": "Réimporter un trimestre spécifique",
+          "entities": "Reconfigurer les entités Home Assistant"
+        }
+      },
+      "tariff": {
         "title": "Ajuster les paramètres tarifaires",
-        "description": "Modifier la configuration tarifaire. Le câblage des entités reste inchangé.",
+        "description": "Modifier la configuration tarifaire.",
         "data": {
           "anlagenkategorie": "Catégorie d'installation",
           "installierte_leistung_kw": "Puissance installée (kW)",
@@ -72,11 +81,28 @@
           "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
           "abrechnungs_rhythmus": "Fréquence de facturation"
         }
+      },
+      "reimport_quarter": {
+        "title": "Réimporter un trimestre spécifique",
+        "description": "Recalculer la rétribution pour un trimestre passé. Format : `AAAATN` (ex. `2026Q1`).",
+        "data": {
+          "quarter": "Trimestre"
+        }
+      },
+      "entities": {
+        "title": "Reconfigurer les entités",
+        "description": "Modifier les entités utilisées par cette intégration.",
+        "data": {
+          "stromnetzeinspeisung_kwh": "Injection au réseau (kWh)",
+          "rueckliefervergutung_chf": "Rétribution (CHF)",
+          "namenspraefix": "Préfixe de nom"
+        }
       }
     },
     "error": {
       "kw_required_for_degressive": "Puissance installée requise pour 30–<150 kW avec autoconsommation.",
-      "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'."
+      "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'.",
+      "invalid_quarter": "Format invalide. Attendu : AAAATN (ex. 2026Q1)."
     }
   },
   "selector": {

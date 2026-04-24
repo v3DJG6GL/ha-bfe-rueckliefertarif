@@ -270,7 +270,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
-    """Options flow: edit the 6 tariff fields post-setup; reload entry on save.
+    """Options flow: menu with tariff edit, specific-quarter re-import, and entity wiring.
 
     HA 2024.12+ exposes ``config_entry`` as a read-only property on
     OptionsFlow, sourced from ``self.handler`` (the entry_id). Don't override
@@ -278,21 +278,29 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     on current HA.
     """
 
+    # ----- Menu --------------------------------------------------------------
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
-        errors: dict[str, str] = {}
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["tariff", "reimport_quarter", "entities"],
+        )
 
+    # ----- Sub-step: edit tariff settings ------------------------------------
+
+    async def async_step_tariff(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        errors: dict[str, str] = {}
         if user_input is not None:
             errors = _validate_tariff(user_input)
             if not errors:
-                # Persist into the entry's data (not options) so downstream code
-                # sees a single source of truth for tariff config.
                 new_data = {**self.config_entry.data, **user_input}
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=new_data
                 )
-                # Trigger an entry reload so coordinator + sensors see the new values.
                 self.hass.async_create_task(
                     self.hass.config_entries.async_reload(self.config_entry.entry_id)
                 )
@@ -300,7 +308,81 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
 
         defaults = user_input if user_input is not None else dict(self.config_entry.data)
         return self.async_show_form(
-            step_id="init",
+            step_id="tariff",
             data_schema=_tariff_schema(defaults),
             errors=errors,
         )
+
+    # ----- Sub-step: re-import a specific past quarter -----------------------
+
+    async def async_step_reimport_quarter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        from .quarters import Quarter
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            quarter_str = (user_input.get("quarter") or "").strip()
+            try:
+                Quarter.parse(quarter_str)
+            except ValueError:
+                errors["quarter"] = "invalid_quarter"
+            if not errors:
+                await self.hass.services.async_call(
+                    DOMAIN,
+                    "reimport_quarter",
+                    {"quarter": quarter_str},
+                    blocking=False,
+                )
+                return self.async_create_entry(title="", data={})
+
+        schema = vol.Schema(
+            {
+                vol.Required("quarter", default=user_input.get("quarter", "") if user_input else ""): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="reimport_quarter",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    # ----- Sub-step: re-wire HA entities -------------------------------------
+
+    async def async_step_entities(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        if user_input is not None:
+            new_data = {**self.config_entry.data, **user_input}
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, data=new_data
+            )
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            )
+            return self.async_create_entry(title="", data={})
+
+        current = dict(self.config_entry.data)
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_STROMNETZEINSPEISUNG_KWH,
+                    default=current.get(CONF_STROMNETZEINSPEISUNG_KWH),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor", device_class="energy"
+                    )
+                ),
+                vol.Required(
+                    CONF_RUECKLIEFERVERGUETUNG_CHF,
+                    default=current.get(CONF_RUECKLIEFERVERGUETUNG_CHF),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor")
+                ),
+                vol.Optional(
+                    CONF_NAMENSPRAEFIX,
+                    default=current.get(CONF_NAMENSPRAEFIX, "bfe_rueckliefertarif"),
+                ): str,
+            }
+        )
+        return self.async_show_form(step_id="entities", data_schema=schema)

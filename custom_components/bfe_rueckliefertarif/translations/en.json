@@ -21,7 +21,7 @@
       },
       "tariff": {
         "title": "Tariff configuration ({utility_name})",
-        "description": "Configure how your utility calculates feed-in compensation. Every value comes pre-filled from the utility you picked — adjust as needed.",
+        "description": "Configure how your utility calculates feed-in compensation. Every value comes pre-filled from the utility you picked — adjust as needed.\n\n### Plant category — legal floor & cap\n\nThe table below is fixed by Swiss law (EnV Art. 12 / StromVV Art. 4). The integration applies these automatically based on the *Plant category* you pick.\n\n| Category | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW with self-consumption | 6.00 | 10.96 |\n| ≤30 kW feed-in only | 6.00 | 8.20 |\n| 30–<100 kW with self-consumption | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW feed-in only | 6.20 | 8.20 |\n| 100–<150 kW with self-consumption | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW feed-in only | 6.20 | 5.40 |\n| ≥150 kW with self-consumption | — | 7.20 |\n| ≥150 kW feed-in only | — | 5.40 |\n\n### HKN payment\n\nOpt-in at most utilities — set to **0.0** if you don't sell HKN. If base + HKN exceeds the compensation cap, the utility reduces HKN automatically.",
         "data": {
           "anlagenkategorie": "Plant category",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -31,12 +31,12 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "Sets the legal **minimum compensation** (EnV Art. 12) and **compensation cap** (StromVV Art. 4) automatically.\n\n**Overview by category:**\n- **≤30 kW** with self-consumption: min `6.00` / max `10.96` Rp/kWh\n- **≤30 kW** feed-in only: min `6.00` / max `8.20`\n- **30–<100 kW** with self-consumption: min `1.20–6.00` (formula `180÷kW`) / max `10.96`\n- **30–<100 kW** feed-in only: min `6.20` / max `8.20`\n- **100–<150 kW** with self-consumption: min `1.20–6.00` (`180÷kW`) / max `7.20`\n- **100–<150 kW** feed-in only: min `6.20` / max `5.40`\n- **≥150 kW** with self-consumption: *no min.* / max `7.20`\n- **≥150 kW** feed-in only: *no min.* / max `5.40`",
-          "installierte_leistung_kw": "**Only required** for *30–<150 kW plants with self-consumption* — the minimum compensation follows the formula `180 ÷ kW`. Leave at **0** for other plant categories.",
-          "basisverguetung": "**Reference market price:** most utilities (*EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie*).\n\n**Fixed price:** *ewz, IWB, SIG, AEW*.",
-          "hkn_verguetung_rp_kwh": "Payment for **HKN** (*Herkunftsnachweise* — Swiss guarantees of origin).\n\n**Opt-in at most utilities** — set to `0.0` if you don't sell your HKN to your utility.\n\n*Example EKZ:* up to `3.00 Rp/kWh` after enrolling on myEKZ.\n\n**Note:** if base price + HKN payment exceeds the *compensation cap*, the utility automatically reduces the HKN payment to the cap.",
-          "fixpreis_rp_kwh": "**Only used** when base price is set to *Fixed price*. The flat per-kWh rate your utility pays.\n\n*2026 examples:* ewz `12.91`, IWB `14.00`, SIG `10.96`, AEW `8.20`.",
-          "abrechnungs_rhythmus": "Match your utility's invoice cycle. **Most Swiss utilities settle quarterly.**"
+          "anlagenkategorie": "Determines floor + cap automatically. See the table above.",
+          "installierte_leistung_kw": "Only required for 30–<150 kW with self-consumption (formula 180 ÷ kW). Leave at 0 otherwise.",
+          "basisverguetung": "Reference market price for most utilities; fixed price for ewz / IWB / SIG / AEW.",
+          "hkn_verguetung_rp_kwh": "0.0 if you don't sell HKN. Up to 3.00 Rp/kWh at EKZ after myEKZ opt-in.",
+          "fixpreis_rp_kwh": "Only used with 'Fixed price' base. 2026: ewz 12.91, IWB 14.00, SIG 10.96, AEW 8.20.",
+          "abrechnungs_rhythmus": "Match your utility's invoice cycle. Most Swiss utilities settle quarterly."
         }
       },
       "entities": {
@@ -62,8 +62,17 @@
   "options": {
     "step": {
       "init": {
+        "title": "BFE Rückliefertarif options",
+        "description": "What would you like to do?",
+        "menu_options": {
+          "tariff": "Adjust tariff settings",
+          "reimport_quarter": "Re-import a specific quarter",
+          "entities": "Re-wire Home Assistant entities"
+        }
+      },
+      "tariff": {
         "title": "Adjust tariff settings",
-        "description": "Edit your tariff configuration. Entity wiring is unchanged — to rewire entities, remove and re-add the integration.",
+        "description": "Edit your tariff configuration. The values you change here apply to every future re-import.\n\n### Plant category — legal floor & cap\n\nFixed by Swiss law (EnV Art. 12 / StromVV Art. 4) and applied automatically based on the *Plant category*.\n\n| Category | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW with self-consumption | 6.00 | 10.96 |\n| ≤30 kW feed-in only | 6.00 | 8.20 |\n| 30–<100 kW with self-consumption | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW feed-in only | 6.20 | 8.20 |\n| 100–<150 kW with self-consumption | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW feed-in only | 6.20 | 5.40 |\n| ≥150 kW with self-consumption | — | 7.20 |\n| ≥150 kW feed-in only | — | 5.40 |",
         "data": {
           "anlagenkategorie": "Plant category",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -73,18 +82,43 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "Sets the legal minimum compensation (EnV Art. 12) and compensation cap (StromVV Art. 4) automatically.",
-          "installierte_leistung_kw": "Only required for 30–<150 kW plants with self-consumption (formula 180 ÷ kW).",
-          "basisverguetung": "Reference market price for most utilities; fixed price for ewz/IWB/SIG/AEW.",
-          "hkn_verguetung_rp_kwh": "Payment for HKN (Herkunftsnachweise). Set to 0.0 if you don't sell HKN to your utility. Cap binds automatically when base + HKN exceeds the compensation cap.",
+          "anlagenkategorie": "Determines floor + cap automatically. See the table above.",
+          "installierte_leistung_kw": "Only required for 30–<150 kW with self-consumption (formula 180 ÷ kW).",
+          "basisverguetung": "Reference market price for most utilities; fixed price for ewz / IWB / SIG / AEW.",
+          "hkn_verguetung_rp_kwh": "0.0 if you don't sell HKN. Up to 3.00 Rp/kWh at EKZ after myEKZ opt-in.",
           "fixpreis_rp_kwh": "Only used with 'Fixed price' base.",
           "abrechnungs_rhythmus": "Match your utility's invoice cycle."
+        }
+      },
+      "reimport_quarter": {
+        "title": "Re-import a specific quarter",
+        "description": "Recompute Rückliefervergütung CHF/h for a specific past quarter. Use this after fixing tariff settings to update an already-published quarter (e.g. correct a wrong HKN setting that was used for `2026Q1`).\n\n**Format:** `YYYYQN`. Example: `2026Q1`, `2025Q4`.\n\nThe quarter must already be published by BFE — typically about 2 weeks after quarter end.",
+        "data": {
+          "quarter": "Quarter"
+        },
+        "data_description": {
+          "quarter": "Format: YYYYQN (e.g. 2026Q1)."
+        }
+      },
+      "entities": {
+        "title": "Re-wire Home Assistant entities",
+        "description": "Change which Home Assistant entities this integration writes to. Use only if your sensor names changed.",
+        "data": {
+          "stromnetzeinspeisung_kwh": "Grid export (kWh)",
+          "rueckliefervergutung_chf": "Feed-in earnings (CHF)",
+          "namenspraefix": "Name prefix"
+        },
+        "data_description": {
+          "stromnetzeinspeisung_kwh": "kWh counter wired into the Energy Dashboard under 'Return to grid'.",
+          "rueckliefervergutung_chf": "Auto-created CHF sensor (usually sensor.YOUR_GRID_EXPORT_compensation).",
+          "namenspraefix": "Prefix used to name this integration's diagnostic sensors and buttons."
         }
       }
     },
     "error": {
       "kw_required_for_degressive": "Installed power (kW) is required for 30–<150 kW plants with self-consumption.",
-      "fixpreis_required": "Fixed price must be greater than 0 when the base price is set to 'Fixed price'."
+      "fixpreis_required": "Fixed price must be greater than 0 when the base price is set to 'Fixed price'.",
+      "invalid_quarter": "Invalid format. Expected YYYYQN (e.g. 2026Q1)."
     }
   },
   "selector": {

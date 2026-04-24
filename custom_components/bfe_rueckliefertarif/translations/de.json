@@ -21,7 +21,7 @@
       },
       "tariff": {
         "title": "Tarif konfigurieren ({utility_name})",
-        "description": "Konfiguriere, wie dein Energieversorger die Rückliefervergütung berechnet. Alle Werte sind aus dem gewählten Energieversorger vorausgefüllt — du kannst sie anpassen.",
+        "description": "Konfiguriere, wie dein Energieversorger die Rückliefervergütung berechnet. Alle Werte sind aus dem gewählten Energieversorger vorausgefüllt — du kannst sie anpassen.\n\n### Anlagenkategorie — gesetzliche Min./Max.\n\nDie Tabelle ist durch Bundesrecht festgelegt (EnV Art. 12 / StromVV Art. 4). Die Integration wendet die Werte automatisch an, basierend auf der gewählten *Anlagenkategorie*.\n\n| Kategorie | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW mit Eigenverbrauch | 6.00 | 10.96 |\n| ≤30 kW ohne Eigenverbrauch | 6.00 | 8.20 |\n| 30–<100 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW ohne Eigenverbrauch | 6.20 | 8.20 |\n| 100–<150 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW ohne Eigenverbrauch | 6.20 | 5.40 |\n| ≥150 kW mit Eigenverbrauch | — | 7.20 |\n| ≥150 kW ohne Eigenverbrauch | — | 5.40 |\n\n### HKN-Vergütung\n\nOpt-in bei den meisten Versorgern — wenn du keine HKN verkaufst, **muss der Wert 0.0 sein**. Wenn Basis + HKN die Anrechenbarkeitsgrenze übersteigt, reduziert der Versorger die HKN-Vergütung automatisch.",
         "data": {
           "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
@@ -31,12 +31,12 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Bestimmt automatisch die gesetzliche **Minimalvergütung** (EnV Art. 12) und die **Anrechenbarkeitsgrenze** (StromVV Art. 4).\n\n**Übersicht nach Kategorie:**\n- **≤30 kW** mit Eigenverbrauch: min `6.00` / max `10.96` Rp/kWh\n- **≤30 kW** ohne Eigenverbrauch: min `6.00` / max `8.20`\n- **30–<100 kW** mit Eigenverbrauch: min `1.20–6.00` (Formel `180÷kW`) / max `10.96`\n- **30–<100 kW** ohne Eigenverbrauch: min `6.20` / max `8.20`\n- **100–<150 kW** mit Eigenverbrauch: min `1.20–6.00` (`180÷kW`) / max `7.20`\n- **100–<150 kW** ohne Eigenverbrauch: min `6.20` / max `5.40`\n- **≥150 kW** mit Eigenverbrauch: *keine Min.* / max `7.20`\n- **≥150 kW** ohne Eigenverbrauch: *keine Min.* / max `5.40`",
-          "installierte_leistung_kw": "**Nur nötig** bei *30–<150 kW mit Eigenverbrauch* — die Minimalvergütung folgt der degressiven Formel `180 ÷ kW`. Bei anderen Anlagenkategorien kann der Wert **0** bleiben.",
-          "basisverguetung": "**Referenz-Marktpreis:** die meisten Versorger (*EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie*).\n\n**Fixpreis:** *ewz, IWB, SIG, AEW*.",
-          "hkn_verguetung_rp_kwh": "Vergütung für **Herkunftsnachweise** (*HKN*).\n\n**Opt-in bei den meisten Versorgern** — wenn du deine HKN nicht an den Versorger verkaufst, muss der Wert `0.0` sein.\n\n*Beispiel EKZ:* bis `3.00 Rp/kWh` nach Anmeldung auf myEKZ.\n\n**Hinweis:** wenn *Basisvergütung + HKN-Vergütung* die **Anrechenbarkeitsgrenze** übersteigt, reduziert der Versorger die HKN-Vergütung automatisch auf den Cap.",
-          "fixpreis_rp_kwh": "**Nur bei** Basisvergütung *Fixpreis*. Der flat-rate-Preis in Rp/kWh, den dein Versorger zahlt.\n\n*Beispiele 2026:* ewz `12.91`, IWB `14.00`, SIG `10.96`, AEW `8.20`.",
-          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**"
+          "anlagenkategorie": "Bestimmt Minimalvergütung + Anrechenbarkeitsgrenze automatisch. Siehe Tabelle oben.",
+          "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch (Formel 180 ÷ kW). Sonst bei 0 lassen.",
+          "basisverguetung": "Referenz-Marktpreis bei den meisten Versorgern; Fixpreis bei ewz / IWB / SIG / AEW.",
+          "hkn_verguetung_rp_kwh": "0.0 wenn keine HKN-Vergütung. Bei EKZ bis 3.00 Rp/kWh nach myEKZ-Opt-in.",
+          "fixpreis_rp_kwh": "Nur bei Basisvergütung 'Fixpreis'. 2026: ewz 12.91, IWB 14.00, SIG 10.96, AEW 8.20.",
+          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus. Die meisten Schweizer Versorger rechnen quartalsweise ab."
         }
       },
       "entities": {
@@ -62,8 +62,17 @@
   "options": {
     "step": {
       "init": {
+        "title": "BFE Rückliefertarif — Optionen",
+        "description": "Was möchtest du tun?",
+        "menu_options": {
+          "tariff": "Tarifeinstellungen anpassen",
+          "reimport_quarter": "Bestimmtes Quartal neu importieren",
+          "entities": "Home-Assistant-Entitäten neu verbinden"
+        }
+      },
+      "tariff": {
         "title": "Tarifeinstellungen anpassen",
-        "description": "Tarifkonfiguration anpassen. Die Entitäten-Verknüpfung bleibt unverändert — falls nötig, Integration entfernen und neu hinzufügen.",
+        "description": "Tarifkonfiguration anpassen. Die hier geänderten Werte gelten für alle zukünftigen Re-Imports.\n\n### Anlagenkategorie — gesetzliche Min./Max.\n\nDurch Bundesrecht festgelegt (EnV Art. 12 / StromVV Art. 4) und automatisch je nach *Anlagenkategorie* angewendet.\n\n| Kategorie | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW mit Eigenverbrauch | 6.00 | 10.96 |\n| ≤30 kW ohne Eigenverbrauch | 6.00 | 8.20 |\n| 30–<100 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW ohne Eigenverbrauch | 6.20 | 8.20 |\n| 100–<150 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW ohne Eigenverbrauch | 6.20 | 5.40 |\n| ≥150 kW mit Eigenverbrauch | — | 7.20 |\n| ≥150 kW ohne Eigenverbrauch | — | 5.40 |",
         "data": {
           "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
@@ -73,18 +82,43 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Bestimmt Minimalvergütung (EnV Art. 12) und Anrechenbarkeitsgrenze (StromVV Art. 4) automatisch.",
+          "anlagenkategorie": "Bestimmt Minimalvergütung + Anrechenbarkeitsgrenze automatisch. Siehe Tabelle oben.",
           "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch (Formel 180 ÷ kW).",
-          "basisverguetung": "Referenz-Marktpreis bei den meisten Versorgern; Fixpreis bei ewz/IWB/SIG/AEW.",
-          "hkn_verguetung_rp_kwh": "Vergütung für Herkunftsnachweise (HKN). 0.0 wenn keine HKN an den Versorger verkauft werden. Cap greift automatisch, wenn Basis + HKN die Anrechenbarkeitsgrenze übersteigt.",
+          "basisverguetung": "Referenz-Marktpreis bei den meisten Versorgern; Fixpreis bei ewz / IWB / SIG / AEW.",
+          "hkn_verguetung_rp_kwh": "0.0 wenn keine HKN-Vergütung. Bei EKZ bis 3.00 Rp/kWh nach myEKZ-Opt-in.",
           "fixpreis_rp_kwh": "Nur bei Basisvergütung 'Fixpreis'.",
           "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers."
+        }
+      },
+      "reimport_quarter": {
+        "title": "Bestimmtes Quartal neu importieren",
+        "description": "Berechnet die Rückliefervergütung CHF/h für ein bestimmtes vergangenes Quartal neu. Nützlich nach einer Tarifkorrektur, um ein bereits publiziertes Quartal zu aktualisieren (z. B. falsche HKN-Einstellung für `2026Q1` korrigieren).\n\n**Format:** `JahrQQuartal`. Beispiel: `2026Q1`, `2025Q4`.\n\nDas Quartal muss bereits vom BFE publiziert sein — typisch ca. 2 Wochen nach Quartalsende.",
+        "data": {
+          "quarter": "Quartal"
+        },
+        "data_description": {
+          "quarter": "Format: JahrQQuartal (z. B. 2026Q1)."
+        }
+      },
+      "entities": {
+        "title": "Home-Assistant-Entitäten neu verbinden",
+        "description": "Ändere, in welche Home-Assistant-Entitäten diese Integration schreibt. Nur nötig, wenn deine Sensor-Namen sich geändert haben.",
+        "data": {
+          "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
+          "rueckliefervergutung_chf": "Rückliefervergütung (CHF)",
+          "namenspraefix": "Namenspräfix"
+        },
+        "data_description": {
+          "stromnetzeinspeisung_kwh": "kWh-Zähler im Energy-Dashboard unter 'Zurück ins Netz'.",
+          "rueckliefervergutung_chf": "Auto-erzeugter CHF-Sensor (üblicherweise sensor.DEINE_STROMNETZEINSPEISUNG_compensation).",
+          "namenspraefix": "Präfix für die Diagnose-Sensoren und Buttons dieser Integration."
         }
       }
     },
     "error": {
       "kw_required_for_degressive": "Installierte Leistung (kW) ist bei 30–<150 kW mit Eigenverbrauch Pflicht.",
-      "fixpreis_required": "Fixpreis muss > 0 sein, wenn Basisvergütung 'Fixpreis' ist."
+      "fixpreis_required": "Fixpreis muss > 0 sein, wenn Basisvergütung 'Fixpreis' ist.",
+      "invalid_quarter": "Ungültiges Format. Erwartet JahrQQuartal (z. B. 2026Q1)."
     }
   },
   "selector": {

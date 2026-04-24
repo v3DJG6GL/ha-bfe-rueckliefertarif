@@ -306,10 +306,21 @@ class TestStringsAndTranslations:
             assert key in d["entity"]["button"]
             assert "name" in d["entity"]["button"][key]
 
-    def test_options_step_init_present(self, en_strings, de_translations):
+    def test_options_step_init_is_menu(self, en_strings, de_translations):
+        # Options init is a menu with three sub-steps.
         for d in (en_strings, de_translations):
             assert "init" in d["options"]["step"]
-            assert "data" in d["options"]["step"]["init"]
+            assert "menu_options" in d["options"]["step"]["init"]
+            menu = d["options"]["step"]["init"]["menu_options"]
+            assert "tariff" in menu
+            assert "reimport_quarter" in menu
+            assert "entities" in menu
+
+    @pytest.mark.parametrize("sub_step", ["tariff", "reimport_quarter", "entities"])
+    def test_options_substeps_present(self, en_strings, de_translations, sub_step):
+        for d in (en_strings, de_translations):
+            assert sub_step in d["options"]["step"]
+            assert "data" in d["options"]["step"][sub_step]
 
     def test_fr_translations_minimum_keys(self, fr_translations):
         # French has the essentials but may skip detailed help text.
