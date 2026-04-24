@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tariffa di ripresa BFE — Scegli il fornitore",
+        "description": "Seleziona il tuo fornitore svizzero. Il preset precompila modalità base e premio GO; puoi modificarli nel passo successivo.",
+        "data": {
+          "preset": "Fornitore"
+        }
+      },
+      "system": {
+        "title": "Dettagli impianto ({preset})",
+        "description": "Il segmento determina automaticamente la rimunerazione minima (OEn art. 12) e il limite di computabilità (OAEl art. 4a). Per 30–<150 kW con autoconsumo, la potenza è necessaria (formula degressiva 180 ÷ kW).",
+        "data": {
+          "segment": "Segmento PV",
+          "kw": "Potenza installata (kWp)",
+          "base_mode": "Modalità base",
+          "hkn_bonus_rp_kwh": "Premio GO (ct/kWh)",
+          "fixed_rate_rp_kwh": "Tariffa fissa (ct/kWh)",
+          "billing_mode": "Cadenza di fatturazione"
+        }
+      },
+      "entities": {
+        "title": "Entità Home Assistant",
+        "description": "Scegli l'entità di immissione in rete (contatore kWh) e l'entità di compensazione creata automaticamente da Energy Dashboard (CHF).",
+        "data": {
+          "export_entity": "Immissione in rete (kWh)",
+          "compensation_entity": "Entità di compensazione (CHF)",
+          "entity_prefix": "Prefisso entità"
+        }
+      }
+    },
+    "error": {
+      "kw_required_for_degressive": "kW richiesti per 30–<150 kW con autoconsumo (formula degressiva 180/kW).",
+      "fixed_rate_required": "La tariffa fissa deve essere > 0 in modalità tariffa fissa."
+    }
+  }
+}

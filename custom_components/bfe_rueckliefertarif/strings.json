@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BFE Rückliefertarif — Energieversorger wählen",
+        "description": "Wähle dein Schweizer EVU. Die Preset füllt Basismodus und HKN-Vergütung vor; du kannst sie im nächsten Schritt anpassen.",
+        "data": {
+          "preset": "Energieversorger"
+        }
+      },
+      "system": {
+        "title": "Anlagedetails ({preset})",
+        "description": "Segment bestimmt Mindestvergütung (EnV Art. 12) und Anrechenbarkeitsgrenze (StromVV Art. 4a) automatisch. Bei Anlagen 30–<150 kW mit Eigenverbrauch ist die Leistung für die degressive Formel (180 ÷ kW) nötig.",
+        "data": {
+          "segment": "Anlagen-Segment",
+          "kw": "Installierte Leistung (kWp)",
+          "base_mode": "Basismodus",
+          "hkn_bonus_rp_kwh": "HKN-Vergütung (Rp/kWh)",
+          "fixed_rate_rp_kwh": "Fixpreis (Rp/kWh; nur bei Fixpreis-Modus)",
+          "billing_mode": "Abrechnungs-Rhythmus"
+        }
+      },
+      "entities": {
+        "title": "Home-Assistant-Entitäten",
+        "description": "Wähle die Netzrückspeisungs-Entität (kWh-Zähler) und die im Energy-Dashboard automatisch erzeugte Kompensations-Entität (CHF).",
+        "data": {
+          "export_entity": "Netzrückspeisung (kWh)",
+          "compensation_entity": "Kompensations-Entität (CHF)",
+          "entity_prefix": "Entity-Präfix für Sensoren dieser Integration"
+        }
+      }
+    },
+    "error": {
+      "kw_required_for_degressive": "Leistung in kW ist für 30–<150 kW mit Eigenverbrauch Pflicht (degressive Formel 180/kW).",
+      "fixed_rate_required": "Fixpreis muss > 0 sein bei Fixpreis-Modus."
+    }
+  }
+}

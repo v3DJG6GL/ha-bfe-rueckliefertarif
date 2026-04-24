@@ -1,0 +1,11 @@
+{
+  "domain": "bfe_rueckliefertarif",
+  "name": "BFE Rückliefertarif (Art. 15 EnFV)",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/v3DJG6GL/ha-bfe-rueckliefertarif",
+  "issue_tracker": "https://github.com/v3DJG6GL/ha-bfe-rueckliefertarif/issues",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}

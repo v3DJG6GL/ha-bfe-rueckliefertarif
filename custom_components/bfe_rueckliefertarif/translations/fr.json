@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rétribution de l'injection BFE — Choisir le fournisseur",
+        "description": "Sélectionnez votre fournisseur suisse. Le preset préremplit le mode de base et la prime GO ; vous pouvez les ajuster à l'étape suivante.",
+        "data": {
+          "preset": "Fournisseur"
+        }
+      },
+      "system": {
+        "title": "Détails de l'installation ({preset})",
+        "description": "Le segment détermine automatiquement la rémunération minimale (OEne art. 12) et le plafond (OApEl art. 4a). Pour 30–<150 kW avec autoconsommation, la puissance est requise (formule dégressive 180 ÷ kW).",
+        "data": {
+          "segment": "Segment PV",
+          "kw": "Puissance installée (kWc)",
+          "base_mode": "Mode de base",
+          "hkn_bonus_rp_kwh": "Prime GO (ct/kWh)",
+          "fixed_rate_rp_kwh": "Tarif fixe (ct/kWh)",
+          "billing_mode": "Fréquence de facturation"
+        }
+      },
+      "entities": {
+        "title": "Entités Home Assistant",
+        "description": "Choisissez l'entité d'injection au réseau (compteur kWh) et l'entité de compensation créée automatiquement par Energy Dashboard (CHF).",
+        "data": {
+          "export_entity": "Injection au réseau (kWh)",
+          "compensation_entity": "Entité de compensation (CHF)",
+          "entity_prefix": "Préfixe d'entité"
+        }
+      }
+    },
+    "error": {
+      "kw_required_for_degressive": "kW requis pour 30–<150 kW avec autoconsommation (formule dégressive 180/kW).",
+      "fixed_rate_required": "Le tarif fixe doit être > 0 en mode tarif fixe."
+    }
+  }
+}

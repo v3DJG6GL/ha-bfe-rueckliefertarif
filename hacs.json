@@ -1,0 +1,6 @@
+{
+  "name": "BFE Rückliefertarif (Art. 15 EnFV)",
+  "country": "CH",
+  "homeassistant": "2025.1.0",
+  "render_readme": true
+}

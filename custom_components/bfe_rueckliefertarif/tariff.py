@@ -1,0 +1,113 @@
+"""Swiss national tariff law — pure functions, no HA dependencies.
+
+Tables are nationally mandated and identical for every Swiss Netzbetreiber.
+User-configurable inputs are limited to HKN bonus (utility commercial choice)
+and the optional fixed rate (for utilities that pay above the BFE reference).
+
+Legal references:
+- EnG Art. 15 Abs. 1 + EnFV Art. 15: Basisvergütung = BFE Referenz-Marktpreis
+- EnG Art. 15 Abs. 1bis + EnV Art. 12 Abs. 1bis: Mindestvergütung floor
+- StromVV Art. 4a: Anrechenbarkeitsgrenze (4-tier cap)
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+class Segment(str, Enum):
+    """8 PV segments defined by national law (size × Eigenverbrauch)."""
+
+    SMALL_MIT_EV = "small_mit_ev"      # ≤30 kW mit Eigenverbrauch
+    SMALL_OHNE_EV = "small_ohne_ev"    # ≤30 kW ohne Eigenverbrauch (Volleinspeisung)
+    MID_MIT_EV = "mid_mit_ev"          # 30–<100 kW mit Eigenverbrauch
+    MID_OHNE_EV = "mid_ohne_ev"        # 30–<100 kW ohne Eigenverbrauch
+    LARGE_MIT_EV = "large_mit_ev"      # 100–<150 kW mit Eigenverbrauch
+    LARGE_OHNE_EV = "large_ohne_ev"    # 100–<150 kW ohne Eigenverbrauch
+    XL_MIT_EV = "xl_mit_ev"            # ≥150 kW mit Eigenverbrauch
+    XL_OHNE_EV = "xl_ohne_ev"          # ≥150 kW ohne Eigenverbrauch
+
+
+_MIT_EV = {Segment.SMALL_MIT_EV, Segment.MID_MIT_EV, Segment.LARGE_MIT_EV, Segment.XL_MIT_EV}
+_DEGRESSIVE = {Segment.MID_MIT_EV, Segment.LARGE_MIT_EV}
+
+
+def has_eigenverbrauch(seg: Segment) -> bool:
+    return seg in _MIT_EV
+
+
+def mindestverguetung_rp_kwh(seg: Segment, kw: float) -> float | None:
+    """EnV Art. 12 Abs. 1bis federal minimum compensation in Rp/kWh.
+
+    Returns None for ≥150 kW segments (no federal floor).
+    For mit-Eigenverbrauch 30–<150 kW: degressive formula 180/kW (range 1.20–6.00).
+    For ohne-Eigenverbrauch 30–<150 kW: flat 6.20.
+    For ≤30 kW: flat 6.00.
+    """
+    if seg in (Segment.XL_MIT_EV, Segment.XL_OHNE_EV):
+        return None
+    if seg in (Segment.SMALL_MIT_EV, Segment.SMALL_OHNE_EV):
+        return 6.00
+    if seg in _DEGRESSIVE:
+        if kw <= 0:
+            raise ValueError("kW must be positive for degressive formula")
+        return round(180.0 / kw, 4)
+    # ohne Eigenverbrauch, 30–<150 kW
+    return 6.20
+
+
+def anrechenbarkeitsgrenze_rp_kwh(seg: Segment) -> float:
+    """StromVV Art. 4a 4-tier cap in Rp/kWh.
+
+    Boundaries: 100 kW × Eigenverbrauch.
+    """
+    if has_eigenverbrauch(seg):
+        if seg == Segment.SMALL_MIT_EV or seg == Segment.MID_MIT_EV:
+            return 10.96
+        return 7.20  # LARGE_MIT_EV, XL_MIT_EV
+    # ohne Eigenverbrauch
+    if seg == Segment.SMALL_OHNE_EV or seg == Segment.MID_OHNE_EV:
+        return 8.20
+    return 5.40  # LARGE_OHNE_EV, XL_OHNE_EV
+
+
+def effective_rp_kwh_rmp(
+    reference_rp_kwh: float,
+    seg: Segment,
+    kw: float,
+    hkn_bonus_rp_kwh: float = 0.0,
+) -> float:
+    """Effective tariff in Rp/kWh for RMP-passthrough utilities.
+
+    Base = max(BFE reference, federal floor). HKN added. Total capped by Anrechenbarkeitsgrenze.
+    """
+    floor = mindestverguetung_rp_kwh(seg, kw) or 0.0
+    cap = anrechenbarkeitsgrenze_rp_kwh(seg)
+    base = max(reference_rp_kwh, floor)
+    return min(base + hkn_bonus_rp_kwh, cap)
+
+
+def effective_rp_kwh_fixed(
+    fixed_rate_rp_kwh: float,
+    seg: Segment,
+    kw: float,
+    hkn_bonus_rp_kwh: float = 0.0,
+) -> float:
+    """Effective tariff for fixed-rate utilities (ewz, IWB, SIG, AEW).
+
+    Utility pays a flat rate not tied to the BFE reference. Federal floor still applies
+    (utility cannot pay less), and the StromVV cap still bounds the total.
+    """
+    floor = mindestverguetung_rp_kwh(seg, kw) or 0.0
+    cap = anrechenbarkeitsgrenze_rp_kwh(seg)
+    base = max(fixed_rate_rp_kwh, floor)
+    return min(base + hkn_bonus_rp_kwh, cap)
+
+
+def chf_per_mwh_to_rp_per_kwh(chf_per_mwh: float) -> float:
+    """BFE publishes in CHF/MWh; HA dashboard thinks in Rp/kWh."""
+    return chf_per_mwh / 10.0
+
+
+def rp_per_kwh_to_chf_per_kwh(rp_per_kwh: float) -> float:
+    return rp_per_kwh / 100.0
