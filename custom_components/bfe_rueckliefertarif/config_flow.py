@@ -157,7 +157,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> "BfeRuecklieferTarifOptionsFlow":
-        return BfeRuecklieferTarifOptionsFlow(config_entry)
+        return BfeRuecklieferTarifOptionsFlow()
 
     # ----- Step 1: utility menu --------------------------------------------------
 
@@ -270,10 +270,13 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
-    """Options flow: edit the 6 tariff fields post-setup; reload entry on save."""
+    """Options flow: edit the 6 tariff fields post-setup; reload entry on save.
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    HA 2024.12+ exposes ``config_entry`` as a read-only property on
+    OptionsFlow, sourced from ``self.handler`` (the entry_id). Don't override
+    ``__init__`` or assign ``self.config_entry`` — that raises AttributeError
+    on current HA.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

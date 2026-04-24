@@ -31,12 +31,12 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Bestimmt automatisch die gesetzliche Minimalvergütung (EnV Art. 12) und die Anrechenbarkeitsgrenze (StromVV Art. 4). Übersicht:\n• ≤30 kW mit Eigenverbrauch: min 6.00 / max 10.96 Rp/kWh\n• ≤30 kW ohne Eigenverbrauch: min 6.00 / max 8.20\n• 30–<100 kW mit Eigenverbrauch: min 1.20–6.00 (180÷kW) / max 10.96\n• 30–<100 kW ohne Eigenverbrauch: min 6.20 / max 8.20\n• 100–<150 kW mit Eigenverbrauch: min 1.20–6.00 (180÷kW) / max 7.20\n• 100–<150 kW ohne Eigenverbrauch: min 6.20 / max 5.40\n• ≥150 kW mit Eigenverbrauch: keine Min. / max 7.20\n• ≥150 kW ohne Eigenverbrauch: keine Min. / max 5.40",
-          "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch — die Minimalvergütung folgt der degressiven Formel 180 ÷ kW. Bei anderen Anlagenkategorien kann der Wert 0 bleiben.",
-          "basisverguetung": "Referenz-Marktpreis: die meisten Versorger (EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie). Fixpreis: ewz, IWB, SIG, AEW.",
-          "hkn_verguetung_rp_kwh": "Vergütung für Herkunftsnachweise (HKN). Opt-in bei den meisten Versorgern — wenn du deine HKN nicht an den Versorger verkaufst, muss der Wert 0.0 sein. Beispiel EKZ: bis 3.00 Rp/kWh nach Anmeldung auf myEKZ. Wenn Basisvergütung + HKN-Vergütung die Anrechenbarkeitsgrenze übersteigt, reduziert der Versorger die HKN-Vergütung automatisch auf den Cap.",
-          "fixpreis_rp_kwh": "Nur bei Basisvergütung 'Fixpreis'. Der flat-rate-Preis in Rp/kWh, den dein Versorger zahlt. Beispiele 2026: ewz 12.91, IWB 14.00, SIG 10.96, AEW 8.20.",
-          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. Die meisten Schweizer Versorger rechnen quartalsweise ab."
+          "anlagenkategorie": "Bestimmt automatisch die gesetzliche **Minimalvergütung** (EnV Art. 12) und die **Anrechenbarkeitsgrenze** (StromVV Art. 4).\n\n**Übersicht nach Kategorie:**\n- **≤30 kW** mit Eigenverbrauch: min `6.00` / max `10.96` Rp/kWh\n- **≤30 kW** ohne Eigenverbrauch: min `6.00` / max `8.20`\n- **30–<100 kW** mit Eigenverbrauch: min `1.20–6.00` (Formel `180÷kW`) / max `10.96`\n- **30–<100 kW** ohne Eigenverbrauch: min `6.20` / max `8.20`\n- **100–<150 kW** mit Eigenverbrauch: min `1.20–6.00` (`180÷kW`) / max `7.20`\n- **100–<150 kW** ohne Eigenverbrauch: min `6.20` / max `5.40`\n- **≥150 kW** mit Eigenverbrauch: *keine Min.* / max `7.20`\n- **≥150 kW** ohne Eigenverbrauch: *keine Min.* / max `5.40`",
+          "installierte_leistung_kw": "**Nur nötig** bei *30–<150 kW mit Eigenverbrauch* — die Minimalvergütung folgt der degressiven Formel `180 ÷ kW`. Bei anderen Anlagenkategorien kann der Wert **0** bleiben.",
+          "basisverguetung": "**Referenz-Marktpreis:** die meisten Versorger (*EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie*).\n\n**Fixpreis:** *ewz, IWB, SIG, AEW*.",
+          "hkn_verguetung_rp_kwh": "Vergütung für **Herkunftsnachweise** (*HKN*).\n\n**Opt-in bei den meisten Versorgern** — wenn du deine HKN nicht an den Versorger verkaufst, muss der Wert `0.0` sein.\n\n*Beispiel EKZ:* bis `3.00 Rp/kWh` nach Anmeldung auf myEKZ.\n\n**Hinweis:** wenn *Basisvergütung + HKN-Vergütung* die **Anrechenbarkeitsgrenze** übersteigt, reduziert der Versorger die HKN-Vergütung automatisch auf den Cap.",
+          "fixpreis_rp_kwh": "**Nur bei** Basisvergütung *Fixpreis*. Der flat-rate-Preis in Rp/kWh, den dein Versorger zahlt.\n\n*Beispiele 2026:* ewz `12.91`, IWB `14.00`, SIG `10.96`, AEW `8.20`.",
+          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**"
         }
       },
       "entities": {
@@ -48,9 +48,9 @@
           "namenspraefix": "Namenspräfix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "Der kWh-Zähler deiner Einspeisung ins Stromnetz — muss bereits im Energy-Dashboard unter 'Zurück ins Netz' verwendet werden.",
-          "rueckliefervergutung_chf": "Der vom Energy-Dashboard beim Einrichten von 'Zurück ins Netz mit Preis' automatisch erzeugte CHF-Sensor (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen Long-Term-Statistics.",
-          "namenspraefix": "Wird den Diagnose-Sensoren und Aktions-Buttons dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`). Nur ändern, wenn der Standardname kollidiert."
+          "stromnetzeinspeisung_kwh": "Der **kWh-Zähler** deiner Einspeisung ins Stromnetz — muss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
+          "rueckliefervergutung_chf": "Der vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor** (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`).\n\nDiese Integration schreibt in dessen **Long-Term-Statistics**.",
+          "namenspraefix": "Wird den **Diagnose-Sensoren** und **Aktions-Buttons** dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`).\n\n*Nur ändern*, wenn der Standardname kollidiert."
         }
       }
     },

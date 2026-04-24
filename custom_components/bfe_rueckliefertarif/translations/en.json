@@ -31,12 +31,12 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "Sets the legal minimum compensation (EnV Art. 12) and compensation cap (StromVV Art. 4) automatically. Overview:\n• ≤30 kW with self-consumption: min 6.00 / max 10.96 Rp/kWh\n• ≤30 kW feed-in only: min 6.00 / max 8.20\n• 30–<100 kW with self-consumption: min 1.20–6.00 (180÷kW) / max 10.96\n• 30–<100 kW feed-in only: min 6.20 / max 8.20\n• 100–<150 kW with self-consumption: min 1.20–6.00 (180÷kW) / max 7.20\n• 100–<150 kW feed-in only: min 6.20 / max 5.40\n• ≥150 kW with self-consumption: no min. / max 7.20\n• ≥150 kW feed-in only: no min. / max 5.40",
-          "installierte_leistung_kw": "Only required for 30–<150 kW plants with self-consumption — the minimum compensation follows the formula 180 ÷ kW. Leave at 0 for other plant categories.",
-          "basisverguetung": "Reference market price: most utilities (EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie). Fixed price: ewz, IWB, SIG, AEW.",
-          "hkn_verguetung_rp_kwh": "Payment for HKN (Herkunftsnachweise — Swiss guarantees of origin). Opt-in at most utilities — set to 0.0 if you don't sell your HKN to your utility. Example EKZ: up to 3.00 Rp/kWh after enrolling on myEKZ. If the base price + HKN payment exceeds the compensation cap, the utility reduces the HKN payment automatically to the cap.",
-          "fixpreis_rp_kwh": "Only used when the base price is set to 'Fixed price'. The flat per-kWh rate your utility pays. 2026 examples: ewz 12.91, IWB 14.00, SIG 10.96, AEW 8.20.",
-          "abrechnungs_rhythmus": "Match your utility's invoice cycle. Most Swiss utilities settle quarterly."
+          "anlagenkategorie": "Sets the legal **minimum compensation** (EnV Art. 12) and **compensation cap** (StromVV Art. 4) automatically.\n\n**Overview by category:**\n- **≤30 kW** with self-consumption: min `6.00` / max `10.96` Rp/kWh\n- **≤30 kW** feed-in only: min `6.00` / max `8.20`\n- **30–<100 kW** with self-consumption: min `1.20–6.00` (formula `180÷kW`) / max `10.96`\n- **30–<100 kW** feed-in only: min `6.20` / max `8.20`\n- **100–<150 kW** with self-consumption: min `1.20–6.00` (`180÷kW`) / max `7.20`\n- **100–<150 kW** feed-in only: min `6.20` / max `5.40`\n- **≥150 kW** with self-consumption: *no min.* / max `7.20`\n- **≥150 kW** feed-in only: *no min.* / max `5.40`",
+          "installierte_leistung_kw": "**Only required** for *30–<150 kW plants with self-consumption* — the minimum compensation follows the formula `180 ÷ kW`. Leave at **0** for other plant categories.",
+          "basisverguetung": "**Reference market price:** most utilities (*EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie*).\n\n**Fixed price:** *ewz, IWB, SIG, AEW*.",
+          "hkn_verguetung_rp_kwh": "Payment for **HKN** (*Herkunftsnachweise* — Swiss guarantees of origin).\n\n**Opt-in at most utilities** — set to `0.0` if you don't sell your HKN to your utility.\n\n*Example EKZ:* up to `3.00 Rp/kWh` after enrolling on myEKZ.\n\n**Note:** if base price + HKN payment exceeds the *compensation cap*, the utility automatically reduces the HKN payment to the cap.",
+          "fixpreis_rp_kwh": "**Only used** when base price is set to *Fixed price*. The flat per-kWh rate your utility pays.\n\n*2026 examples:* ewz `12.91`, IWB `14.00`, SIG `10.96`, AEW `8.20`.",
+          "abrechnungs_rhythmus": "Match your utility's invoice cycle. **Most Swiss utilities settle quarterly.**"
         }
       },
       "entities": {
@@ -48,9 +48,9 @@
           "namenspraefix": "Name prefix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "The kWh counter that tracks energy fed into the grid. Must already be wired into the Energy Dashboard under 'Return to grid'.",
-          "rueckliefervergutung_chf": "The CHF sensor that the Energy Dashboard auto-creates when you configure 'Return to grid with a price' (usually named `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its Long-Term Statistics.",
-          "namenspraefix": "Prefix for this integration's diagnostic sensors and action buttons (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`). Only change if the default collides."
+          "stromnetzeinspeisung_kwh": "The **kWh counter** that tracks energy fed into the grid. Must already be wired into the **Energy Dashboard** under *'Return to grid'*.",
+          "rueckliefervergutung_chf": "The **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'* (usually named `sensor.YOUR_GRID_EXPORT_compensation`).\n\nThis integration writes into its **Long-Term Statistics**.",
+          "namenspraefix": "Prefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
         }
       }
     },

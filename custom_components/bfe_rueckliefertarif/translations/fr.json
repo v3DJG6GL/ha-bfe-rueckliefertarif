@@ -31,12 +31,12 @@
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "anlagenkategorie": "Définit automatiquement la rémunération minimale (OEne art. 12) et le plafond de rétribution (OApEl art. 4).",
-          "installierte_leistung_kw": "Requis uniquement pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule 180 ÷ kW.",
-          "basisverguetung": "Prix de référence du marché : la plupart des fournisseurs. Tarif fixe : ewz, IWB, SIG, AEW.",
-          "hkn_verguetung_rp_kwh": "Rétribution pour les garanties d'origine (GO / HKN). Opt-in chez la plupart des fournisseurs — laissez 0.0 si vous ne vendez pas vos GO. Plafonné automatiquement si base + GO dépasse le plafond.",
-          "fixpreis_rp_kwh": "Uniquement avec rétribution de base 'Tarif fixe'. Le tarif forfaitaire en ct/kWh.",
-          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. La plupart des fournisseurs facturent par trimestre."
+          "anlagenkategorie": "Définit automatiquement la **rémunération minimale** (OEne art. 12) et le **plafond de rétribution** (OApEl art. 4).",
+          "installierte_leistung_kw": "**Requis uniquement** pour *30–<150 kW avec autoconsommation* — la rémunération minimale suit la formule `180 ÷ kW`.",
+          "basisverguetung": "**Prix de référence du marché :** la plupart des fournisseurs.\n\n**Tarif fixe :** *ewz, IWB, SIG, AEW*.",
+          "hkn_verguetung_rp_kwh": "Rétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO.\n\n*Plafonné automatiquement* si base + GO dépasse le plafond.",
+          "fixpreis_rp_kwh": "**Uniquement** avec rétribution de base *Tarif fixe*. Le tarif forfaitaire en ct/kWh.",
+          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. **La plupart des fournisseurs facturent par trimestre.**"
         }
       },
       "entities": {
