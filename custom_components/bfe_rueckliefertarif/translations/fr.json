@@ -49,7 +49,7 @@
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "Le compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
-          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard quand 'Retour au réseau avec prix' est configuré (généralement `sensor.<injection>_compensation`).",
+          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard quand 'Retour au réseau avec prix' est configuré (généralement `sensor.VOTRE_INJECTION_compensation`).",
           "namenspraefix": "Préfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
         }
       }

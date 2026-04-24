@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import OptionsFlowWithReload
 from homeassistant.helpers import selector
 
 from .const import (
@@ -270,7 +269,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="entities", data_schema=schema)
 
 
-class BfeRuecklieferTarifOptionsFlow(OptionsFlowWithReload):
+class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     """Options flow: edit the 6 tariff fields post-setup; reload entry on save."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
@@ -289,6 +288,10 @@ class BfeRuecklieferTarifOptionsFlow(OptionsFlowWithReload):
                 new_data = {**self.config_entry.data, **user_input}
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=new_data
+                )
+                # Trigger an entry reload so coordinator + sensors see the new values.
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
                 )
                 return self.async_create_entry(title="", data={})
 

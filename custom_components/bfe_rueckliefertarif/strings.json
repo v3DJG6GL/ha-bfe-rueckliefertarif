@@ -49,8 +49,8 @@
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "The kWh counter that tracks energy fed into the grid. Must already be wired into the Energy Dashboard under 'Return to grid'.",
-          "rueckliefervergutung_chf": "The CHF sensor that the Energy Dashboard auto-creates when you configure 'Return to grid with a price' (usually `sensor.<grid_export>_compensation`). This integration writes into its Long-Term Statistics.",
-          "namenspraefix": "Prefix for this integration's diagnostic sensors and action buttons (e.g. `sensor.<prefix>_basisverguetung`, `button.<prefix>_recompute_aktuelles_quartal`). Only change if the default collides."
+          "rueckliefervergutung_chf": "The CHF sensor that the Energy Dashboard auto-creates when you configure 'Return to grid with a price' (usually named `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its Long-Term Statistics.",
+          "namenspraefix": "Prefix for this integration's diagnostic sensors and action buttons (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`). Only change if the default collides."
         }
       }
     },

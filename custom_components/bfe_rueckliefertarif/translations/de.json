@@ -49,8 +49,8 @@
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "Der kWh-Zähler deiner Einspeisung ins Stromnetz — muss bereits im Energy-Dashboard unter 'Zurück ins Netz' verwendet werden.",
-          "rueckliefervergutung_chf": "Der vom Energy-Dashboard beim Einrichten von 'Zurück ins Netz mit Preis' automatisch erzeugte CHF-Sensor (üblicherweise `sensor.<stromnetzeinspeisung>_compensation`). Diese Integration schreibt in dessen Long-Term-Statistics.",
-          "namenspraefix": "Wird den Diagnose-Sensoren und Aktions-Buttons dieser Integration als Präfix vorangestellt (z. B. `sensor.<praefix>_basisverguetung`, `button.<praefix>_aktuelles_quartal_neu_berechnen`). Nur ändern, wenn der Standardname kollidiert."
+          "rueckliefervergutung_chf": "Der vom Energy-Dashboard beim Einrichten von 'Zurück ins Netz mit Preis' automatisch erzeugte CHF-Sensor (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen Long-Term-Statistics.",
+          "namenspraefix": "Wird den Diagnose-Sensoren und Aktions-Buttons dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`). Nur ändern, wenn der Standardname kollidiert."
         }
       }
     },
