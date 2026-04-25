@@ -61,20 +61,19 @@ _OPENDATA_URLS: dict[str, str] = {
     "en": "https://opendata.swiss/en/dataset/referenz-marktpreise-gemass-art-15-enfv",
     "fr": "https://opendata.swiss/fr/dataset/referenz-marktpreise-gemass-art-15-enfv",
 }
-# Fedlex (Swiss federal law portal) — EnV SR 730.01 (Energieverordnung) carries
-# Art. 12 Abs. 1bis (Mindestvergütung floors); StromVV SR 734.71 carries Art. 4
-# Abs. 3 Bst. e (Anrechenbarkeitsgrenze cap formula). Both in force 1.1.2026
-# via AS 2025 138 / AS 2025 139. Fedlex publishes only DE/FR/IT — English users
-# fall back to DE.
+# Fedlex (Swiss federal law portal) — EnV SR 730.01 carries Art. 12 Abs. 1bis
+# (Mindestvergütung floors); StromVV SR 734.71 carries Art. 4 Abs. 3 Bst. e
+# (cap formula). Both in force 1.1.2026 via AS 2025 138 / AS 2025 139.
+# ELI numbers verified via redirect from legacy admin.ch/opc URLs.
 _FEDLEX_ENV_URLS: dict[str, str] = {
-    "de": "https://www.fedlex.admin.ch/eli/cc/2017/763/de",
-    "en": "https://www.fedlex.admin.ch/eli/cc/2017/763/de",
-    "fr": "https://www.fedlex.admin.ch/eli/cc/2017/763/fr",
+    "de": "https://www.fedlex.admin.ch/eli/cc/2017/766/de",
+    "en": "https://www.fedlex.admin.ch/eli/cc/2017/766/en",
+    "fr": "https://www.fedlex.admin.ch/eli/cc/2017/766/fr",
 }
 _FEDLEX_STROMVV_URLS: dict[str, str] = {
-    "de": "https://www.fedlex.admin.ch/eli/cc/2008/178/de",
-    "en": "https://www.fedlex.admin.ch/eli/cc/2008/178/de",
-    "fr": "https://www.fedlex.admin.ch/eli/cc/2008/178/fr",
+    "de": "https://www.fedlex.admin.ch/eli/cc/2008/226/de",
+    "en": "https://www.fedlex.admin.ch/eli/cc/2008/226/en",
+    "fr": "https://www.fedlex.admin.ch/eli/cc/2008/226/fr",
 }
 
 
