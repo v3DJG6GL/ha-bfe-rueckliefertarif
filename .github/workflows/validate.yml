@@ -22,6 +22,16 @@ jobs:
       - name: Run pytest
         run: pytest -v
 
+  strings-en-sync:
+    # strings.json is the developer source-of-truth and HA core's Lokalise input.
+    # translations/en.json is what HA actually reads at runtime for English.
+    # Custom integrations don't have Lokalise — keep them byte-identical manually.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: strings.json must equal translations/en.json
+        run: diff -u custom_components/bfe_rueckliefertarif/strings.json custom_components/bfe_rueckliefertarif/translations/en.json
+
   hassfest:
     runs-on: ubuntu-latest
     steps:
