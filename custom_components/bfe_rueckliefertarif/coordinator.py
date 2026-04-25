@@ -237,8 +237,11 @@ class BfeCoordinator(DataUpdateCoordinator):
     def _notify_skipped_quarters(self, skipped: list[str]) -> None:
         """Summarize skipped quarters in a single persistent UI notification.
 
-        ``notification_id`` is stable per entry, so re-running auto-import
-        updates the card in place (no stacking).
+        Mechanism-agnostic wording: the message is about *what we don't have
+        in tariffs.json yet for this user's utility*, NOT about whether
+        BFE-RMP was relevant pre-2026 (it was for ~17% of CH utilities by
+        2025, not for most). ``notification_id`` is stable per entry, so
+        re-running auto-import updates the card in place (no stacking).
         """
         from homeassistant.components.persistent_notification import (
             async_create as _notify,
@@ -254,11 +257,6 @@ class BfeCoordinator(DataUpdateCoordinator):
             _dismiss(self.hass, nid)
             return
 
-        bfe_keys = sorted(str(q) for q in self.quarterly)
-        bfe_range = (
-            f"{bfe_keys[0]} – {bfe_keys[-1]}" if bfe_keys else "(none)"
-        )
-
         utility_key = self._config.get(CONF_ENERGIEVERSORGER) or "(unknown)"
         try:
             db = load_tariffs()
@@ -266,28 +264,33 @@ class BfeCoordinator(DataUpdateCoordinator):
             earliest_window = min((r["valid_from"] for r in rates), default=None)
         except Exception:  # noqa: BLE001
             earliest_window = None
-        window_text = f"**{earliest_window} onwards**" if earliest_window else "(unknown)"
+        window_text = (
+            f"starts at **{earliest_window}**"
+            if earliest_window
+            else "is empty"
+        )
 
         skipped_text = ", ".join(skipped)
         msg = (
-            f"BFE published reference market prices for **{len(bfe_keys)} quarter(s)** "
-            f"({bfe_range}). The bundled tariff database for utility "
-            f"**`{utility_key}`** covers {window_text}, so the following "
-            f"**{len(skipped)} earlier quarter(s) were skipped** (no remuneration "
-            f"was written for them):\n\n"
+            f"The bundled tariff database for utility **`{utility_key}`** "
+            f"{window_text}, but Home Assistant has grid-export records for "
+            f"**{len(skipped)} earlier quarter(s)** that couldn't be imported "
+            f"(no remuneration was written for them):\n\n"
             f"{skipped_text}\n\n"
-            f"To populate older years, open a PR against the "
+            f"To make older quarters importable, the `rates[]` list for "
+            f"**`{utility_key}`** in the "
             f"[bfe-tariffs-data](https://github.com/v3DJG6GL/bfe-tariffs-data) "
-            f"companion repo (extend each utility's `rates[]` list with an earlier "
-            f"`valid_from` record). The integration auto-refreshes daily — once the "
-            f"PR is merged, the next refresh will let auto-import pick up the older "
-            f"quarters."
+            f"companion repo needs to be extended back in time. Historical "
+            f"per-utility rates are available at "
+            f"[VESE pvtarif](https://opendata.vese.ch/pvtarif/) — open an "
+            f"issue or PR upstream and the next daily refresh will pick the "
+            f"new data up automatically."
         )
 
         _notify(
             self.hass,
             msg,
-            title="BFE Rückliefertarif — older quarters skipped (no tariff data)",
+            title="Older quarters skipped — your utility's tariff records start later than your export data",
             notification_id=nid,
         )
 
