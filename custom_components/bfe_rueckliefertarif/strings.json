@@ -33,13 +33,13 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "## Size + self-consumption\ndetermines the legal **minimum remuneration** (EnV Art. 12) and **remuneration cap** (StromVV Art. 4), applied automatically.\n\n| Category | Min (Rp/kWh) | Cap (Rp/kWh) |\n|---|---|---|\n| ≤30 kW with self-consumption | **6.00** | **10.96** |\n| ≤30 kW feed-in only | **6.00** | **8.20** |\n| 30–<100 kW with self-consumption | **180÷kW** | **10.96** |\n| 30–<100 kW feed-in only | **6.20** | **8.20** |\n| 100–<150 kW with self-consumption | **180÷kW** | **7.20** |\n| 100–<150 kW feed-in only | **6.20** | **5.40** |\n| ≥150 kW with self-consumption | no min | **7.20** |\n| ≥150 kW feed-in only | no min | **5.40** |",
-          "installierte_leistung_kw": "**Only required** for 30–<150 kW plants with self-consumption — the minimum remuneration follows the formula `180 ÷ kW`.\n\nLeave at `0` for all other categories.",
-          "basisverguetung": "- **Reference market price** → most utilities: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixed price** → ewz, IWB, SIG, AEW.\n\nThe reference market price is published quarterly by the [Swiss Federal Office of Energy (SFOE)]({agency_url}). Source data: [opendata.swiss]({opendata_url}).",
-          "fixpreis_rp_kwh": "Only used when **Base price = Fixed price**.\n\n2026 examples (Rp/kWh):\n- ewz: **7.91** (+ HKN 5.00 additive)\n- IWB: **12.95** (HKN included)\n- SIG: **8.16** (+ HKN 2.80 additive)\n- AEW: **8.20** (HKN included)",
-          "hkn_verguetung_rp_kwh": "Remuneration for **HKN** (*Herkunftsnachweise*, Swiss guarantees of origin).\n\n**Opt-in at most utilities** — set to `0.0` unless you sell HKN to your utility. EKZ pays up to **3.00 Rp/kWh** after enrolling on *myEKZ*.",
-          "verguetungs_obergrenze": "**On**: total remuneration capped at limit, derived from *Plant category* above. When base + HKN would exceed the cap, HKN is reduced to fit.\n\n- **On** → EKZ, Groupe E, Primeo\n- **Off** → every other Swiss utility (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
-          "abrechnungs_rhythmus": "Match your utility's invoice cycle. **Most Swiss utilities settle quarterly.**"
+          "anlagenkategorie": "## Size + self-consumption\ndetermines the legal **minimum remuneration** (EnV Art. 12) and **remuneration cap** (StromVV Art. 4), applied automatically.\n\n| Size | Mode | Min (Rp/kWh) | Cap (Rp/kWh) |\n|---|---|---|---|\n| ≤30 kW | with self-consumption | **6.00** | **10.96** |\n| ≤30 kW | feed-in only | **6.00** | **8.20** |\n| 30–<100 kW | with self-consumption | **180÷kW** | **10.96** |\n| 30–<100 kW | feed-in only | **6.20** | **8.20** |\n| 100–<150 kW | with self-consumption | **180÷kW** | **7.20** |\n| 100–<150 kW | feed-in only | **6.20** | **5.40** |\n| ≥150 kW | with self-consumption | no min | **7.20** |\n| ≥150 kW | feed-in only | no min | **5.40** |",
+          "installierte_leistung_kw": "## Degressive formula\n**Only required** for 30–<150 kW plants with self-consumption — the minimum remuneration follows the formula `180 ÷ kW`.\n\nLeave at `0` for all other categories.",
+          "basisverguetung": "## Pricing model\n- **Reference market price** → most utilities: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixed price** → ewz, IWB, SIG, AEW.\n\nThe reference market price is published quarterly by the [Swiss Federal Office of Energy (SFOE)]({agency_url}). Source data: [opendata.swiss]({opendata_url}).",
+          "fixpreis_rp_kwh": "## 2026 examples\nOnly used when **Base price = Fixed price**.\n\n| Utility | Fixed price (Rp/kWh) | HKN |\n|---|---|---|\n| ewz | **7.91** | + 5.00 (additive) |\n| IWB | **12.95** | included |\n| SIG | **8.16** | + 2.80 (additive) |\n| AEW | **8.20** | included |",
+          "hkn_verguetung_rp_kwh": "## HKN opt-in\nRemuneration for **HKN** (*Herkunftsnachweise*, Swiss guarantees of origin).\n\n**Opt-in at most utilities** — set to `0.0` unless you sell HKN to your utility. EKZ pays up to **3.00 Rp/kWh** after enrolling on *myEKZ*.",
+          "verguetungs_obergrenze": "## Cap behavior\n**On**: total remuneration capped at limit, derived from *Plant category* above. When base + HKN would exceed the cap, HKN is reduced to fit.\n\n- **On** → EKZ, Groupe E, Primeo\n- **Off** → every other Swiss utility (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
+          "abrechnungs_rhythmus": "## Invoice cycle\nMatch your utility's invoice cycle. **Most Swiss utilities settle quarterly.**"
         }
       },
       "entities": {
@@ -51,9 +51,9 @@
           "namenspraefix": "Name prefix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "The **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
-          "rueckliefervergutung_chf": "The **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
-          "namenspraefix": "Prefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
+          "stromnetzeinspeisung_kwh": "## kWh counter\nThe **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
+          "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
+          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
         }
       }
     },
@@ -86,13 +86,13 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "## Size + self-consumption\ndetermines the legal **minimum remuneration** (EnV Art. 12) and **remuneration cap** (StromVV Art. 4), applied automatically.\n\n| Category | Min (Rp/kWh) | Cap (Rp/kWh) |\n|---|---|---|\n| ≤30 kW with self-consumption | **6.00** | **10.96** |\n| ≤30 kW feed-in only | **6.00** | **8.20** |\n| 30–<100 kW with self-consumption | **180÷kW** | **10.96** |\n| 30–<100 kW feed-in only | **6.20** | **8.20** |\n| 100–<150 kW with self-consumption | **180÷kW** | **7.20** |\n| 100–<150 kW feed-in only | **6.20** | **5.40** |\n| ≥150 kW with self-consumption | no min | **7.20** |\n| ≥150 kW feed-in only | no min | **5.40** |",
-          "installierte_leistung_kw": "**Only required** for 30–<150 kW plants with self-consumption — the minimum remuneration follows the formula `180 ÷ kW`.\n\nLeave at `0` for all other categories.",
-          "basisverguetung": "- **Reference market price** → most utilities: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixed price** → ewz, IWB, SIG, AEW.\n\nThe reference market price is published quarterly by the [Swiss Federal Office of Energy (SFOE)]({agency_url}). Source data: [opendata.swiss]({opendata_url}).",
-          "fixpreis_rp_kwh": "Only used when **Base price = Fixed price**.\n\n2026 examples (Rp/kWh):\n- ewz: **7.91** (+ HKN 5.00 additive)\n- IWB: **12.95** (HKN included)\n- SIG: **8.16** (+ HKN 2.80 additive)\n- AEW: **8.20** (HKN included)",
-          "hkn_verguetung_rp_kwh": "Remuneration for **HKN** (*Herkunftsnachweise*, Swiss guarantees of origin).\n\n**Opt-in at most utilities** — set to `0.0` unless you sell HKN to your utility. EKZ pays up to **3.00 Rp/kWh** after enrolling on *myEKZ*.",
-          "verguetungs_obergrenze": "**On**: total remuneration capped at limit, derived from *Plant category* above. When base + HKN would exceed the cap, HKN is reduced to fit.\n\n- **On** → EKZ, Groupe E, Primeo\n- **Off** → every other Swiss utility (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
-          "abrechnungs_rhythmus": "Match your utility's invoice cycle. **Most Swiss utilities settle quarterly.**"
+          "anlagenkategorie": "## Size + self-consumption\ndetermines the legal **minimum remuneration** (EnV Art. 12) and **remuneration cap** (StromVV Art. 4), applied automatically.\n\n| Size | Mode | Min (Rp/kWh) | Cap (Rp/kWh) |\n|---|---|---|---|\n| ≤30 kW | with self-consumption | **6.00** | **10.96** |\n| ≤30 kW | feed-in only | **6.00** | **8.20** |\n| 30–<100 kW | with self-consumption | **180÷kW** | **10.96** |\n| 30–<100 kW | feed-in only | **6.20** | **8.20** |\n| 100–<150 kW | with self-consumption | **180÷kW** | **7.20** |\n| 100–<150 kW | feed-in only | **6.20** | **5.40** |\n| ≥150 kW | with self-consumption | no min | **7.20** |\n| ≥150 kW | feed-in only | no min | **5.40** |",
+          "installierte_leistung_kw": "## Degressive formula\n**Only required** for 30–<150 kW plants with self-consumption — the minimum remuneration follows the formula `180 ÷ kW`.\n\nLeave at `0` for all other categories.",
+          "basisverguetung": "## Pricing model\n- **Reference market price** → most utilities: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixed price** → ewz, IWB, SIG, AEW.\n\nThe reference market price is published quarterly by the [Swiss Federal Office of Energy (SFOE)]({agency_url}). Source data: [opendata.swiss]({opendata_url}).",
+          "fixpreis_rp_kwh": "## 2026 examples\nOnly used when **Base price = Fixed price**.\n\n| Utility | Fixed price (Rp/kWh) | HKN |\n|---|---|---|\n| ewz | **7.91** | + 5.00 (additive) |\n| IWB | **12.95** | included |\n| SIG | **8.16** | + 2.80 (additive) |\n| AEW | **8.20** | included |",
+          "hkn_verguetung_rp_kwh": "## HKN opt-in\nRemuneration for **HKN** (*Herkunftsnachweise*, Swiss guarantees of origin).\n\n**Opt-in at most utilities** — set to `0.0` unless you sell HKN to your utility. EKZ pays up to **3.00 Rp/kWh** after enrolling on *myEKZ*.",
+          "verguetungs_obergrenze": "## Cap behavior\n**On**: total remuneration capped at limit, derived from *Plant category* above. When base + HKN would exceed the cap, HKN is reduced to fit.\n\n- **On** → EKZ, Groupe E, Primeo\n- **Off** → every other Swiss utility (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
+          "abrechnungs_rhythmus": "## Invoice cycle\nMatch your utility's invoice cycle. **Most Swiss utilities settle quarterly.**"
         }
       },
       "reimport_quarter": {
@@ -102,7 +102,7 @@
           "quarter": "Quarter"
         },
         "data_description": {
-          "quarter": "**Format:** `YYYYQN` (e.g. `2026Q1`, `2025Q4`).\n\nThe quarter must already be published by SFOE — typically about **2 weeks after quarter end**."
+          "quarter": "## Quarter identifier\n**Format:** `YYYYQN` (e.g. `2026Q1`, `2025Q4`).\n\nThe quarter must already be published by SFOE — typically about **2 weeks after quarter end**."
         }
       },
       "entities": {
@@ -114,9 +114,9 @@
           "namenspraefix": "Name prefix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "kWh counter wired into the **Energy Dashboard** under *'Return to grid'*.",
-          "rueckliefervergutung_chf": "Auto-created CHF sensor (HA suffix `_compensation`, usually `sensor.YOUR_GRID_EXPORT_compensation`).",
-          "namenspraefix": "Prefix used to name this integration's diagnostic sensors and buttons."
+          "stromnetzeinspeisung_kwh": "## kWh counter\nkWh counter wired into the **Energy Dashboard** under *'Return to grid'*.",
+          "rueckliefervergutung_chf": "## Auto-created CHF sensor\nAuto-created CHF sensor (HA suffix `_compensation`, usually `sensor.YOUR_GRID_EXPORT_compensation`).",
+          "namenspraefix": "## Naming prefix\nPrefix used to name this integration's diagnostic sensors and buttons."
         }
       }
     },
