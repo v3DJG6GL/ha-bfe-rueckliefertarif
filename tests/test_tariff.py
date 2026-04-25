@@ -1,4 +1,4 @@
-"""Tests for tariff.py national-law tables and formulas."""
+"""Tests for tariff.py national-law tables and Rückliefervergütung formula."""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ from custom_components.bfe_rueckliefertarif.tariff import (
     Segment,
     anrechenbarkeitsgrenze_rp_kwh,
     chf_per_mwh_to_rp_per_kwh,
-    effective_rp_kwh_fixed,
-    effective_rp_kwh_rmp,
+    effective_rp_kwh,
     mindestverguetung_rp_kwh,
 )
 
@@ -77,56 +76,95 @@ class TestAnrechenbarkeitsgrenze:
         assert anrechenbarkeitsgrenze_rp_kwh(Segment.XL_OHNE_EV) == 5.40
 
 
-class TestEffectiveRmp:
-    def test_q1_2026_ekz_small_mit_ev_no_hkn(self):
-        # Q1 2026 BFE reference = 102.66 CHF/MWh = 10.266 Rp/kWh
-        # SMALL_MIT_EV: floor 6.00, cap 10.96
-        # max(10.266, 6.00) = 10.266; no HKN; min(10.266, 10.96) = 10.266
-        rp = effective_rp_kwh_rmp(10.266, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
-        assert rp == pytest.approx(10.266)
+class TestEffectiveOhneObergrenze:
+    """Vergütungs-Obergrenze=False — base + HKN paid additively, no upper cap."""
 
-    def test_q1_2026_ekz_small_mit_ev_with_hkn_hits_cap(self):
-        # 10.266 + 3.0 = 13.266, but cap = 10.96 → 10.96
-        rp = effective_rp_kwh_rmp(10.266, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=3.0)
-        assert rp == 10.96
+    def test_normal_market_base_plus_hkn(self):
+        # Q1 2026 BFE reference 10.266 + HKN 3 → 13.266 (no cap)
+        rp = effective_rp_kwh(
+            10.266, Segment.SMALL_MIT_EV, 10, 3.0, verguetungs_obergrenze=False
+        )
+        assert rp == pytest.approx(13.266)
 
-    def test_low_reference_hits_floor(self):
-        # Reference 3.0 Rp/kWh, floor 6.00 for SMALL → raised to 6.00
-        rp = effective_rp_kwh_rmp(3.0, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
-        assert rp == 6.00
+    def test_low_reference_lifted_to_floor(self):
+        # 3.0 < floor 6.0 → base raised to floor; HKN added
+        rp = effective_rp_kwh(
+            3.0, Segment.SMALL_MIT_EV, 10, 2.0, verguetungs_obergrenze=False
+        )
+        assert rp == pytest.approx(8.0)  # 6.0 + 2.0
 
-    def test_xl_segment_no_floor_low_ref_stays_low(self):
-        rp = effective_rp_kwh_rmp(3.0, Segment.XL_OHNE_EV, 200, hkn_bonus_rp_kwh=0.0)
-        assert rp == 3.0  # no floor, no HKN, well under 5.40 cap
+    def test_iwb_fixed_paid_in_full(self):
+        # IWB 12.95 (HKN bundled, hkn=0) — additive utility, no cap → 12.95
+        rp = effective_rp_kwh(
+            12.95, Segment.SMALL_MIT_EV, 10, 0.0, verguetungs_obergrenze=False
+        )
+        assert rp == pytest.approx(12.95)
 
-    def test_xl_mit_ev_cap_binds(self):
-        rp = effective_rp_kwh_rmp(9.0, Segment.XL_MIT_EV, 200, hkn_bonus_rp_kwh=0.0)
-        assert rp == 7.20  # XL_MIT_EV cap
+    def test_ewz_base_plus_hkn_full(self):
+        # ewz: fixed 7.91 + HKN 5.0 → 12.91, no cap
+        rp = effective_rp_kwh(
+            7.91, Segment.SMALL_MIT_EV, 10, 5.0, verguetungs_obergrenze=False
+        )
+        assert rp == pytest.approx(12.91)
 
-
-class TestEffectiveFixed:
-    def test_iwb_14_capped(self):
-        # IWB pays 14.0 flat; SMALL_MIT_EV cap 10.96
-        rp = effective_rp_kwh_fixed(14.0, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
-        assert rp == 10.96
-
-    def test_sig_10_96_exactly_at_cap(self):
-        rp = effective_rp_kwh_fixed(10.96, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
-        assert rp == 10.96
-
-    def test_aew_8_2_inclusive(self):
-        # AEW pays 8.2 HKN-inclusive → hkn_bonus 0
-        rp = effective_rp_kwh_fixed(8.2, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
+    def test_aew_inclusive_flat(self):
+        # AEW 8.20 includes HKN, hkn=0 → 8.20
+        rp = effective_rp_kwh(
+            8.2, Segment.SMALL_MIT_EV, 10, 0.0, verguetungs_obergrenze=False
+        )
         assert rp == pytest.approx(8.2)
 
-    def test_ewz_12_91_capped(self):
-        rp = effective_rp_kwh_fixed(12.91, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
+    def test_xl_no_floor_low_reference_stays_low(self):
+        rp = effective_rp_kwh(
+            3.0, Segment.XL_OHNE_EV, 200, 0.0, verguetungs_obergrenze=False
+        )
+        assert rp == pytest.approx(3.0)
+
+
+class TestEffectiveMitObergrenze:
+    """Vergütungs-Obergrenze=True — EKZ-style cap with two sub-rules."""
+
+    def test_q1_2026_ekz_no_hkn_below_cap(self):
+        # 10.266 < cap 10.96, no HKN → 10.266 (cap not engaged)
+        rp = effective_rp_kwh(
+            10.266, Segment.SMALL_MIT_EV, 10, 0.0, verguetungs_obergrenze=True
+        )
+        assert rp == pytest.approx(10.266)
+
+    def test_q1_2026_ekz_with_hkn_hits_cap_hkn_reduced(self):
+        # 10.266 + 3.0 = 13.266 > cap 10.96 → reduced to 10.96 (HKN-Vergütung effectively cut)
+        rp = effective_rp_kwh(
+            10.266, Segment.SMALL_MIT_EV, 10, 3.0, verguetungs_obergrenze=True
+        )
         assert rp == 10.96
 
-    def test_fixed_below_floor_raised_to_floor(self):
-        # Shouldn't happen in practice (utilities never pay below legal minimum), but covered
-        rp = effective_rp_kwh_fixed(3.0, Segment.SMALL_MIT_EV, 10, hkn_bonus_rp_kwh=0.0)
-        assert rp == 6.00
+    def test_base_alone_at_cap_hkn_forfeited(self):
+        # Base = cap exactly → HKN forfeited per EKZ clause 2 (no Anspruch on HKN)
+        rp = effective_rp_kwh(
+            10.96, Segment.SMALL_MIT_EV, 10, 3.0, verguetungs_obergrenze=True
+        )
+        assert rp == 10.96
+
+    def test_base_alone_above_cap_hkn_forfeited_full_base_paid(self):
+        # Base 12.0 > cap 10.96 → producer gets base 12.0 (NOT capped to 10.96), zero HKN
+        rp = effective_rp_kwh(
+            12.0, Segment.SMALL_MIT_EV, 10, 3.0, verguetungs_obergrenze=True
+        )
+        assert rp == pytest.approx(12.0)
+
+    def test_xl_mit_ev_cap_binds_at_7_20(self):
+        rp = effective_rp_kwh(
+            7.0, Segment.XL_MIT_EV, 200, 3.0, verguetungs_obergrenze=True
+        )
+        # 7.0 + 3.0 = 10.0 > cap 7.20 → reduced to 7.20
+        assert rp == 7.20
+
+    def test_low_reference_lifted_to_floor_then_hkn(self):
+        # 3.0 < floor 6.0 → base 6.0; 6.0 + 3.0 = 9.0 < cap 10.96 → 9.0
+        rp = effective_rp_kwh(
+            3.0, Segment.SMALL_MIT_EV, 10, 3.0, verguetungs_obergrenze=True
+        )
+        assert rp == pytest.approx(9.0)
 
 
 class TestUnitConversion:

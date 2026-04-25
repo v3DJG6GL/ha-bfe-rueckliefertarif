@@ -3,12 +3,13 @@
     "step": {
       "user": {
         "title": "BFE Rückliefertarif — Choisir le fournisseur",
-        "description": "## Aperçu des tarifs de reprise 2026\n\n| Fournisseur | Rétribution de base | Rétribution GO (opt-in) | Facturation |\n|---|---|---|---|\n| EKZ | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| BKW | Prix de référence du marché | jusqu'à 2.00 ct/kWh (naturemade star) | Trimestrielle |\n| CKW | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| Groupe E | Prix de référence du marché | jusqu'à 4.00 ct/kWh | Trimestrielle |\n| Romande Energie | Prix de référence du marché | 0.00 (1.50 uniquement T1 2026) | Trimestrielle |\n| SAK | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| SGSW | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Trimestrielle |\n| ewz | Tarif fixe 12.91 ct/kWh | inclus dans la rétribution de base | Trimestrielle |\n| IWB | Tarif fixe 14.00 ct/kWh | inclus dans la rétribution de base | Trimestrielle |\n| SIG | Tarif fixe 10.96 ct/kWh (au plafond) | 0.00 | Trimestrielle |\n| AEW | Tarif fixe 8.20 ct/kWh (GO inclus) | 0.00 | Trimestrielle |\n| Autre / Custom | — | — | — |\n\nVotre choix prérempli les valeurs à l'étape suivante — toutes les valeurs restent modifiables.",
+        "description": "## Aperçu des tarifs de reprise 2026\n\n| Fournisseur | Rétribution de base | Rétribution GO (opt-in) | Plafonnement | Facturation |\n|---|---|---|---|---|\n| EKZ | Prix de référence du marché | jusqu'à 3.00 ct/kWh | **Oui** | Trimestrielle |\n| BKW | Prix de référence du marché | jusqu'à 2.00 ct/kWh (naturemade star) | Non | Trimestrielle |\n| CKW | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Non | Trimestrielle |\n| Groupe E | Prix de référence du marché | jusqu'à 4.00 ct/kWh | **Oui** | Trimestrielle |\n| Primeo Energie | Prix de référence du marché | jusqu'à 2.00 ct/kWh | **Oui** | Trimestrielle |\n| Romande Energie | Prix de référence du marché | 1.50 ct/kWh | Non | Trimestrielle |\n| SAK | Prix de référence du marché | jusqu'à 1.50 ct/kWh | Non | Trimestrielle |\n| SGSW | Prix de référence du marché | jusqu'à 4.60 ct/kWh | Non | Trimestrielle |\n| ewz | Tarif fixe 7.91 ct/kWh | jusqu'à 5.00 ct/kWh (additif) | Non | Trimestrielle |\n| IWB | Tarif fixe 12.95 ct/kWh | inclus dans la base | Non | Trimestrielle |\n| SIG | Tarif fixe 8.16 ct/kWh | jusqu'à 2.80 ct/kWh (additif) | Non | Trimestrielle |\n| AEW | Tarif fixe 8.20 ct/kWh (GO inclus) | 0.00 | Non | Trimestrielle |\n| Autre / Custom | — | — | configurable | — |\n\n**Plafonnement de la rétribution** = le fournisseur applique-t-il un plafond (Anrechenbarkeitsgrenze, OApEl art. 4) sur le total base + GO. Seuls EKZ, Groupe E et Primeo appliquent ce plafond ; tous les autres versent base + GO de manière additive.\n\nVotre choix prérempli les valeurs à l'étape suivante — toutes les valeurs restent modifiables.",
         "menu_options": {
           "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
           "preset_bkw": "BKW — Berner Kraftwerke",
           "preset_ckw": "CKW — Centralschweizerische Kraftwerke",
           "preset_groupe_e": "Groupe E",
+          "preset_primeo": "Primeo Energie",
           "preset_romande_energie": "Romande Energie",
           "preset_sak": "SAK — St. Galler Stadtwerke",
           "preset_sgsw": "SGSW — Sankt Gallen Stadt",
@@ -28,14 +29,16 @@
           "basisverguetung": "Rétribution de base",
           "hkn_verguetung_rp_kwh": "Rétribution GO (ct/kWh)",
           "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
+          "verguetungs_obergrenze": "Plafonnement de la rétribution",
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "anlagenkategorie": "Définit automatiquement la **rémunération minimale** (OEne art. 12) et le **plafond de rétribution** (OApEl art. 4).",
+          "anlagenkategorie": "Définit automatiquement la **rémunération minimale** (OEne art. 12).",
           "installierte_leistung_kw": "**Requis uniquement** pour *30–<150 kW avec autoconsommation* — la rémunération minimale suit la formule `180 ÷ kW`.",
           "basisverguetung": "**Prix de référence du marché :** la plupart des fournisseurs.\n\n**Tarif fixe :** *ewz, IWB, SIG, AEW*.",
-          "hkn_verguetung_rp_kwh": "Rétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO.\n\n*Plafonné automatiquement* si base + GO dépasse le plafond.",
+          "hkn_verguetung_rp_kwh": "Rétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO.",
           "fixpreis_rp_kwh": "**Uniquement** avec rétribution de base *Tarif fixe*. Le tarif forfaitaire en ct/kWh.",
+          "verguetungs_obergrenze": "Activer pour EKZ, Groupe E, Primeo. Désactivé pour tous les autres.",
           "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. **La plupart des fournisseurs facturent par trimestre.**"
         }
       },
@@ -49,7 +52,7 @@
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "Le compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
-          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard quand 'Retour au réseau avec prix' est configuré (généralement `sensor.VOTRE_INJECTION_compensation`).",
+          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard (HA ajoute le suffixe `_compensation`, généralement `sensor.VOTRE_INJECTION_compensation`).",
           "namenspraefix": "Préfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
         }
       }
@@ -79,7 +82,11 @@
           "basisverguetung": "Rétribution de base",
           "hkn_verguetung_rp_kwh": "Rétribution GO (ct/kWh)",
           "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
+          "verguetungs_obergrenze": "Plafonnement de la rétribution",
           "abrechnungs_rhythmus": "Fréquence de facturation"
+        },
+        "data_description": {
+          "verguetungs_obergrenze": "Activer pour EKZ, Groupe E, Primeo. Désactivé pour tous les autres."
         }
       },
       "reimport_quarter": {

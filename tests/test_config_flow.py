@@ -31,10 +31,11 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_NAMENSPRAEFIX,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_VERGUETUNGS_OBERGRENZE,
     _V1_TO_V2_KEY_MAP,
     _V1_TO_V2_VALUE_MAP,
 )
-from custom_components.bfe_rueckliefertarif.presets import list_preset_keys
+from custom_components.bfe_rueckliefertarif.presets import PRESETS, list_preset_keys
 from custom_components.bfe_rueckliefertarif.tariff import Segment
 
 
@@ -196,6 +197,80 @@ class TestMigrationMap:
         assert migrated == v2_data
 
 
+class TestPresetVerguetungsObergrenze:
+    """Each preset must declare verguetungs_obergrenze; only EKZ/Groupe E/Primeo on."""
+
+    def test_every_preset_has_verguetungs_obergrenze(self):
+        for key, preset in PRESETS.items():
+            assert hasattr(preset, "verguetungs_obergrenze"), (
+                f"preset {key} missing verguetungs_obergrenze field"
+            )
+            assert isinstance(preset.verguetungs_obergrenze, bool)
+
+    def test_only_ekz_groupe_e_primeo_apply_cap(self):
+        with_cap = {k for k, p in PRESETS.items() if p.verguetungs_obergrenze}
+        assert with_cap == {"ekz", "groupe_e", "primeo"}, (
+            f"Unexpected utilities applying Vergütungs-Obergrenze: {with_cap}"
+        )
+
+    def test_custom_default_is_no_cap(self):
+        assert PRESETS["custom"].verguetungs_obergrenze is False
+
+
+class TestV2ToV3Migration:
+    """v2→v3 seeds verguetungs_obergrenze from the entry's energieversorger preset."""
+
+    def _migrate_v2_to_v3(self, entry_data: dict) -> dict:
+        """Replicate the logic in async_migrate_entry's v2→v3 branch."""
+        data = dict(entry_data)
+        energieversorger = data.get(CONF_ENERGIEVERSORGER, "custom")
+        preset = PRESETS.get(energieversorger)
+        data[CONF_VERGUETUNGS_OBERGRENZE] = (
+            preset.verguetungs_obergrenze if preset is not None else False
+        )
+        return data
+
+    def test_ekz_entry_gets_cap_on(self):
+        v2 = {CONF_ENERGIEVERSORGER: "ekz"}
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_VERGUETUNGS_OBERGRENZE] is True
+
+    def test_groupe_e_entry_gets_cap_on(self):
+        v2 = {CONF_ENERGIEVERSORGER: "groupe_e"}
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_VERGUETUNGS_OBERGRENZE] is True
+
+    def test_bkw_entry_gets_cap_off(self):
+        v2 = {CONF_ENERGIEVERSORGER: "bkw"}
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_VERGUETUNGS_OBERGRENZE] is False
+
+    def test_iwb_entry_gets_cap_off(self):
+        v2 = {CONF_ENERGIEVERSORGER: "iwb"}
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_VERGUETUNGS_OBERGRENZE] is False
+
+    def test_custom_entry_gets_cap_off(self):
+        v2 = {CONF_ENERGIEVERSORGER: "custom"}
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_VERGUETUNGS_OBERGRENZE] is False
+
+    def test_unknown_energieversorger_defaults_off(self):
+        v2 = {CONF_ENERGIEVERSORGER: "future_unknown_utility"}
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_VERGUETUNGS_OBERGRENZE] is False
+
+    def test_v2_other_keys_preserved(self):
+        v2 = {
+            CONF_ENERGIEVERSORGER: "ekz",
+            CONF_HKN_VERGUETUNG_RP_KWH: 3.0,
+            CONF_BASISVERGUETUNG: BASISVERGUETUNG_REFERENZMARKTPREIS,
+        }
+        v3 = self._migrate_v2_to_v3(v2)
+        assert v3[CONF_HKN_VERGUETUNG_RP_KWH] == 3.0
+        assert v3[CONF_BASISVERGUETUNG] == BASISVERGUETUNG_REFERENZMARKTPREIS
+
+
 class TestStringsAndTranslations:
     """JSON-shape sanity for strings.json + translations/*.json."""
 
@@ -237,6 +312,7 @@ class TestStringsAndTranslations:
             CONF_BASISVERGUETUNG,
             CONF_HKN_VERGUETUNG_RP_KWH,
             CONF_FIXPREIS_RP_KWH,
+            CONF_VERGUETUNGS_OBERGRENZE,
             CONF_ABRECHNUNGS_RHYTHMUS,
         ],
     )

@@ -33,7 +33,7 @@ from custom_components.bfe_rueckliefertarif.quarters import (
 from custom_components.bfe_rueckliefertarif.tariff import (
     Segment,
     chf_per_mwh_to_rp_per_kwh,
-    effective_rp_kwh_rmp,
+    effective_rp_kwh,
     rp_per_kwh_to_chf_per_kwh,
 )
 
@@ -68,6 +68,7 @@ EKZ_CFG = TariffConfig(
     installierte_leistung_kw=10.0,
     basisverguetung=BASISVERGUETUNG_REFERENZMARKTPREIS,
     hkn_verguetung_rp_kwh=0.0,
+    verguetungs_obergrenze=False,
 )
 
 EKZ_Q1_2026_PRICE = BfePrice(chf_per_mwh=102.66, days=90, volume_mwh=683957.0)
@@ -89,8 +90,9 @@ class TestQuarterlyMode:
         # Every hour's rate should be the same flat quarterly effective rate
         rates = {r.rate_rp_kwh for r in plan.records}
         assert len(rates) == 1
-        expected = effective_rp_kwh_rmp(
-            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0
+        expected = effective_rp_kwh(
+            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0,
+            verguetungs_obergrenze=False,
         )
         assert rates.pop() == pytest.approx(expected)
 
@@ -101,8 +103,9 @@ class TestQuarterlyMode:
             Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
-        q_rate_rp = effective_rp_kwh_rmp(
-            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0
+        q_rate_rp = effective_rp_kwh(
+            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0,
+            verguetungs_obergrenze=False,
         )
         total_kwh = sum(kwh.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
@@ -177,8 +180,9 @@ class TestMonthlyMode:
             ABRECHNUNGS_RHYTHMUS_MONAT, 0.0, None,
         )
         # Verify sum = Q_kWh × Q_rate exactly
-        q_rate_rp = effective_rp_kwh_rmp(
-            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0
+        q_rate_rp = effective_rp_kwh(
+            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0,
+            verguetungs_obergrenze=False,
         )
         total_kwh = sum(monthly_totals.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
@@ -213,6 +217,7 @@ class TestFixedMode:
             installierte_leistung_kw=10.0,
             basisverguetung=BASISVERGUETUNG_FIXPREIS,
             hkn_verguetung_rp_kwh=0.0,
+            verguetungs_obergrenze=False,
             fixpreis_rp_kwh=10.96,  # SIG
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
@@ -223,13 +228,16 @@ class TestFixedMode:
         rates = {r.rate_rp_kwh for r in plan.records}
         assert rates == {10.96}
 
-    def test_iwb_fixed_capped_at_cap(self):
+    def test_iwb_fixed_paid_in_full_no_cap(self):
+        # IWB is an additive utility (verguetungs_obergrenze=False) — fixed
+        # 12.95 Rp/kWh including HKN, paid in full without Anrechenbarkeitsgrenze cap.
         cfg = TariffConfig(
             anlagenkategorie=Segment.SMALL_MIT_EV,
             installierte_leistung_kw=10.0,
             basisverguetung=BASISVERGUETUNG_FIXPREIS,
             hkn_verguetung_rp_kwh=0.0,
-            fixpreis_rp_kwh=14.0,  # IWB
+            verguetungs_obergrenze=False,
+            fixpreis_rp_kwh=12.95,  # IWB 2026 (HKN bundled in)
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         plan = compute_quarter_plan(
@@ -237,7 +245,28 @@ class TestFixedMode:
             ABRECHNUNGS_RHYTHMUS_QUARTAL, 0.0, None,
         )
         rates = {r.rate_rp_kwh for r in plan.records}
-        assert rates == {10.96}  # capped
+        assert len(rates) == 1
+        assert rates.pop() == pytest.approx(12.95)  # paid in full
+
+    def test_ekz_strict_cap_reduces_hkn(self):
+        # EKZ-style: verguetungs_obergrenze=True. RMP base 7.0 + HKN 5.0 = 12.0
+        # > cap 10.96 → HKN reduced so total lands at 10.96.
+        cfg = TariffConfig(
+            anlagenkategorie=Segment.SMALL_MIT_EV,
+            installierte_leistung_kw=10.0,
+            basisverguetung=BASISVERGUETUNG_REFERENZMARKTPREIS,
+            hkn_verguetung_rp_kwh=5.0,
+            verguetungs_obergrenze=True,
+        )
+        kwh = uniform_hourly(Q, kwh_per_hour=1.0)
+        # synthetic Q price: 70.0 CHF/MWh = 7.00 Rp/kWh
+        synthetic = BfePrice(chf_per_mwh=70.0, days=90, volume_mwh=1.0)
+        plan = compute_quarter_plan(
+            Q, kwh, synthetic, None, cfg,
+            ABRECHNUNGS_RHYTHMUS_QUARTAL, 0.0, None,
+        )
+        rates = {r.rate_rp_kwh for r in plan.records}
+        assert rates == {10.96}  # capped (HKN reduced from 5.0 to 3.96)
 
 
 class TestHourCoverage:

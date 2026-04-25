@@ -9,7 +9,7 @@ BFE_MONATSPREISE_URL = "https://www.bfe-ogd.ch/ogd60_rmp_monatspreise.csv"
 
 TIMEZONE = "Europe/Zurich"
 
-# Config-entry keys (v2 — German, matching DE labels exactly)
+# Config-entry keys (v3 — German, matching DE labels exactly)
 CONF_ENERGIEVERSORGER = "energieversorger"
 CONF_ANLAGENKATEGORIE = "anlagenkategorie"
 CONF_INSTALLIERTE_LEISTUNG_KW = "installierte_leistung_kw"
@@ -17,6 +17,7 @@ CONF_BASISVERGUETUNG = "basisverguetung"
 CONF_HKN_VERGUETUNG_RP_KWH = "hkn_verguetung_rp_kwh"
 CONF_FIXPREIS_RP_KWH = "fixpreis_rp_kwh"
 CONF_ABRECHNUNGS_RHYTHMUS = "abrechnungs_rhythmus"
+CONF_VERGUETUNGS_OBERGRENZE = "verguetungs_obergrenze"
 CONF_STROMNETZEINSPEISUNG_KWH = "stromnetzeinspeisung_kwh"
 CONF_RUECKLIEFERVERGUETUNG_CHF = "rueckliefervergutung_chf"
 CONF_NAMENSPRAEFIX = "namenspraefix"

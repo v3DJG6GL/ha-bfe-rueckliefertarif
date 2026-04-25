@@ -35,8 +35,9 @@ class TestPresetTable:
                 )
 
     def test_hkn_in_reasonable_range(self):
+        # SGSW pays up to 4.6 Rp/kWh + 2 Rp/kWh flexibility bonus → upper bound 7.0
         for key, p in PRESETS.items():
-            assert 0.0 <= p.hkn_bonus_rp_kwh <= 5.0, (
+            assert 0.0 <= p.hkn_bonus_rp_kwh <= 7.0, (
                 f"{key} HKN {p.hkn_bonus_rp_kwh} outside sanity range"
             )
 
@@ -56,7 +57,8 @@ class TestNamedPresets:
     def test_iwb(self):
         p = get_preset("iwb")
         assert p.base_mode == BASE_MODE_FIXED
-        assert p.fixed_rate_rp_kwh == 14.0
+        # IWB 2026: flat 12.95 Rp/kWh including HKN (verified via VESE pvtarif).
+        assert p.fixed_rate_rp_kwh == 12.95
 
     def test_aew_hkn_inclusive(self):
         p = get_preset("aew")

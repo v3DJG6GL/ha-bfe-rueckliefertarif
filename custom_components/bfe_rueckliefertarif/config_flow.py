@@ -31,6 +31,7 @@ from .const import (
     CONF_NAMENSPRAEFIX,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_VERGUETUNGS_OBERGRENZE,
     DOMAIN,
 )
 from .presets import PRESETS, get_preset, list_preset_keys
@@ -121,6 +122,10 @@ def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 )
             ),
             vol.Required(
+                CONF_VERGUETUNGS_OBERGRENZE,
+                default=d.get(CONF_VERGUETUNGS_OBERGRENZE, False),
+            ): selector.BooleanSelector(),
+            vol.Required(
                 CONF_ABRECHNUNGS_RHYTHMUS,
                 default=d.get(CONF_ABRECHNUNGS_RHYTHMUS, ABRECHNUNGS_RHYTHMUS_QUARTAL),
             ): selector.SelectSelector(
@@ -154,7 +159,7 @@ def _validate_tariff(user_input: dict[str, Any]) -> dict[str, str]:
 class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Menu-first 3-step config flow."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -180,6 +185,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         preset = get_preset(key)
         self._data[CONF_BASISVERGUETUNG] = _PRESET_LEGACY_TO_NEW[preset.base_mode]
         self._data[CONF_HKN_VERGUETUNG_RP_KWH] = preset.hkn_bonus_rp_kwh
+        self._data[CONF_VERGUETUNGS_OBERGRENZE] = preset.verguetungs_obergrenze
         if preset.fixed_rate_rp_kwh is not None:
             self._data[CONF_FIXPREIS_RP_KWH] = preset.fixed_rate_rp_kwh
         return await self.async_step_tariff()
@@ -196,6 +202,9 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_preset_groupe_e(self, user_input=None):
         return await self._apply_preset("groupe_e")
+
+    async def async_step_preset_primeo(self, user_input=None):
+        return await self._apply_preset("primeo")
 
     async def async_step_preset_romande_energie(self, user_input=None):
         return await self._apply_preset("romande_energie")

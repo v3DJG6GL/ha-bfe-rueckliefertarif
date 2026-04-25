@@ -26,8 +26,7 @@ from .quarters import Month, Quarter, hours_in_range, month_bounds_utc, quarter_
 from .tariff import (
     Segment,
     chf_per_mwh_to_rp_per_kwh,
-    effective_rp_kwh_fixed,
-    effective_rp_kwh_rmp,
+    effective_rp_kwh,
     rp_per_kwh_to_chf_per_kwh,
 )
 
@@ -38,6 +37,7 @@ class TariffConfig:
     installierte_leistung_kw: float
     basisverguetung: str                       # BASISVERGUETUNG_REFERENZMARKTPREIS | BASISVERGUETUNG_FIXPREIS
     hkn_verguetung_rp_kwh: float
+    verguetungs_obergrenze: bool = False
     fixpreis_rp_kwh: float | None = None
 
 
@@ -68,20 +68,18 @@ def _effective_rate(
     if cfg.basisverguetung == BASISVERGUETUNG_FIXPREIS:
         if cfg.fixpreis_rp_kwh is None:
             raise ValueError("fixpreis_rp_kwh required for fixpreis basisverguetung")
-        return effective_rp_kwh_fixed(
-            cfg.fixpreis_rp_kwh,
-            cfg.anlagenkategorie,
-            cfg.installierte_leistung_kw,
-            cfg.hkn_verguetung_rp_kwh,
-        )
-    if cfg.basisverguetung == BASISVERGUETUNG_REFERENZMARKTPREIS:
-        return effective_rp_kwh_rmp(
-            reference_or_fixed_rp_kwh,
-            cfg.anlagenkategorie,
-            cfg.installierte_leistung_kw,
-            cfg.hkn_verguetung_rp_kwh,
-        )
-    raise ValueError(f"Unknown basisverguetung: {cfg.basisverguetung!r}")
+        base = cfg.fixpreis_rp_kwh
+    elif cfg.basisverguetung == BASISVERGUETUNG_REFERENZMARKTPREIS:
+        base = reference_or_fixed_rp_kwh
+    else:
+        raise ValueError(f"Unknown basisverguetung: {cfg.basisverguetung!r}")
+    return effective_rp_kwh(
+        base,
+        cfg.anlagenkategorie,
+        cfg.installierte_leistung_kw,
+        cfg.hkn_verguetung_rp_kwh,
+        verguetungs_obergrenze=cfg.verguetungs_obergrenze,
+    )
 
 
 def _rate_rp_kwh_at_hour(

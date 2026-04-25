@@ -83,10 +83,11 @@ class BfeCoordinator(DataUpdateCoordinator):
         }
 
     def _tariff_breakdown(self) -> dict[str, Any] | None:
-        """Return a dict explaining how the effective rate is computed.
+        """Return a dict explaining how the effective Rückliefervergütung is computed.
 
-        Useful for the diagnostic sensor's attributes so the user can see
-        whether the cap is binding (e.g. 30 + 10 → capped at 10.96).
+        Used by the BasisVerguetungSensor extra_state_attributes so the user
+        can verify whether the Vergütungs-Obergrenze (Anrechenbarkeitsgrenze)
+        is binding for their utility's setup.
         """
         from .const import (
             BASISVERGUETUNG_FIXPREIS,
@@ -95,10 +96,12 @@ class BfeCoordinator(DataUpdateCoordinator):
             CONF_FIXPREIS_RP_KWH,
             CONF_HKN_VERGUETUNG_RP_KWH,
             CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_VERGUETUNGS_OBERGRENZE,
         )
         from .tariff import (
             Segment,
             anrechenbarkeitsgrenze_rp_kwh,
+            effective_rp_kwh,
             mindestverguetung_rp_kwh,
         )
 
@@ -109,6 +112,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
         hkn = float(self._config.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0))
         basisverguetung = self._config.get(CONF_BASISVERGUETUNG)
+        obergrenze = bool(self._config.get(CONF_VERGUETUNGS_OBERGRENZE, False))
 
         floor = mindestverguetung_rp_kwh(seg, kw) if kw > 0 or seg.value not in (
             "mid_mit_ev", "large_mit_ev"
@@ -131,12 +135,23 @@ class BfeCoordinator(DataUpdateCoordinator):
 
         base_after_floor = max(base_input, floor)
         theoretical_total = base_after_floor + hkn
-        effective = min(theoretical_total, cap)
-        cap_binds = theoretical_total > cap
+        effective = effective_rp_kwh(
+            base_input, seg, kw, hkn, verguetungs_obergrenze=obergrenze
+        )
+        if obergrenze:
+            obergrenze_aktiv = theoretical_total > cap
+            if obergrenze_aktiv:
+                hkn_gekuerzt_auf = max(0.0, cap - base_after_floor) if base_after_floor < cap else 0.0
+            else:
+                hkn_gekuerzt_auf = None
+        else:
+            obergrenze_aktiv = False
+            hkn_gekuerzt_auf = None
 
         return {
             "anlagenkategorie": seg.value,
             "basisverguetung": basisverguetung,
+            "verguetungs_obergrenze": obergrenze,
             "base_input_rp_kwh": round(base_input, 4),
             "base_source": base_label,
             "minimalverguetung_rp_kwh": round(floor, 4),
@@ -145,8 +160,8 @@ class BfeCoordinator(DataUpdateCoordinator):
             "theoretical_total_rp_kwh": round(theoretical_total, 4),
             "anrechenbarkeitsgrenze_rp_kwh": round(cap, 4),
             "effective_rp_kwh": round(effective, 4),
-            "cap_binds": cap_binds,
-            "hkn_reduced_to": round(max(0.0, cap - base_after_floor), 4) if cap_binds else None,
+            "obergrenze_aktiv": obergrenze_aktiv,
+            "hkn_gekuerzt_auf": round(hkn_gekuerzt_auf, 4) if hkn_gekuerzt_auf is not None else None,
         }
 
     async def _auto_import_newly_published(self) -> None:

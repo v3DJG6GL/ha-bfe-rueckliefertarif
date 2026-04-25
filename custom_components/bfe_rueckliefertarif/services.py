@@ -18,6 +18,7 @@ from .const import (
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_VERGUETUNGS_OBERGRENZE,
     DOMAIN,
 )
 from .ha_recorder import (
@@ -81,6 +82,7 @@ def _cfg_for_entry(hass: "HomeAssistant") -> tuple[dict, TariffConfig]:
         installierte_leistung_kw=float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
         basisverguetung=cfg[CONF_BASISVERGUETUNG],
         hkn_verguetung_rp_kwh=float(cfg.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0)),
+        verguetungs_obergrenze=bool(cfg.get(CONF_VERGUETUNGS_OBERGRENZE, False)),
         fixpreis_rp_kwh=(
             float(cfg[CONF_FIXPREIS_RP_KWH]) if cfg.get(CONF_FIXPREIS_RP_KWH) else None
         ),

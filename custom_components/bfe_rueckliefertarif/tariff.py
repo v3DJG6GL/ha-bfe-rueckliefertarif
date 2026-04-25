@@ -71,37 +71,37 @@ def anrechenbarkeitsgrenze_rp_kwh(seg: Segment) -> float:
     return 5.40  # LARGE_OHNE_EV, XL_OHNE_EV
 
 
-def effective_rp_kwh_rmp(
-    reference_rp_kwh: float,
+def effective_rp_kwh(
+    base_input_rp_kwh: float,
     seg: Segment,
     kw: float,
-    hkn_bonus_rp_kwh: float = 0.0,
+    hkn_verguetung_rp_kwh: float = 0.0,
+    *,
+    verguetungs_obergrenze: bool = False,
 ) -> float:
-    """Effective tariff in Rp/kWh for RMP-passthrough utilities.
+    """Effective Rückliefervergütung in Rp/kWh.
 
-    Base = max(BFE reference, federal floor). HKN added. Total capped by Anrechenbarkeitsgrenze.
+    Federal floor (Mindestvergütung, EnV Art. 12) is always applied to the base.
+    Whether the Anrechenbarkeitsgrenze (StromVV Art. 4) acts as a payment cap is
+    a per-utility commercial choice — most Swiss utilities pay base + HKN
+    additively without enforcing the cap; only EKZ, Groupe E, and Primeo apply
+    it strictly per their published 2026 terms.
+
+    When ``verguetungs_obergrenze`` is True, the EKZ-style two-clause cap rule
+    applies:
+    - If base alone already meets/exceeds the cap → HKN forfeited entirely.
+    - Otherwise → HKN reduced just enough to keep base + HKN ≤ cap.
     """
     floor = mindestverguetung_rp_kwh(seg, kw) or 0.0
+    base = max(base_input_rp_kwh, floor)
+
+    if not verguetungs_obergrenze:
+        return base + hkn_verguetung_rp_kwh
+
     cap = anrechenbarkeitsgrenze_rp_kwh(seg)
-    base = max(reference_rp_kwh, floor)
-    return min(base + hkn_bonus_rp_kwh, cap)
-
-
-def effective_rp_kwh_fixed(
-    fixed_rate_rp_kwh: float,
-    seg: Segment,
-    kw: float,
-    hkn_bonus_rp_kwh: float = 0.0,
-) -> float:
-    """Effective tariff for fixed-rate utilities (ewz, IWB, SIG, AEW).
-
-    Utility pays a flat rate not tied to the BFE reference. Federal floor still applies
-    (utility cannot pay less), and the StromVV cap still bounds the total.
-    """
-    floor = mindestverguetung_rp_kwh(seg, kw) or 0.0
-    cap = anrechenbarkeitsgrenze_rp_kwh(seg)
-    base = max(fixed_rate_rp_kwh, floor)
-    return min(base + hkn_bonus_rp_kwh, cap)
+    if base >= cap:
+        return base
+    return min(base + hkn_verguetung_rp_kwh, cap)
 
 
 def chf_per_mwh_to_rp_per_kwh(chf_per_mwh: float) -> float:
