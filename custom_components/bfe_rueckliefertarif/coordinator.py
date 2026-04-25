@@ -131,18 +131,13 @@ class BfeCoordinator(DataUpdateCoordinator):
         elif q in self.quarterly:
             base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
             base_label = f"referenz_marktpreis_{q}"
-        elif self.quarterly:
-            # BFE has not yet published the running quarter — fall back to the
-            # most recently published BFE quarter as a real-time estimate.
-            # The integration's normal import path will overwrite LTS with
-            # exact values once BFE publishes the running quarter.
-            last_q = max(self.quarterly.keys())
-            base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[last_q].chf_per_mwh)
-            base_label = f"estimate_from_{last_q}"
-            is_estimate = True
-            estimate_basis = str(last_q)
         else:
-            # No BFE data at all — conservative floor-only fallback.
+            # BFE has not yet published the running quarter (or no BFE data
+            # at all) — fall back to the configured Plant-category floor.
+            # Never leak historical BFE prices: the estimate must derive
+            # only from user-configured values (Plant category → floor,
+            # HKN, cap mode). Once BFE publishes the running quarter, the
+            # normal import path overwrites LTS with the exact value.
             base_input = floor
             base_label = "fallback_mindestverguetung"
             is_estimate = True

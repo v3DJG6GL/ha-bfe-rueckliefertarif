@@ -121,9 +121,10 @@ class AktuelleVerguetungChfKwhSensor(CoordinatorEntity[BfeCoordinator], _BaseSen
     quarter is published.
 
     For ``basisverguetung = referenz_marktpreis`` and a quarter BFE has not
-    yet published, the value falls back to the most recently published
-    quarter's rate (see coordinator._tariff_breakdown). The
-    ``extra_state_attributes`` dict carries ``is_estimate`` and
+    yet published, the value falls back to the configured Plant-category
+    Mindestvergütung floor (plus any configured HKN, capped per the
+    Anrechenbarkeitsgrenze if cap mode is on) — never to historical BFE
+    data. The ``extra_state_attributes`` dict carries ``is_estimate`` and
     ``estimate_basis`` so the user can tell exact from estimated readings.
     """
 
