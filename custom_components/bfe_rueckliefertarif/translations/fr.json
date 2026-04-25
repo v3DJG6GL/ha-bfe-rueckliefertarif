@@ -33,13 +33,13 @@
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "anlagenkategorie": "Taille + autoconsommation déterminent la rémunération minimale (OEne art. 12) et le plafond (OApEl art. 4). Par catégorie (min / plafond, ct/kWh) : ≤30 kW avec AC → 6.00 / 10.96 · ≤30 kW sans AC → 6.00 / 8.20 · 30–<100 kW avec AC → 180÷kW / 10.96 · 30–<100 kW sans AC → 6.20 / 8.20 · 100–<150 kW avec AC → 180÷kW / 7.20 · 100–<150 kW sans AC → 6.20 / 5.40 · ≥150 kW avec AC → aucun min / 7.20 · ≥150 kW sans AC → aucun min / 5.40.",
-          "installierte_leistung_kw": "Requis uniquement pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule 180 ÷ kW. Laisser à 0 pour les autres catégories.",
-          "basisverguetung": "Prix de référence du marché → la plupart des fournisseurs (EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW). Tarif fixe → ewz, IWB, SIG, AEW.",
-          "fixpreis_rp_kwh": "Uniquement avec rétribution de base = Tarif fixe. Exemples 2026 (ct/kWh) : ewz 7.91 (+ GO 5.00 additif), IWB 12.95 (GO incl.), SIG 8.16 (+ GO 2.80 additif), AEW 8.20 (GO incl.).",
-          "hkn_verguetung_rp_kwh": "Rétribution pour les garanties d'origine (GO / HKN). Opt-in chez la plupart des fournisseurs — laissez 0.0 si vous ne vendez pas vos GO. EKZ paie jusqu'à 3.00 ct/kWh après inscription sur myEKZ.",
-          "verguetungs_obergrenze": "Actif : rétribution totale plafonnée selon OApEl art. 4, dérivé de la catégorie d'installation ci-dessus. Si base + GO dépasse le plafond, la rétribution GO est réduite. Utilisé par EKZ, Groupe E, Primeo. Inactif : le fournisseur verse base + GO de manière additive — tous les autres fournisseurs suisses (~98 %).",
-          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. La plupart des fournisseurs facturent par trimestre."
+          "anlagenkategorie": "Taille + autoconsommation déterminent la **rémunération minimale** (OEne art. 12) et le **plafond** (OApEl art. 4), appliqués automatiquement.\n\nMin / plafond par catégorie (ct/kWh) :\n- ≤30 kW avec AC → **6.00** / **10.96**\n- ≤30 kW sans AC → **6.00** / **8.20**\n- 30–<100 kW avec AC → **180÷kW** / **10.96**\n- 30–<100 kW sans AC → **6.20** / **8.20**\n- 100–<150 kW avec AC → **180÷kW** / **7.20**\n- 100–<150 kW sans AC → **6.20** / **5.40**\n- ≥150 kW avec AC → aucun min / **7.20**\n- ≥150 kW sans AC → aucun min / **5.40**",
+          "installierte_leistung_kw": "**Requis uniquement** pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule `180 ÷ kW`.\n\nLaisser à `0` pour les autres catégories.",
+          "basisverguetung": "- **Prix de référence du marché** → la plupart des fournisseurs : EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Tarif fixe** → ewz, IWB, SIG, AEW.",
+          "fixpreis_rp_kwh": "Uniquement avec **Rétribution de base = Tarif fixe**.\n\nExemples 2026 (ct/kWh) :\n- ewz : **7.91** (+ GO 5.00 additif)\n- IWB : **12.95** (GO inclus)\n- SIG : **8.16** (+ GO 2.80 additif)\n- AEW : **8.20** (GO inclus)",
+          "hkn_verguetung_rp_kwh": "Rétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO. EKZ paie jusqu'à **3.00 ct/kWh** après inscription sur *myEKZ*.",
+          "verguetungs_obergrenze": "**Actif** : rétribution totale plafonnée selon OApEl art. 4, dérivé de la *Catégorie d'installation* ci-dessus. Si base + GO dépasse le plafond, la rétribution GO est réduite.\n\n- **Actif** → EKZ, Groupe E, Primeo\n- **Inactif** → tous les autres fournisseurs suisses (~98 %) : BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
+          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. **La plupart des fournisseurs facturent par trimestre.**"
         }
       },
       "entities": {
@@ -52,7 +52,7 @@
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "Le compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
-          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard (HA ajoute le suffixe `_compensation`, généralement sensor.VOTRE_INJECTION_compensation).",
+          "rueckliefervergutung_chf": "Le capteur CHF auto-créé par Energy Dashboard (HA ajoute le suffixe `_compensation`, généralement `sensor.VOTRE_INJECTION_compensation`).",
           "namenspraefix": "Préfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
         }
       }
@@ -86,13 +86,13 @@
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "anlagenkategorie": "Taille + autoconsommation déterminent la rémunération minimale (OEne art. 12) et le plafond (OApEl art. 4). Par catégorie (min / plafond, ct/kWh) : ≤30 kW avec AC → 6.00 / 10.96 · ≤30 kW sans AC → 6.00 / 8.20 · 30–<100 kW avec AC → 180÷kW / 10.96 · 30–<100 kW sans AC → 6.20 / 8.20 · 100–<150 kW avec AC → 180÷kW / 7.20 · 100–<150 kW sans AC → 6.20 / 5.40 · ≥150 kW avec AC → aucun min / 7.20 · ≥150 kW sans AC → aucun min / 5.40.",
-          "installierte_leistung_kw": "Requis uniquement pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule 180 ÷ kW. Laisser à 0 pour les autres catégories.",
-          "basisverguetung": "Prix de référence du marché → la plupart des fournisseurs (EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW). Tarif fixe → ewz, IWB, SIG, AEW.",
-          "fixpreis_rp_kwh": "Uniquement avec rétribution de base = Tarif fixe. Exemples 2026 (ct/kWh) : ewz 7.91 (+ GO 5.00 additif), IWB 12.95 (GO incl.), SIG 8.16 (+ GO 2.80 additif), AEW 8.20 (GO incl.).",
-          "hkn_verguetung_rp_kwh": "Rétribution pour les garanties d'origine (GO / HKN). Opt-in chez la plupart des fournisseurs — laissez 0.0 si vous ne vendez pas vos GO. EKZ paie jusqu'à 3.00 ct/kWh après inscription sur myEKZ.",
-          "verguetungs_obergrenze": "Actif : rétribution totale plafonnée selon OApEl art. 4, dérivé de la catégorie d'installation ci-dessus. Si base + GO dépasse le plafond, la rétribution GO est réduite. Utilisé par EKZ, Groupe E, Primeo. Inactif : le fournisseur verse base + GO de manière additive — tous les autres fournisseurs suisses (~98 %).",
-          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. La plupart des fournisseurs facturent par trimestre."
+          "anlagenkategorie": "Taille + autoconsommation déterminent la **rémunération minimale** (OEne art. 12) et le **plafond** (OApEl art. 4), appliqués automatiquement.\n\nMin / plafond par catégorie (ct/kWh) :\n- ≤30 kW avec AC → **6.00** / **10.96**\n- ≤30 kW sans AC → **6.00** / **8.20**\n- 30–<100 kW avec AC → **180÷kW** / **10.96**\n- 30–<100 kW sans AC → **6.20** / **8.20**\n- 100–<150 kW avec AC → **180÷kW** / **7.20**\n- 100–<150 kW sans AC → **6.20** / **5.40**\n- ≥150 kW avec AC → aucun min / **7.20**\n- ≥150 kW sans AC → aucun min / **5.40**",
+          "installierte_leistung_kw": "**Requis uniquement** pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule `180 ÷ kW`.\n\nLaisser à `0` pour les autres catégories.",
+          "basisverguetung": "- **Prix de référence du marché** → la plupart des fournisseurs : EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Tarif fixe** → ewz, IWB, SIG, AEW.",
+          "fixpreis_rp_kwh": "Uniquement avec **Rétribution de base = Tarif fixe**.\n\nExemples 2026 (ct/kWh) :\n- ewz : **7.91** (+ GO 5.00 additif)\n- IWB : **12.95** (GO inclus)\n- SIG : **8.16** (+ GO 2.80 additif)\n- AEW : **8.20** (GO inclus)",
+          "hkn_verguetung_rp_kwh": "Rétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO. EKZ paie jusqu'à **3.00 ct/kWh** après inscription sur *myEKZ*.",
+          "verguetungs_obergrenze": "**Actif** : rétribution totale plafonnée selon OApEl art. 4, dérivé de la *Catégorie d'installation* ci-dessus. Si base + GO dépasse le plafond, la rétribution GO est réduite.\n\n- **Actif** → EKZ, Groupe E, Primeo\n- **Inactif** → tous les autres fournisseurs suisses (~98 %) : BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
+          "abrechnungs_rhythmus": "Selon le cycle de facturation de votre fournisseur. **La plupart des fournisseurs facturent par trimestre.**"
         }
       },
       "reimport_quarter": {
@@ -102,7 +102,7 @@
           "quarter": "Trimestre"
         },
         "data_description": {
-          "quarter": "Format : AAAATN (ex. 2026Q1). Le trimestre doit déjà être publié par le BFE — généralement environ 2 semaines après la fin du trimestre."
+          "quarter": "**Format :** `AAAATN` (ex. `2026Q1`).\n\nLe trimestre doit déjà être publié par le BFE — généralement environ **2 semaines après la fin du trimestre**."
         }
       },
       "entities": {

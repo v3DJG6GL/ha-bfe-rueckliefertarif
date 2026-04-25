@@ -33,13 +33,13 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Grösse + Eigenverbrauch bestimmen die gesetzliche Mindestvergütung (EnV Art. 12) und Anrechenbarkeitsgrenze (StromVV Art. 4). Pro Kategorie (Min / Cap, Rp/kWh): ≤30 kW mit EV → 6.00 / 10.96 · ≤30 kW ohne EV → 6.00 / 8.20 · 30–<100 kW mit EV → 180÷kW / 10.96 · 30–<100 kW ohne EV → 6.20 / 8.20 · 100–<150 kW mit EV → 180÷kW / 7.20 · 100–<150 kW ohne EV → 6.20 / 5.40 · ≥150 kW mit EV → keine Min. / 7.20 · ≥150 kW ohne EV → keine Min. / 5.40.",
-          "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch — die Mindestvergütung folgt der Formel 180 ÷ kW. Bei allen anderen Kategorien: bei 0 lassen.",
-          "basisverguetung": "Referenz-Marktpreis → die meisten Versorger (EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW). Fixpreis → ewz, IWB, SIG, AEW.",
-          "fixpreis_rp_kwh": "Nur bei Basisvergütung = Fixpreis. Beispiele 2026 (Rp/kWh): ewz 7.91 (+ HKN 5.00 additiv), IWB 12.95 (HKN inkl.), SIG 8.16 (+ HKN 2.80 additiv), AEW 8.20 (HKN inkl.).",
-          "hkn_verguetung_rp_kwh": "Vergütung für HKN (Herkunftsnachweise). Opt-in bei den meisten Versorgern — bei 0.0 lassen, wenn du keine HKN verkaufst. EKZ zahlt bis 3.00 Rp/kWh nach myEKZ-Anmeldung.",
-          "verguetungs_obergrenze": "Aktiv: Gesamtvergütung wird auf die Anrechenbarkeitsgrenze (StromVV Art. 4) gedeckelt, die sich aus der Anlagenkategorie oben ergibt. Wenn Basis + HKN die Grenze übersteigt, wird HKN gekürzt. Wird von EKZ, Groupe E, Primeo angewendet. Inaktiv: Versorger zahlt Basis + HKN voll additiv, keine Deckelung — alle anderen Schweizer Versorger (~98%).",
-          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. Die meisten Schweizer Versorger rechnen quartalsweise ab."
+          "anlagenkategorie": "Grösse + Eigenverbrauch bestimmen die gesetzliche **Mindestvergütung** (EnV Art. 12) und **Anrechenbarkeitsgrenze** (StromVV Art. 4) — automatisch angewendet.\n\nMin / Cap pro Kategorie (Rp/kWh):\n- ≤30 kW mit EV → **6.00** / **10.96**\n- ≤30 kW ohne EV → **6.00** / **8.20**\n- 30–<100 kW mit EV → **180÷kW** / **10.96**\n- 30–<100 kW ohne EV → **6.20** / **8.20**\n- 100–<150 kW mit EV → **180÷kW** / **7.20**\n- 100–<150 kW ohne EV → **6.20** / **5.40**\n- ≥150 kW mit EV → keine Min. / **7.20**\n- ≥150 kW ohne EV → keine Min. / **5.40**",
+          "installierte_leistung_kw": "**Nur nötig** bei 30–<150 kW mit Eigenverbrauch — die Mindestvergütung folgt der Formel `180 ÷ kW`.\n\nBei allen anderen Kategorien: bei `0` lassen.",
+          "basisverguetung": "- **Referenz-Marktpreis** → die meisten Versorger: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixpreis** → ewz, IWB, SIG, AEW.",
+          "fixpreis_rp_kwh": "Nur bei **Basisvergütung = Fixpreis**.\n\nBeispiele 2026 (Rp/kWh):\n- ewz: **7.91** (+ HKN 5.00 additiv)\n- IWB: **12.95** (HKN inklusive)\n- SIG: **8.16** (+ HKN 2.80 additiv)\n- AEW: **8.20** (HKN inklusive)",
+          "hkn_verguetung_rp_kwh": "Vergütung für **HKN** (*Herkunftsnachweise*).\n\n**Opt-in bei den meisten Versorgern** — bei `0.0` lassen, wenn du keine HKN verkaufst. EKZ zahlt bis **3.00 Rp/kWh** nach Anmeldung auf *myEKZ*.",
+          "verguetungs_obergrenze": "**Aktiv**: Gesamtvergütung wird auf die Anrechenbarkeitsgrenze (StromVV Art. 4) gedeckelt, die sich aus der *Anlagenkategorie* oben ergibt. Wenn Basis + HKN die Grenze übersteigt, wird HKN gekürzt.\n\n- **Aktiv** → EKZ, Groupe E, Primeo\n- **Inaktiv** → alle anderen Schweizer Versorger (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
+          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**"
         }
       },
       "entities": {
@@ -51,9 +51,9 @@
           "namenspraefix": "Namenspräfix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "Der kWh-Zähler deiner Einspeisung ins Stromnetz — muss bereits im Energy-Dashboard unter 'Zurück ins Netz' verwendet werden.",
-          "rueckliefervergutung_chf": "Der vom Energy-Dashboard beim Einrichten von 'Zurück ins Netz mit Preis' automatisch erzeugte CHF-Sensor (HA hängt den Suffix `_compensation` an, üblicherweise sensor.DEINE_STROMNETZEINSPEISUNG_compensation). Diese Integration schreibt in dessen Long-Term-Statistics.",
-          "namenspraefix": "Präfix für die Diagnose-Sensoren und Aktions-Buttons dieser Integration (z. B. sensor.PRAEFIX_basisverguetung, button.PRAEFIX_aktuelles_quartal_neu_berechnen). Nur ändern, wenn der Standardname kollidiert."
+          "stromnetzeinspeisung_kwh": "Der **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
+          "rueckliefervergutung_chf": "Der vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
+          "namenspraefix": "Wird den **Diagnose-Sensoren** und **Aktions-Buttons** dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`).\n\n*Nur ändern*, wenn der Standardname kollidiert."
         }
       }
     },
@@ -86,23 +86,23 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Grösse + Eigenverbrauch bestimmen die gesetzliche Mindestvergütung (EnV Art. 12) und Anrechenbarkeitsgrenze (StromVV Art. 4). Pro Kategorie (Min / Cap, Rp/kWh): ≤30 kW mit EV → 6.00 / 10.96 · ≤30 kW ohne EV → 6.00 / 8.20 · 30–<100 kW mit EV → 180÷kW / 10.96 · 30–<100 kW ohne EV → 6.20 / 8.20 · 100–<150 kW mit EV → 180÷kW / 7.20 · 100–<150 kW ohne EV → 6.20 / 5.40 · ≥150 kW mit EV → keine Min. / 7.20 · ≥150 kW ohne EV → keine Min. / 5.40.",
-          "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch — die Mindestvergütung folgt der Formel 180 ÷ kW. Bei allen anderen Kategorien: bei 0 lassen.",
-          "basisverguetung": "Referenz-Marktpreis → die meisten Versorger (EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW). Fixpreis → ewz, IWB, SIG, AEW.",
-          "fixpreis_rp_kwh": "Nur bei Basisvergütung = Fixpreis. Beispiele 2026 (Rp/kWh): ewz 7.91 (+ HKN 5.00 additiv), IWB 12.95 (HKN inkl.), SIG 8.16 (+ HKN 2.80 additiv), AEW 8.20 (HKN inkl.).",
-          "hkn_verguetung_rp_kwh": "Vergütung für HKN (Herkunftsnachweise). Opt-in bei den meisten Versorgern — bei 0.0 lassen, wenn du keine HKN verkaufst. EKZ zahlt bis 3.00 Rp/kWh nach myEKZ-Anmeldung.",
-          "verguetungs_obergrenze": "Aktiv: Gesamtvergütung wird auf die Anrechenbarkeitsgrenze (StromVV Art. 4) gedeckelt, die sich aus der Anlagenkategorie oben ergibt. Wenn Basis + HKN die Grenze übersteigt, wird HKN gekürzt. Wird von EKZ, Groupe E, Primeo angewendet. Inaktiv: Versorger zahlt Basis + HKN voll additiv, keine Deckelung — alle anderen Schweizer Versorger (~98%).",
-          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. Die meisten Schweizer Versorger rechnen quartalsweise ab."
+          "anlagenkategorie": "Grösse + Eigenverbrauch bestimmen die gesetzliche **Mindestvergütung** (EnV Art. 12) und **Anrechenbarkeitsgrenze** (StromVV Art. 4) — automatisch angewendet.\n\nMin / Cap pro Kategorie (Rp/kWh):\n- ≤30 kW mit EV → **6.00** / **10.96**\n- ≤30 kW ohne EV → **6.00** / **8.20**\n- 30–<100 kW mit EV → **180÷kW** / **10.96**\n- 30–<100 kW ohne EV → **6.20** / **8.20**\n- 100–<150 kW mit EV → **180÷kW** / **7.20**\n- 100–<150 kW ohne EV → **6.20** / **5.40**\n- ≥150 kW mit EV → keine Min. / **7.20**\n- ≥150 kW ohne EV → keine Min. / **5.40**",
+          "installierte_leistung_kw": "**Nur nötig** bei 30–<150 kW mit Eigenverbrauch — die Mindestvergütung folgt der Formel `180 ÷ kW`.\n\nBei allen anderen Kategorien: bei `0` lassen.",
+          "basisverguetung": "- **Referenz-Marktpreis** → die meisten Versorger: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixpreis** → ewz, IWB, SIG, AEW.",
+          "fixpreis_rp_kwh": "Nur bei **Basisvergütung = Fixpreis**.\n\nBeispiele 2026 (Rp/kWh):\n- ewz: **7.91** (+ HKN 5.00 additiv)\n- IWB: **12.95** (HKN inklusive)\n- SIG: **8.16** (+ HKN 2.80 additiv)\n- AEW: **8.20** (HKN inklusive)",
+          "hkn_verguetung_rp_kwh": "Vergütung für **HKN** (*Herkunftsnachweise*).\n\n**Opt-in bei den meisten Versorgern** — bei `0.0` lassen, wenn du keine HKN verkaufst. EKZ zahlt bis **3.00 Rp/kWh** nach Anmeldung auf *myEKZ*.",
+          "verguetungs_obergrenze": "**Aktiv**: Gesamtvergütung wird auf die Anrechenbarkeitsgrenze (StromVV Art. 4) gedeckelt, die sich aus der *Anlagenkategorie* oben ergibt. Wenn Basis + HKN die Grenze übersteigt, wird HKN gekürzt.\n\n- **Aktiv** → EKZ, Groupe E, Primeo\n- **Inaktiv** → alle anderen Schweizer Versorger (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …",
+          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**"
         }
       },
       "reimport_quarter": {
         "title": "Bestimmtes Quartal neu importieren",
-        "description": "Berechnet die Rückliefervergütung CHF/h für ein bestimmtes vergangenes Quartal neu. Nützlich nach einer Tarifkorrektur, um ein bereits publiziertes Quartal zu aktualisieren (z. B. falsche HKN-Einstellung für 2026Q1 korrigieren).",
+        "description": "Berechnet die Rückliefervergütung CHF/h für ein bestimmtes vergangenes Quartal neu. Nützlich nach einer Tarifkorrektur, um ein bereits publiziertes Quartal zu aktualisieren (z. B. falsche HKN-Einstellung für `2026Q1` korrigieren).",
         "data": {
           "quarter": "Quartal"
         },
         "data_description": {
-          "quarter": "Format: JahrQQuartal (z. B. 2026Q1). Das Quartal muss bereits vom BFE publiziert sein — typisch ca. 2 Wochen nach Quartalsende."
+          "quarter": "**Format:** `JahrQQuartal` (z. B. `2026Q1`, `2025Q4`).\n\nDas Quartal muss bereits vom BFE publiziert sein — typisch ca. **2 Wochen nach Quartalsende**."
         }
       },
       "entities": {
@@ -114,8 +114,8 @@
           "namenspraefix": "Namenspräfix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "kWh-Zähler im Energy-Dashboard unter 'Zurück ins Netz'.",
-          "rueckliefervergutung_chf": "Auto-erzeugter CHF-Sensor (HA-Suffix `_compensation`, üblicherweise sensor.DEINE_STROMNETZEINSPEISUNG_compensation).",
+          "stromnetzeinspeisung_kwh": "kWh-Zähler im **Energy-Dashboard** unter *'Zurück ins Netz'*.",
+          "rueckliefervergutung_chf": "Auto-erzeugter CHF-Sensor (HA-Suffix `_compensation`, üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`).",
           "namenspraefix": "Präfix für die Diagnose-Sensoren und Buttons dieser Integration."
         }
       }
