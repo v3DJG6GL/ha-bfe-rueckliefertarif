@@ -15,8 +15,6 @@ from custom_components.bfe_rueckliefertarif.bfe import BfePrice
 from custom_components.bfe_rueckliefertarif.const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
-    BASISVERGUETUNG_FIXPREIS,
-    BASISVERGUETUNG_REFERENZMARKTPREIS,
 )
 from custom_components.bfe_rueckliefertarif.importer import (
     TariffConfig,
@@ -31,11 +29,42 @@ from custom_components.bfe_rueckliefertarif.quarters import (
     quarter_bounds_utc,
 )
 from custom_components.bfe_rueckliefertarif.tariff import (
-    Segment,
     chf_per_mwh_to_rp_per_kwh,
     effective_rp_kwh,
     rp_per_kwh_to_chf_per_kwh,
 )
+from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
+
+
+def _make_resolved(
+    *,
+    base_model: str = "rmp_quartal",
+    fixed_rp_kwh: float | None = None,
+    hkn_rp_kwh: float = 0.0,
+    cap_mode: bool = False,
+    cap_rp_kwh: float | None = None,
+    federal_floor_rp_kwh: float | None = 6.00,
+) -> ResolvedTariff:
+    """Build a ResolvedTariff for tests without going through tariffs.json."""
+    return ResolvedTariff(
+        utility_key="test",
+        valid_from="2026-01-01",
+        settlement_period="quartal",
+        base_model=base_model,
+        fixed_rp_kwh=fixed_rp_kwh,
+        fixed_ht_rp_kwh=None,
+        fixed_nt_rp_kwh=None,
+        hkn_rp_kwh=hkn_rp_kwh,
+        hkn_structure="additive_optin" if hkn_rp_kwh > 0 else "none",
+        cap_mode=cap_mode,
+        cap_rp_kwh=cap_rp_kwh,
+        federal_floor_rp_kwh=federal_floor_rp_kwh,
+        federal_floor_label="<30 kW",
+        requires_naturemade_star=False,
+        price_floor_rp_kwh=None,
+        tariffs_json_version="1.0.0",
+        tariffs_json_source="bundled",
+    )
 
 
 # --- test helpers ---
@@ -64,11 +93,11 @@ def realistic_hourly(q: Quarter, monthly_totals_kwh: dict[Month, float]) -> dict
 
 
 EKZ_CFG = TariffConfig(
-    anlagenkategorie=Segment.SMALL_MIT_EV,
+    eigenverbrauch_aktiviert=True,
     installierte_leistung_kw=10.0,
-    basisverguetung=BASISVERGUETUNG_REFERENZMARKTPREIS,
-    hkn_verguetung_rp_kwh=0.0,
-    verguetungs_obergrenze=False,
+    hkn_aktiviert=False,
+    hkn_rp_kwh_resolved=0.0,
+    resolved=_make_resolved(),  # rmp_quartal, ≤30 kW small-band floor 6.00
 )
 
 EKZ_Q1_2026_PRICE = BfePrice(chf_per_mwh=102.66, days=90, volume_mwh=683957.0)
@@ -91,8 +120,9 @@ class TestQuarterlyMode:
         rates = {r.rate_rp_kwh for r in plan.records}
         assert len(rates) == 1
         expected = effective_rp_kwh(
-            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0,
-            verguetungs_obergrenze=False,
+            chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
+            federal_floor_rp_kwh=6.00,  # ≤30 kW small-band floor
+            cap_rp_kwh=None, cap_mode=False,
         )
         assert rates.pop() == pytest.approx(expected)
 
@@ -104,8 +134,9 @@ class TestQuarterlyMode:
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
         q_rate_rp = effective_rp_kwh(
-            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0,
-            verguetungs_obergrenze=False,
+            chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
+            federal_floor_rp_kwh=6.00,
+            cap_rp_kwh=None, cap_mode=False,
         )
         total_kwh = sum(kwh.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
@@ -181,8 +212,9 @@ class TestMonthlyMode:
         )
         # Verify sum = Q_kWh × Q_rate exactly
         q_rate_rp = effective_rp_kwh(
-            chf_per_mwh_to_rp_per_kwh(102.66), Segment.SMALL_MIT_EV, 10.0, 0.0,
-            verguetungs_obergrenze=False,
+            chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
+            federal_floor_rp_kwh=6.00,
+            cap_rp_kwh=None, cap_mode=False,
         )
         total_kwh = sum(monthly_totals.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
@@ -213,12 +245,13 @@ class TestTransitionSpike:
 class TestFixedMode:
     def test_fixed_mode_rate_constant_across_hours(self):
         cfg = TariffConfig(
-            anlagenkategorie=Segment.SMALL_MIT_EV,
+            eigenverbrauch_aktiviert=True,
             installierte_leistung_kw=10.0,
-            basisverguetung=BASISVERGUETUNG_FIXPREIS,
-            hkn_verguetung_rp_kwh=0.0,
-            verguetungs_obergrenze=False,
-            fixpreis_rp_kwh=10.96,  # SIG
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(
+                base_model="fixed_flat", fixed_rp_kwh=10.96,  # SIG-style flat rate
+            ),
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         plan = compute_quarter_plan(
@@ -232,12 +265,13 @@ class TestFixedMode:
         # IWB is an additive utility (verguetungs_obergrenze=False) — fixed
         # 12.95 Rp/kWh including HKN, paid in full without Anrechenbarkeitsgrenze cap.
         cfg = TariffConfig(
-            anlagenkategorie=Segment.SMALL_MIT_EV,
+            eigenverbrauch_aktiviert=True,
             installierte_leistung_kw=10.0,
-            basisverguetung=BASISVERGUETUNG_FIXPREIS,
-            hkn_verguetung_rp_kwh=0.0,
-            verguetungs_obergrenze=False,
-            fixpreis_rp_kwh=12.95,  # IWB 2026 (HKN bundled in)
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(
+                base_model="fixed_flat", fixed_rp_kwh=12.95,  # IWB 2026 (HKN bundled in)
+            ),
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         plan = compute_quarter_plan(
@@ -252,11 +286,16 @@ class TestFixedMode:
         # EKZ-style: verguetungs_obergrenze=True. RMP base 7.0 + HKN 5.0 = 12.0
         # > cap 10.96 → HKN reduced so total lands at 10.96.
         cfg = TariffConfig(
-            anlagenkategorie=Segment.SMALL_MIT_EV,
+            eigenverbrauch_aktiviert=True,
             installierte_leistung_kw=10.0,
-            basisverguetung=BASISVERGUETUNG_REFERENZMARKTPREIS,
-            hkn_verguetung_rp_kwh=5.0,
-            verguetungs_obergrenze=True,
+            hkn_aktiviert=True,
+            hkn_rp_kwh_resolved=5.0,
+            resolved=_make_resolved(
+                base_model="rmp_quartal",
+                hkn_rp_kwh=5.0,
+                cap_mode=True,
+                cap_rp_kwh=10.96,  # ≤100 kW mit EV
+            ),
         )
         kwh = uniform_hourly(Q, kwh_per_hour=1.0)
         # synthetic Q price: 70.0 CHF/MWh = 7.00 Rp/kWh

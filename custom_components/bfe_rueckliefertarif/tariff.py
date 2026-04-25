@@ -1,8 +1,9 @@
 """Swiss national tariff law — pure functions, no HA dependencies.
 
-Tables are nationally mandated and identical for every Swiss Netzbetreiber.
-User-configurable inputs are limited to HKN bonus (utility commercial choice)
-and the optional fixed rate (for utilities that pay above the BFE reference).
+Floor and cap data live in ``data/tariffs.json`` (loaded via ``tariffs_db``);
+the functions here just consume rule lists and apply the law's math. Adding
+a future EnV revision means adding a record to ``federal_minimum`` — no code
+change.
 
 Legal references (all in force since 1.1.2026 via the Mantelerlass / Stromgesetz):
 - EnG Art. 15 Abs. 1 + EnFV Art. 15:
@@ -10,116 +11,92 @@ Legal references (all in force since 1.1.2026 via the Mantelerlass / Stromgesetz
 - EnG Art. 15 Abs. 1bis + EnV Art. 12 Abs. 1bis Bst. a/b/c/d (SR 730.01, AS 2025 138):
     Mindestvergütung floor — 6.00 / 6.20 / 180/kW / 12.00 Rp/kWh.
 - StromVV Art. 4 Abs. 3 Bst. e i.V.m. EnG Art. 15 Abs. 1 (SR 734.71, AS 2025 139):
-    Anrechenbarkeitsgrenze cap — formula: max remuneration = Gestehungskosten of
-    the reference plant minus subsidies. The four cap values used here (10.96 /
-    8.20 / 7.20 / 5.40) are EKZ's published derivation; other utilities applying
-    the cap typically arrive at similar numbers because the reference Gestehungskosten
-    are nationally uniform.
+    Anrechenbarkeitsgrenze — cost-recovery ceiling on what utilities may charge
+    captive customers via Grundversorgungstarif. Whether a utility *enforces*
+    this ceiling as a payment cap on producers is a per-utility commercial
+    choice (only EKZ, Groupe E, Primeo do — IWB pays 12.95 Rp/kWh, well above
+    the 10.96 small-plant ceiling).
 """
 
 from __future__ import annotations
 
-from enum import Enum
+from .tariffs_db import evaluate_federal_floor, find_rule
+
+# Default cap_rules — StromVV Art. 4 Abs. 3 Bst. e cost-recovery ceiling per
+# EKZ's published derivation (the reference Gestehungskosten are nationally
+# uniform, so the cap-enforcing utilities — EKZ, Groupe E, Primeo — converge
+# on these numbers). Kept as a constant so tests and edge-case callers have a
+# canonical default to feed into anrechenbarkeitsgrenze_rp_kwh().
+DEFAULT_CAP_RULES: list[dict] = [
+    {"kw_min": 0,   "kw_max": 100,  "self_consumption": True,  "cap_rp_kwh": 10.96},
+    {"kw_min": 0,   "kw_max": 100,  "self_consumption": False, "cap_rp_kwh":  8.20},
+    {"kw_min": 100, "kw_max": None, "self_consumption": True,  "cap_rp_kwh":  7.20},
+    {"kw_min": 100, "kw_max": None, "self_consumption": False, "cap_rp_kwh":  5.40},
+]
 
 
-class Segment(str, Enum):
-    """8 PV segments defined by national law (size × Eigenverbrauch)."""
-
-    SMALL_MIT_EV = "small_mit_ev"      # ≤30 kW mit Eigenverbrauch
-    SMALL_OHNE_EV = "small_ohne_ev"    # ≤30 kW ohne Eigenverbrauch (Volleinspeisung)
-    MID_MIT_EV = "mid_mit_ev"          # 30–<100 kW mit Eigenverbrauch
-    MID_OHNE_EV = "mid_ohne_ev"        # 30–<100 kW ohne Eigenverbrauch
-    LARGE_MIT_EV = "large_mit_ev"      # 100–<150 kW mit Eigenverbrauch
-    LARGE_OHNE_EV = "large_ohne_ev"    # 100–<150 kW ohne Eigenverbrauch
-    XL_MIT_EV = "xl_mit_ev"            # ≥150 kW mit Eigenverbrauch
-    XL_OHNE_EV = "xl_ohne_ev"          # ≥150 kW ohne Eigenverbrauch
-
-
-_MIT_EV = {Segment.SMALL_MIT_EV, Segment.MID_MIT_EV, Segment.LARGE_MIT_EV, Segment.XL_MIT_EV}
-_DEGRESSIVE = {Segment.MID_MIT_EV, Segment.LARGE_MIT_EV}
-
-
-def has_eigenverbrauch(seg: Segment) -> bool:
-    return seg in _MIT_EV
-
-
-def mindestverguetung_rp_kwh(seg: Segment, kw: float) -> float | None:
+def mindestverguetung_rp_kwh(
+    rules: list[dict], kw: float, eigenverbrauch: bool
+) -> float | None:
     """Federal Mindestvergütung floor in Rp/kWh.
 
     Source: EnV Art. 12 Abs. 1bis Bst. a/b/c/d (SR 730.01, AS 2025 138,
-    in force since 1.1.2026). Pre-2026 there was no federal Rp/kWh floor —
-    Art. 12 Abs. 1 just required "avoided procurement cost".
-
-    Returns None for ≥150 kW segments (no federal floor).
-    For mit-Eigenverbrauch 30–<150 kW: degressive formula 180/kW (range 1.20–6.00).
-    For ohne-Eigenverbrauch 30–<150 kW: flat 6.20.
-    For ≤30 kW: flat 6.00.
+    in force since 1.1.2026). Returns None for ≥150 kW (no federal floor),
+    6.00 for ≤30 kW, 180/kW (1.20–6.00) for 30–<150 kW mit Eigenverbrauch,
+    6.20 for 30–<150 kW ohne Eigenverbrauch.
     """
-    if seg in (Segment.XL_MIT_EV, Segment.XL_OHNE_EV):
-        return None
-    if seg in (Segment.SMALL_MIT_EV, Segment.SMALL_OHNE_EV):
-        return 6.00
-    if seg in _DEGRESSIVE:
-        if kw <= 0:
-            raise ValueError("kW must be positive for degressive formula")
-        return round(180.0 / kw, 4)
-    # ohne Eigenverbrauch, 30–<150 kW
-    return 6.20
+    rule = find_rule(rules, kw, eigenverbrauch)
+    return evaluate_federal_floor(rule, kw) if rule is not None else None
 
 
-def anrechenbarkeitsgrenze_rp_kwh(seg: Segment) -> float:
-    """Anrechenbarkeitsgrenze cap in Rp/kWh — 4 tiers by 100 kW × Eigenverbrauch.
+def anrechenbarkeitsgrenze_rp_kwh(
+    cap_rules: list[dict], kw: float, eigenverbrauch: bool
+) -> float | None:
+    """Anrechenbarkeitsgrenze cost-recovery ceiling in Rp/kWh.
 
     Legal source: StromVV Art. 4 Abs. 3 Bst. e (SR 734.71, AS 2025 139,
-    in force since 1.1.2026). The article mandates a *formula* — the cap on
-    what utilities may charge captive customers for procured PV equals the
-    Gestehungskosten of a reference plant minus subsidies. The four numbers
-    here (10.96 / 8.20 / 7.20 / 5.40) are EKZ's published derivation per
-    plant-size×Eigenverbrauch quadrant; other Swiss utilities applying this
-    cap converge on similar values because the reference Gestehungskosten
-    are nationally uniform.
+    in force since 1.1.2026). The article mandates the *formula* (max
+    chargeback = Gestehungskosten of a reference plant minus subsidies);
+    per-utility cap_rules carry the values that utility's published
+    derivation produces. Returns None when no cap rule covers (kw, ev).
     """
-    if has_eigenverbrauch(seg):
-        if seg == Segment.SMALL_MIT_EV or seg == Segment.MID_MIT_EV:
-            return 10.96
-        return 7.20  # LARGE_MIT_EV, XL_MIT_EV
-    # ohne Eigenverbrauch
-    if seg == Segment.SMALL_OHNE_EV or seg == Segment.MID_OHNE_EV:
-        return 8.20
-    return 5.40  # LARGE_OHNE_EV, XL_OHNE_EV
+    rule = find_rule(cap_rules, kw, eigenverbrauch)
+    return float(rule["cap_rp_kwh"]) if rule is not None else None
 
 
 def effective_rp_kwh(
     base_input_rp_kwh: float,
-    seg: Segment,
-    kw: float,
-    hkn_verguetung_rp_kwh: float = 0.0,
+    hkn_rp_kwh: float = 0.0,
     *,
-    verguetungs_obergrenze: bool = False,
+    federal_floor_rp_kwh: float | None,
+    cap_rp_kwh: float | None,
+    cap_mode: bool = False,
 ) -> float:
     """Effective Rückliefervergütung in Rp/kWh.
 
-    Federal floor (Mindestvergütung, EnV Art. 12 Abs. 1bis) is always applied
-    to the base. Whether the Anrechenbarkeitsgrenze (StromVV Art. 4 Abs. 3
-    Bst. e) acts as a payment cap is a per-utility commercial choice — most
-    Swiss utilities pay base + HKN additively without enforcing the cap; only
-    EKZ, Groupe E, and Primeo apply it strictly per their published 2026 terms.
+    Caller is expected to have already resolved ``federal_floor_rp_kwh``
+    (from ``mindestverguetung_rp_kwh``) and ``cap_rp_kwh`` (from
+    ``anrechenbarkeitsgrenze_rp_kwh`` against the utility's cap_rules).
 
-    When ``verguetungs_obergrenze`` is True, the EKZ-style two-clause cap rule
-    applies:
+    The federal Mindestvergütung floor (EnV Art. 12 Abs. 1bis) is always
+    applied to the base. Whether the Anrechenbarkeitsgrenze (StromVV Art. 4
+    Abs. 3 Bst. e) acts as a payment cap is a per-utility commercial choice —
+    most Swiss utilities pay base + HKN additively without enforcing the cap;
+    only EKZ, Groupe E, and Primeo apply it strictly per their published
+    2026 terms (those ship with ``cap_mode=true`` in tariffs.json).
+
+    When ``cap_mode`` is True, the EKZ-style two-clause cap rule applies:
     - If base alone already meets/exceeds the cap → HKN forfeited entirely.
     - Otherwise → HKN reduced just enough to keep base + HKN ≤ cap.
     """
-    floor = mindestverguetung_rp_kwh(seg, kw) or 0.0
+    floor = federal_floor_rp_kwh or 0.0
     base = max(base_input_rp_kwh, floor)
 
-    if not verguetungs_obergrenze:
-        return base + hkn_verguetung_rp_kwh
-
-    cap = anrechenbarkeitsgrenze_rp_kwh(seg)
-    if base >= cap:
+    if not cap_mode or cap_rp_kwh is None:
+        return base + hkn_rp_kwh
+    if base >= cap_rp_kwh:
         return base
-    return min(base + hkn_verguetung_rp_kwh, cap)
+    return min(base + hkn_rp_kwh, cap_rp_kwh)
 
 
 def chf_per_mwh_to_rp_per_kwh(chf_per_mwh: float) -> float:

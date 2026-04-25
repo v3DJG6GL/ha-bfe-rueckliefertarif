@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "BFE Rückliefertarif — Choisir le fournisseur",
-        "description": "## Aperçu des tarifs de reprise 2026\n\n| Fournisseur | Rétribution de base | Rétribution GO (opt-in) | Plafonnement | Facturation |\n|---|---|---|---|---|\n| EKZ | Prix de référence du marché | jusqu'à 3.00 ct/kWh | **Oui** | Trimestrielle |\n| BKW | Prix de référence du marché | jusqu'à 2.00 ct/kWh (naturemade star) | Non | Trimestrielle |\n| CKW | Prix de référence du marché | jusqu'à 3.00 ct/kWh | Non | Trimestrielle |\n| Groupe E | Prix de référence du marché | jusqu'à 4.00 ct/kWh | **Oui** | Trimestrielle |\n| Primeo Energie | Prix de référence du marché | jusqu'à 2.00 ct/kWh | **Oui** | Trimestrielle |\n| Romande Energie | Prix de référence du marché | 1.50 ct/kWh | Non | Trimestrielle |\n| SAK | Prix de référence du marché | jusqu'à 1.50 ct/kWh | Non | Trimestrielle |\n| SGSW | Prix de référence du marché | jusqu'à 4.60 ct/kWh | Non | Trimestrielle |\n| ewz | Tarif fixe 7.91 ct/kWh | jusqu'à 5.00 ct/kWh (additif) | Non | Trimestrielle |\n| IWB | Tarif fixe 12.95 ct/kWh | inclus dans la base | Non | Trimestrielle |\n| SIG | Tarif fixe 8.16 ct/kWh | jusqu'à 2.80 ct/kWh (additif) | Non | Trimestrielle |\n| AEW | Tarif fixe 8.20 ct/kWh (GO inclus) | 0.00 | Non | Trimestrielle |\n| Autre / Custom | — | — | configurable | — |\n\n**Plafonnement de la rétribution** = le fournisseur applique-t-il un plafond par installation sur le total base + GO. Seuls EKZ, Groupe E et Primeo appliquent ce plafond ; tous les autres versent base + GO de manière additive. La *formule* du plafond provient de [OApEl art. 4 al. 3 let. e]({stromvv_url}), en vigueur depuis le 1.1.2026 — les valeurs sont des dérivations publiées par chaque fournisseur.\n\nVotre choix prérempli les valeurs à l'étape suivante — toutes les valeurs restent modifiables.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)",
+        "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. La *formule* du plafond provient de [OApEl art. 4 al. 3 let. e]({stromvv_url}), en vigueur depuis le 1.1.2026.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)",
         "menu_options": {
           "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
           "preset_bkw": "BKW — Berner Kraftwerke",
@@ -16,137 +16,105 @@
           "preset_ewz": "ewz — Elektrizitätswerk der Stadt Zürich",
           "preset_iwb": "IWB — Industrielle Werke Basel",
           "preset_sig": "SIG — Services Industriels Genève",
-          "preset_aew": "AEW Energie (Aargau)",
-          "preset_custom": "Autre / Custom"
+          "preset_aew_fixpreis": "AEW Energie — Reprise Tarif fixe (≤30 kW, naturemade-star)",
+          "preset_aew_rmp": "AEW Energie — Reprise Prix de référence du marché"
         }
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",
-        "description": "Les valeurs sont préremplies depuis le fournisseur choisi. Les détails apparaissent sous chaque champ. Les modifications s'appliquent à chaque ré-import futur.",
+        "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.",
         "data": {
-          "anlagenkategorie": "Catégorie d'installation",
           "installierte_leistung_kw": "Puissance installée (kW)",
-          "basisverguetung": "Rétribution de base",
-          "hkn_verguetung_rp_kwh": "Rétribution GO (ct/kWh)",
-          "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
-          "verguetungs_obergrenze": "Plafonnement de la rétribution",
+          "eigenverbrauch_aktiviert": "Autoconsommation activée",
+          "hkn_aktiviert": "Vendre les GO au fournisseur ?",
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "anlagenkategorie": "## Taille + autoconsommation\ndéterminent la **rémunération minimale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026), appliquée automatiquement.\n\n| Taille | Mode | Rémunération minimale (ct/kWh) |\n|---|---|---|\n| ≤30 kW | avec autoconsommation | **6.00** |\n| ≤30 kW | sans autoconsommation | **6.00** |\n| 30–<100 kW | avec autoconsommation | **180÷kW** |\n| 30–<100 kW | sans autoconsommation | **6.20** |\n| 100–<150 kW | avec autoconsommation | **180÷kW** |\n| 100–<150 kW | sans autoconsommation | **6.20** |\n| ≥150 kW | avec autoconsommation | aucun min |\n| ≥150 kW | sans autoconsommation | aucun min |",
-          "installierte_leistung_kw": "## Formule dégressive\n**Requis uniquement** pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule `180 ÷ kW`.\n\nLaisser à `0` pour les autres catégories.",
-          "basisverguetung": "## Modèle tarifaire\n- **Prix de référence du marché** → la plupart des fournisseurs : EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Tarif fixe** → ewz, IWB, SIG, AEW.\n\nLe prix de référence du marché est publié trimestriellement par l'**Office fédéral de l'énergie (OFEN)**. Source : [opendata.swiss]({opendata_url}).",
-          "fixpreis_rp_kwh": "## Exemples 2026\nUniquement avec **Rétribution de base = Tarif fixe**.\n\n| Fournisseur | Tarif fixe (ct/kWh) | GO |\n|---|---|---|\n| ewz | **7.91** | + 5.00 (additif) |\n| IWB | **12.95** | inclus |\n| SIG | **8.16** | + 2.80 (additif) |\n| AEW | **8.20** | inclus |",
-          "hkn_verguetung_rp_kwh": "## Opt-in GO\nRétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO. EKZ paie jusqu'à **3.00 ct/kWh** après inscription sur *myEKZ*.",
-          "verguetungs_obergrenze": "## Comportement du plafond\nQuand **actif** : si base + GO dépasse le plafond par installation, la rémunération GO est réduite juste assez pour respecter le plafond. Quand **inactif** : le fournisseur paie base + GO de manière additive sans plafond.\n\n- **Actif** → EKZ, Groupe E, Primeo\n- **Inactif** → tous les autres fournisseurs suisses (~98 %) : BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …\n\nValeurs de plafond quand **actif** (calcul publié par EKZ selon [OApEl art. 4 al. 3 let. e]({stromvv_url}), RO 2025 139, en vigueur depuis le 1.1.2026 — l'article impose une *formule* (coûts de revient d'une installation de référence diminués des subventions); les valeurs ne sont pas énumérées dans la loi. Groupe E et Primeo aboutissent à des valeurs similaires car le coût de référence fédéral est uniforme) :\n\n| Installation | Plafond (ct/kWh) |\n|---|---|\n| <100 kW avec autoconsommation | **10.96** |\n| <100 kW sans autoconsommation | **8.20** |\n| ≥100 kW avec autoconsommation | **7.20** |\n| ≥100 kW sans autoconsommation | **5.40** |",
-          "abrechnungs_rhythmus": "## Cycle de facturation\nSelon le cycle de facturation de votre fournisseur. **La plupart des fournisseurs facturent par trimestre.**"
+          "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026).",
+          "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place. **Non** pour une installation en injection totale (Volleinspeisung).",
+          "hkn_aktiviert": "## Opt-in GO (Garantie d'Origine)\n**Oui** si vous vendez vos *garanties d'origine* à votre fournisseur. Le taux est fixé par le fournisseur et n'est pas modifiable ici.",
+          "abrechnungs_rhythmus": "## Cycle de facturation\nLa plupart des fournisseurs suisses facturent trimestriellement."
         }
       },
       "entities": {
         "title": "Entités Home Assistant",
-        "description": "Reliez le compteur kWh d'injection au réseau et le capteur CHF auto-créé par Energy Dashboard.",
+        "description": "Sélectionnez les entités HA pour le compteur kWh d'injection et le capteur CHF généré automatiquement par le tableau de bord Énergie.",
         "data": {
-          "stromnetzeinspeisung_kwh": "Injection au réseau (kWh)",
-          "rueckliefervergutung_chf": "Rétribution de l'injection (CHF)",
+          "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
+          "rueckliefervergutung_chf": "Rétribution (CHF)",
           "namenspraefix": "Préfixe de nom"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
-          "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF auto-créé par Energy Dashboard (HA ajoute le suffixe `_compensation`, généralement `sensor.VOTRE_INJECTION_compensation`).",
-          "namenspraefix": "## Préfixe\nPréfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
+          "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe **compteur kWh** qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans le **tableau de bord Énergie** sous *« Retour au réseau »*.",
+          "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe **capteur CHF** que le tableau de bord Énergie crée automatiquement quand vous configurez *« Retour au réseau avec un prix »*.\n\nHA y appose le suffixe `_compensation` (généralement `sensor.VOTRE_INJECTION_compensation`). Cette intégration écrit dans ses **statistiques à long terme**.",
+          "namenspraefix": "## Préfixe de nom\nPréfixe pour les **capteurs de diagnostic** et **boutons d'action** de cette intégration. *À modifier uniquement* si la valeur par défaut entre en collision."
         }
       }
     },
     "error": {
-      "kw_required_for_degressive": "Puissance installée requise pour 30–<150 kW avec autoconsommation (formule 180 ÷ kW).",
-      "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'."
+      "kw_required": "La puissance installée (kW) doit être supérieure à 0."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "BFE Rückliefertarif — options",
-        "description": "Que voulez-vous faire ?",
+        "title": "Options BFE Rückliefertarif",
+        "description": "Que souhaitez-vous faire ?",
         "menu_options": {
-          "tariff": "Ajuster les paramètres tarifaires",
+          "tariff": "Modifier les paramètres tarifaires",
           "reimport_quarter": "Réimporter un trimestre spécifique",
           "entities": "Reconfigurer les entités Home Assistant"
         }
       },
       "tariff": {
-        "title": "Ajuster les paramètres tarifaires",
-        "description": "Les valeurs sont préremplies depuis le fournisseur choisi. Les détails apparaissent sous chaque champ. Les modifications s'appliquent à chaque ré-import futur.",
+        "title": "Modifier les paramètres tarifaires",
+        "description": "Modifier les paramètres de l'installation.",
         "data": {
-          "anlagenkategorie": "Catégorie d'installation",
           "installierte_leistung_kw": "Puissance installée (kW)",
-          "basisverguetung": "Rétribution de base",
-          "hkn_verguetung_rp_kwh": "Rétribution GO (ct/kWh)",
-          "fixpreis_rp_kwh": "Tarif fixe (ct/kWh)",
-          "verguetungs_obergrenze": "Plafonnement de la rétribution",
+          "eigenverbrauch_aktiviert": "Autoconsommation activée",
+          "hkn_aktiviert": "Vendre les GO au fournisseur ?",
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "anlagenkategorie": "## Taille + autoconsommation\ndéterminent la **rémunération minimale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026), appliquée automatiquement.\n\n| Taille | Mode | Rémunération minimale (ct/kWh) |\n|---|---|---|\n| ≤30 kW | avec autoconsommation | **6.00** |\n| ≤30 kW | sans autoconsommation | **6.00** |\n| 30–<100 kW | avec autoconsommation | **180÷kW** |\n| 30–<100 kW | sans autoconsommation | **6.20** |\n| 100–<150 kW | avec autoconsommation | **180÷kW** |\n| 100–<150 kW | sans autoconsommation | **6.20** |\n| ≥150 kW | avec autoconsommation | aucun min |\n| ≥150 kW | sans autoconsommation | aucun min |",
-          "installierte_leistung_kw": "## Formule dégressive\n**Requis uniquement** pour 30–<150 kW avec autoconsommation — la rémunération minimale suit la formule `180 ÷ kW`.\n\nLaisser à `0` pour les autres catégories.",
-          "basisverguetung": "## Modèle tarifaire\n- **Prix de référence du marché** → la plupart des fournisseurs : EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Tarif fixe** → ewz, IWB, SIG, AEW.\n\nLe prix de référence du marché est publié trimestriellement par l'**Office fédéral de l'énergie (OFEN)**. Source : [opendata.swiss]({opendata_url}).",
-          "fixpreis_rp_kwh": "## Exemples 2026\nUniquement avec **Rétribution de base = Tarif fixe**.\n\n| Fournisseur | Tarif fixe (ct/kWh) | GO |\n|---|---|---|\n| ewz | **7.91** | + 5.00 (additif) |\n| IWB | **12.95** | inclus |\n| SIG | **8.16** | + 2.80 (additif) |\n| AEW | **8.20** | inclus |",
-          "hkn_verguetung_rp_kwh": "## Opt-in GO\nRétribution pour les **garanties d'origine** (*GO / HKN*).\n\n**Opt-in chez la plupart des fournisseurs** — laissez `0.0` si vous ne vendez pas vos GO. EKZ paie jusqu'à **3.00 ct/kWh** après inscription sur *myEKZ*.",
-          "verguetungs_obergrenze": "## Comportement du plafond\nQuand **actif** : si base + GO dépasse le plafond par installation, la rémunération GO est réduite juste assez pour respecter le plafond. Quand **inactif** : le fournisseur paie base + GO de manière additive sans plafond.\n\n- **Actif** → EKZ, Groupe E, Primeo\n- **Inactif** → tous les autres fournisseurs suisses (~98 %) : BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …\n\nValeurs de plafond quand **actif** (calcul publié par EKZ selon [OApEl art. 4 al. 3 let. e]({stromvv_url}), RO 2025 139, en vigueur depuis le 1.1.2026 — l'article impose une *formule* (coûts de revient d'une installation de référence diminués des subventions); les valeurs ne sont pas énumérées dans la loi. Groupe E et Primeo aboutissent à des valeurs similaires car le coût de référence fédéral est uniforme) :\n\n| Installation | Plafond (ct/kWh) |\n|---|---|\n| <100 kW avec autoconsommation | **10.96** |\n| <100 kW sans autoconsommation | **8.20** |\n| ≥100 kW avec autoconsommation | **7.20** |\n| ≥100 kW sans autoconsommation | **5.40** |",
-          "abrechnungs_rhythmus": "## Cycle de facturation\nSelon le cycle de facturation de votre fournisseur. **La plupart des fournisseurs facturent par trimestre.**"
+          "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
+          "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place.",
+          "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur.",
+          "abrechnungs_rhythmus": "## Cycle de facturation\nLa plupart des fournisseurs suisses facturent trimestriellement."
         }
       },
       "reimport_quarter": {
         "title": "Réimporter un trimestre spécifique",
-        "description": "Recalculer la rétribution pour un trimestre passé.",
+        "description": "Recalculer la rétribution en CHF/h pour un trimestre spécifique.",
         "data": {
           "quarter": "Trimestre"
         },
         "data_description": {
-          "quarter": "## Identifiant trimestre\n**Format :** `AAAATN` (ex. `2026Q1`).\n\nLe trimestre doit déjà être publié par l'OFEN — généralement environ **2 semaines après la fin du trimestre**."
+          "quarter": "## Identifiant de trimestre\n**Format :** `AAAATN` (ex. `2026Q1`)."
         }
       },
       "entities": {
-        "title": "Reconfigurer les entités",
-        "description": "Reliez le compteur kWh d'injection au réseau et le capteur CHF auto-créé par Energy Dashboard.",
+        "title": "Reconfigurer les entités Home Assistant",
+        "description": "Sélectionnez les entités HA pour le compteur kWh d'injection et le capteur CHF.",
         "data": {
-          "stromnetzeinspeisung_kwh": "Injection au réseau (kWh)",
-          "rueckliefervergutung_chf": "Rétribution de l'injection (CHF)",
+          "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
+          "rueckliefervergutung_chf": "Rétribution (CHF)",
           "namenspraefix": "Préfixe de nom"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
-          "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF auto-créé par Energy Dashboard (HA ajoute le suffixe `_compensation`, généralement `sensor.VOTRE_INJECTION_compensation`).",
-          "namenspraefix": "## Préfixe\nPréfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
+          "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh d'injection.",
+          "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF du tableau de bord Énergie.",
+          "namenspraefix": "## Préfixe de nom\nPréfixe pour les capteurs et boutons. À modifier uniquement si collision."
         }
       }
     },
     "error": {
-      "kw_required_for_degressive": "Puissance installée requise pour 30–<150 kW avec autoconsommation.",
-      "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'.",
+      "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
       "invalid_quarter": "Format invalide. Attendu : AAAATN (ex. 2026Q1).",
       "price_not_yet_published": "L'OFEN n'a pas encore publié ce trimestre. Réessayez environ 2 semaines après la fin du trimestre.",
-      "reimport_failed": "Échec inattendu du recalcul. Voir Paramètres → Système → Journaux."
+      "reimport_failed": "Échec inattendu du ré-import. Consultez Paramètres → Système → Journaux."
     }
   },
   "selector": {
-    "anlagenkategorie": {
-      "options": {
-        "small_mit_ev": "≤30 kW avec autoconsommation",
-        "small_ohne_ev": "≤30 kW sans autoconsommation (injection totale)",
-        "mid_mit_ev": "30–<100 kW avec autoconsommation",
-        "mid_ohne_ev": "30–<100 kW sans autoconsommation",
-        "large_mit_ev": "100–<150 kW avec autoconsommation",
-        "large_ohne_ev": "100–<150 kW sans autoconsommation",
-        "xl_mit_ev": "≥150 kW avec autoconsommation",
-        "xl_ohne_ev": "≥150 kW sans autoconsommation"
-      }
-    },
-    "basisverguetung": {
-      "options": {
-        "referenz_marktpreis": "Prix de référence du marché (OFEN, trimestriel)",
-        "fixpreis": "Tarif fixe (défini par le fournisseur)"
-      }
-    },
     "abrechnungs_rhythmus": {
       "options": {
         "quartal": "Trimestrielle",
@@ -163,16 +131,19 @@
         "name": "Rétribution actuelle"
       },
       "hkn_verguetung": {
-        "name": "Rétribution GO (configurée)"
+        "name": "Rétribution GO (résolue)"
       },
       "naechste_referenzmarktpreis_publikation": {
         "name": "Prochaine publication du prix de référence"
       },
       "referenzmarktpreis_q": {
-        "name": "Prix de référence du marché (trimestre actuel)"
+        "name": "Prix de référence du marché (trimestre courant)"
       },
       "referenzmarktpreis_m": {
-        "name": "Prix de référence du marché (mois actuel)"
+        "name": "Prix de référence du marché (mois courant)"
+      },
+      "tariffs_last_remote_update": {
+        "name": "Base de tarifs — dernière mise à jour distante"
       }
     },
     "button": {
@@ -183,7 +154,7 @@
         "name": "Recalculer le dernier trimestre publié"
       },
       "recompute_aktuelles_quartal_estimate": {
-        "name": "Recalculer le trimestre en cours (estimation)"
+        "name": "Recalculer le trimestre courant (estimation)"
       },
       "recompute_historie": {
         "name": "Recalculer tout l'historique"

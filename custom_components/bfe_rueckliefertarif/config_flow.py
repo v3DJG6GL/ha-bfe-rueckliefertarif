@@ -1,11 +1,14 @@
-"""Config flow for BFE Rückliefertarif.
+"""Config flow for BFE Rückliefertarif (v0.5).
 
 Three-step flow:
-1. ``user`` — clickable menu of utilities (one click advances).
-2. ``tariff`` — 6 tariff fields, pre-filled from the chosen utility's preset.
+1. ``user`` — clickable menu of utilities (one click advances). Utility list
+   comes from ``data/tariffs.json`` so adding a utility is a JSON-only change.
+2. ``tariff`` — 4 personal-input fields (kW, Eigenverbrauch, HKN opt-in,
+   Abrechnungs-Rhythmus). Utility-published values (HKN rate, cap_mode,
+   fixed price) come from JSON and are NOT user-editable.
 3. ``entities`` — 3 entity-wiring fields.
 
-Plus an Options Flow that re-exposes the tariff step (post-setup edits).
+Plus an Options Flow that re-exposes the tariff step.
 """
 
 from __future__ import annotations
@@ -19,36 +22,23 @@ from homeassistant.helpers import selector
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
-    BASISVERGUETUNG_FIXPREIS,
-    BASISVERGUETUNG_REFERENZMARKTPREIS,
     CONF_ABRECHNUNGS_RHYTHMUS,
-    CONF_ANLAGENKATEGORIE,
-    CONF_BASISVERGUETUNG,
+    CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_ENERGIEVERSORGER,
-    CONF_FIXPREIS_RP_KWH,
-    CONF_HKN_VERGUETUNG_RP_KWH,
+    CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_NAMENSPRAEFIX,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
-    CONF_VERGUETUNGS_OBERGRENZE,
     DOMAIN,
+    OPT_HKN_OPTIN_HISTORY,
+    OPT_PLANT_HISTORY,
 )
-from .presets import PRESETS, get_preset, list_preset_keys
-from .tariff import Segment
+from .tariffs_db import list_utility_keys, load_tariffs
 
 if TYPE_CHECKING:
     from homeassistant.data_entry_flow import FlowResult
 
-
-_DEGRESSIVE_KATEGORIEN = {Segment.MID_MIT_EV.value, Segment.LARGE_MIT_EV.value}
-
-# Preset attributes use the v1 vocabulary (base_mode = "rmp_passthrough"|"fixed_rate")
-# because presets.py is unchanged. Translate to the v2 stored values when seeding.
-_PRESET_LEGACY_TO_NEW: dict[str, str] = {
-    "rmp_passthrough": BASISVERGUETUNG_REFERENZMARKTPREIS,
-    "fixed_rate": BASISVERGUETUNG_FIXPREIS,
-}
 
 # Locale-aware data-source URLs surfaced via description_placeholders.
 # Hassfest forbids URLs in translation strings — must be runtime-injected.
@@ -65,8 +55,6 @@ _OPENDATA_URLS: dict[str, str] = {
 # - EnV SR 730.01 (ELI 2017/763), Art. 12 Abs. 1bis: Mindestvergütung floors.
 # - StromVV SR 734.71 (ELI 2008/226), Art. 4 Abs. 3 Bst. e: cap formula.
 # Both in force 1.1.2026 via AS 2025 138 / AS 2025 139.
-# Neither ordinance has a canonical English version on Fedlex — EN falls back
-# to DE. ELI numbers verified by downloading the PDF and grepping the SR header.
 _FEDLEX_ENV_URLS: dict[str, str] = {
     "de": "https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12",
     "en": "https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12",
@@ -90,28 +78,26 @@ def _source_links(hass) -> dict[str, str]:
     }
 
 
-def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Build the tariff-step schema with optional pre-filled defaults.
+def _utility_display_name(key: str, db: dict | None = None) -> str:
+    """Human-readable label from tariffs.json (`name_de`, falling back to key)."""
+    db = db if db is not None else load_tariffs()
+    u = db["utilities"].get(key)
+    if u is None:
+        return key
+    return u.get("name_de") or u.get("name_fr") or key
 
-    Field order is intentional: plant category → installed power →
-    base price (radio) → fixed price (number, conditional on base price) →
-    HKN payment → billing period. Fixed price sits next to the radio that
-    makes it conditional; HKN follows because it's an additive bonus.
+
+def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Build the v0.5 tariff-step schema with optional pre-filled defaults.
+
+    Only personal inputs: installed kW, Eigenverbrauch yes/no, HKN opt-in
+    yes/no, Abrechnungs-Rhythmus. All utility-published values come from
+    ``data/tariffs.json`` looked up by the utility chosen in step 1.
     """
     d = defaults or {}
     return vol.Schema(
         {
             vol.Required(
-                CONF_ANLAGENKATEGORIE,
-                default=d.get(CONF_ANLAGENKATEGORIE, Segment.SMALL_MIT_EV.value),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[s.value for s in Segment],
-                    translation_key=CONF_ANLAGENKATEGORIE,
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            ),
-            vol.Optional(
                 CONF_INSTALLIERTE_LEISTUNG_KW,
                 default=d.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
             ): selector.NumberSelector(
@@ -124,45 +110,12 @@ def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 )
             ),
             vol.Required(
-                CONF_BASISVERGUETUNG,
-                default=d.get(CONF_BASISVERGUETUNG, BASISVERGUETUNG_REFERENZMARKTPREIS),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        BASISVERGUETUNG_REFERENZMARKTPREIS,
-                        BASISVERGUETUNG_FIXPREIS,
-                    ],
-                    translation_key=CONF_BASISVERGUETUNG,
-                    mode=selector.SelectSelectorMode.LIST,
-                )
-            ),
-            vol.Optional(
-                CONF_FIXPREIS_RP_KWH,
-                default=d.get(CONF_FIXPREIS_RP_KWH, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=30,
-                    step=0.01,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="Rp/kWh",
-                )
-            ),
+                CONF_EIGENVERBRAUCH_AKTIVIERT,
+                default=d.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True),
+            ): selector.BooleanSelector(),
             vol.Required(
-                CONF_HKN_VERGUETUNG_RP_KWH,
-                default=d.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=10,
-                    step=0.01,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="Rp/kWh",
-                )
-            ),
-            vol.Required(
-                CONF_VERGUETUNGS_OBERGRENZE,
-                default=d.get(CONF_VERGUETUNGS_OBERGRENZE, False),
+                CONF_HKN_AKTIVIERT,
+                default=d.get(CONF_HKN_AKTIVIERT, False),
             ): selector.BooleanSelector(),
             vol.Required(
                 CONF_ABRECHNUNGS_RHYTHMUS,
@@ -182,23 +135,82 @@ def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
 
 
 def _validate_tariff(user_input: dict[str, Any]) -> dict[str, str]:
-    """Return per-field error keys for the tariff step. Empty dict = valid."""
+    """Per-field error keys for the tariff step. Empty dict = valid.
+
+    v0.5: only need to validate that kW is positive (the federal degressive
+    formula and most utility cap-rules need a non-zero kW). The 8-segment
+    plant-category dropdown is gone, so there's no "kw_required_for_degressive"
+    case anymore — kW is required for everyone.
+    """
     errors: dict[str, str] = {}
-    if (
-        user_input[CONF_ANLAGENKATEGORIE] in _DEGRESSIVE_KATEGORIEN
-        and float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0)) <= 0
-    ):
-        errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required_for_degressive"
-    if user_input[CONF_BASISVERGUETUNG] == BASISVERGUETUNG_FIXPREIS:
-        if float(user_input.get(CONF_FIXPREIS_RP_KWH, 0)) <= 0:
-            errors[CONF_FIXPREIS_RP_KWH] = "fixpreis_required"
+    if float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0)) <= 0:
+        errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
     return errors
+
+
+def _record_history_changes(
+    *, old_data: dict, new_data: dict, old_options: dict
+) -> dict:
+    """Auto-append to plant_history / hkn_optin_history when the user changes
+    kW / Eigenverbrauch / HKN-opt-in in the options flow.
+
+    The prior open-ended record's ``valid_to`` is closed to "today"; a new
+    open-ended record is appended carrying the new values. If the history
+    list was empty (first ever options edit), a single record is appended
+    with ``valid_from = today``. Manual backfill (editing past records) is
+    a v0.6 polish — for now any mid-year change the user remembers can be
+    fixed by editing entry.options directly via developer tools.
+    """
+    from datetime import date
+
+    today = date.today().isoformat()
+    new_options = {**old_options}
+
+    plant_changed = (
+        old_data.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+        != new_data.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+        or old_data.get(CONF_EIGENVERBRAUCH_AKTIVIERT)
+        != new_data.get(CONF_EIGENVERBRAUCH_AKTIVIERT)
+    )
+    if plant_changed:
+        history = list(new_options.get(OPT_PLANT_HISTORY) or [])
+        if history and history[-1].get("valid_to") is None:
+            history[-1] = {**history[-1], "valid_to": today}
+        history.append(
+            {
+                "valid_from": today,
+                "valid_to": None,
+                "installierte_leistung_kw": float(
+                    new_data[CONF_INSTALLIERTE_LEISTUNG_KW]
+                ),
+                "eigenverbrauch_aktiviert": bool(
+                    new_data[CONF_EIGENVERBRAUCH_AKTIVIERT]
+                ),
+            }
+        )
+        new_options[OPT_PLANT_HISTORY] = history
+
+    hkn_changed = old_data.get(CONF_HKN_AKTIVIERT) != new_data.get(CONF_HKN_AKTIVIERT)
+    if hkn_changed:
+        history = list(new_options.get(OPT_HKN_OPTIN_HISTORY) or [])
+        if history and history[-1].get("valid_to") is None:
+            history[-1] = {**history[-1], "valid_to": today}
+        history.append(
+            {
+                "valid_from": today,
+                "valid_to": None,
+                "opted_in": bool(new_data[CONF_HKN_AKTIVIERT]),
+            }
+        )
+        new_options[OPT_HKN_OPTIN_HISTORY] = history
+
+    return new_options
 
 
 class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Menu-first 3-step config flow."""
 
-    VERSION = 3
+    VERSION = 4
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -216,21 +228,17 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> "FlowResult":
         return self.async_show_menu(
             step_id="user",
-            menu_options=[f"preset_{k}" for k in list_preset_keys()],
+            menu_options=[f"preset_{k}" for k in list_utility_keys()],
             description_placeholders=_source_links(self.hass),
         )
 
     async def _apply_preset(self, key: str) -> "FlowResult":
         self._data[CONF_ENERGIEVERSORGER] = key
-        preset = get_preset(key)
-        self._data[CONF_BASISVERGUETUNG] = _PRESET_LEGACY_TO_NEW[preset.base_mode]
-        self._data[CONF_HKN_VERGUETUNG_RP_KWH] = preset.hkn_bonus_rp_kwh
-        self._data[CONF_VERGUETUNGS_OBERGRENZE] = preset.verguetungs_obergrenze
-        if preset.fixed_rate_rp_kwh is not None:
-            self._data[CONF_FIXPREIS_RP_KWH] = preset.fixed_rate_rp_kwh
         return await self.async_step_tariff()
 
-    # 12 menu-option wrappers — each routes to _apply_preset.
+    # 13 menu-option wrappers — one per utility entry in tariffs.json.
+    # AEW splits into aew_fixpreis + aew_rmp; future multi-product utilities
+    # (e.g. Primeo SolarAktiv) follow the same pattern.
     async def async_step_preset_ekz(self, user_input=None):
         return await self._apply_preset("ekz")
 
@@ -264,11 +272,11 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_preset_sig(self, user_input=None):
         return await self._apply_preset("sig")
 
-    async def async_step_preset_aew(self, user_input=None):
-        return await self._apply_preset("aew")
+    async def async_step_preset_aew_fixpreis(self, user_input=None):
+        return await self._apply_preset("aew_fixpreis")
 
-    async def async_step_preset_custom(self, user_input=None):
-        return await self._apply_preset("custom")
+    async def async_step_preset_aew_rmp(self, user_input=None):
+        return await self._apply_preset("aew_rmp")
 
     # ----- Step 2: tariff configuration -----------------------------------------
 
@@ -284,13 +292,12 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_entities()
 
         defaults = user_input if user_input is not None else self._data
-        preset = get_preset(self._data.get(CONF_ENERGIEVERSORGER, "custom"))
         return self.async_show_form(
             step_id="tariff",
             data_schema=_tariff_schema(defaults),
             errors=errors,
             description_placeholders={
-                "utility_name": preset.display_name,
+                "utility_name": _utility_display_name(self._data[CONF_ENERGIEVERSORGER]),
                 **_source_links(self.hass),
             },
         )
@@ -303,7 +310,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._data.update(user_input)
             return self.async_create_entry(
-                title=get_preset(self._data[CONF_ENERGIEVERSORGER]).display_name,
+                title=_utility_display_name(self._data[CONF_ENERGIEVERSORGER]),
                 data=self._data,
             )
 
@@ -356,8 +363,13 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
             errors = _validate_tariff(user_input)
             if not errors:
                 new_data = {**self.config_entry.data, **user_input}
+                new_options = _record_history_changes(
+                    old_data=dict(self.config_entry.data),
+                    new_data=new_data,
+                    old_options=dict(self.config_entry.options or {}),
+                )
                 self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data
+                    self.config_entry, data=new_data, options=new_options
                 )
                 self.hass.async_create_task(
                     self.hass.config_entries.async_reload(self.config_entry.entry_id)

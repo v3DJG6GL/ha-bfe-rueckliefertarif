@@ -5,13 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import (
-    _V1_TO_V2_KEY_MAP,
-    _V1_TO_V2_VALUE_MAP,
-    CONF_ENERGIEVERSORGER,
-    CONF_VERGUETUNGS_OBERGRENZE,
-    DOMAIN,
-)
+from .const import DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -24,10 +18,22 @@ PLATFORMS = ["sensor", "button"]
 
 async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool:
     """Set up a config entry."""
+    from .data_coordinator import TariffsDataCoordinator
     from .services import async_register_services
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {"config": dict(entry.data)}
+
+    # Phase 6: a single TariffsDataCoordinator is shared across config entries
+    # (only ever one in v0.5; the dict-keyed shape is forward-compat).
+    if "_tariffs_data" not in hass.data[DOMAIN]:
+        tdc = TariffsDataCoordinator(hass)
+        await tdc.async_load()
+        hass.data[DOMAIN]["_tariffs_data"] = tdc
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        "config": dict(entry.data),
+        "options": dict(entry.options or {}),
+    }
     await async_register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -39,34 +45,3 @@ async def async_unload_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> boo
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok
-
-
-async def async_migrate_entry(
-    hass: "HomeAssistant", entry: "ConfigEntry"
-) -> bool:
-    """Migrate v1 → v2 (key/value renames) and v2 → v3 (Vergütungs-Obergrenze)."""
-    if entry.version == 1:
-        data = {_V1_TO_V2_KEY_MAP.get(k, k): v for k, v in entry.data.items()}
-        for field, mapping in _V1_TO_V2_VALUE_MAP.items():
-            if field in data and data[field] in mapping:
-                data[field] = mapping[data[field]]
-        hass.config_entries.async_update_entry(entry, data=data, version=2)
-        _LOGGER.info("Migrated %s entry %s from v1 to v2", DOMAIN, entry.entry_id)
-
-    if entry.version == 2:
-        from .presets import PRESETS
-
-        data = dict(entry.data)
-        energieversorger = data.get(CONF_ENERGIEVERSORGER, "custom")
-        preset = PRESETS.get(energieversorger)
-        data[CONF_VERGUETUNGS_OBERGRENZE] = (
-            preset.verguetungs_obergrenze if preset is not None else False
-        )
-        hass.config_entries.async_update_entry(entry, data=data, version=3)
-        _LOGGER.info(
-            "Migrated %s entry %s from v2 to v3 (Vergütungs-Obergrenze=%s)",
-            DOMAIN,
-            entry.entry_id,
-            data[CONF_VERGUETUNGS_OBERGRENZE],
-        )
-    return True

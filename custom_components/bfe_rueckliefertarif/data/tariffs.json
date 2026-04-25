@@ -1,0 +1,448 @@
+{
+  "$schema": "https://raw.githubusercontent.com/v3DJG6GL/bfe-tariffs-data/main/schemas/tariffs-v1.schema.json",
+  "schema_version": "1.0.0",
+  "last_updated": "2026-04-26",
+  "notes": "Bundled fallback. Source-of-truth (companion repo) lands in Phase 6. Today's preset values translated 1:1 from presets.py; AEW split into aew_fixpreis (≤30 kW fixed) and aew_rmp (RMP) per Option A (multi-product utility = separate dropdown entries).",
+
+  "federal_minimum": [
+    {
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "legal_basis": "EnV Art. 12 Abs. 1bis",
+      "as_reference": "AS 2025 138",
+      "url": "https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12",
+      "rules": [
+        { "kw_min": 0,   "kw_max": 30,   "self_consumption": null,  "min_rp_kwh": 6.00 },
+        { "kw_min": 30,  "kw_max": 150,  "self_consumption": true,
+          "formula": "180/kw",
+          "min_rp_kwh_at_kw_min": 6.00, "min_rp_kwh_at_kw_max": 1.20 },
+        { "kw_min": 30,  "kw_max": 150,  "self_consumption": false, "min_rp_kwh": 6.20 },
+        { "kw_min": 150, "kw_max": null, "self_consumption": null,  "min_rp_kwh": null }
+      ]
+    }
+  ],
+
+  "utilities": {
+    "ekz": {
+      "nr_elcom": "486",
+      "uid": null,
+      "name_de": "EKZ (Elektrizitätswerke des Kantons Zürich)",
+      "name_fr": "EKZ (Centrales électriques du canton de Zurich)",
+      "homepage": "https://www.ekz.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.ekz.ch/de/private/solaranlagen/rueckliefertarife.html",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 3.00,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "quarterly",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": true,
+          "cap_rules": [
+            { "kw_min": 0,   "kw_max": 100,  "self_consumption": true,  "cap_rp_kwh": 10.96 },
+            { "kw_min": 0,   "kw_max": 100,  "self_consumption": false, "cap_rp_kwh":  8.20 },
+            { "kw_min": 100, "kw_max": null, "self_consumption": true,  "cap_rp_kwh":  7.20 },
+            { "kw_min": 100, "kw_max": null, "self_consumption": false, "cap_rp_kwh":  5.40 }
+          ]
+        }
+      ]
+    },
+
+    "bkw": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "BKW (Berner Kraftwerke)",
+      "name_fr": "BKW (Forces motrices bernoises)",
+      "homepage": "https://www.bkw.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.bkw.ch/de/produkte/solar/einspeisung",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 2.00,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": true,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "ckw": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "CKW (Centralschweizerische Kraftwerke)",
+      "name_fr": "CKW (Centrales électriques de Suisse centrale)",
+      "homepage": "https://www.ckw.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.ckw.ch/private/solar/einspeisung.html",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 3.00,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "groupe_e": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "Groupe E",
+      "name_fr": "Groupe E",
+      "homepage": "https://www.groupe-e.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.groupe-e.ch/fr/energie/electricite/electricite-photovoltaique",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 4.00,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": true,
+          "cap_rules": [
+            { "kw_min": 0,   "kw_max": 100,  "self_consumption": true,  "cap_rp_kwh": 10.96 },
+            { "kw_min": 0,   "kw_max": 100,  "self_consumption": false, "cap_rp_kwh":  8.20 },
+            { "kw_min": 100, "kw_max": null, "self_consumption": true,  "cap_rp_kwh":  7.20 },
+            { "kw_min": 100, "kw_max": null, "self_consumption": false, "cap_rp_kwh":  5.40 }
+          ]
+        }
+      ]
+    },
+
+    "primeo": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "Primeo Energie",
+      "name_fr": "Primeo Energie",
+      "homepage": "https://www.primeo-energie.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.primeo-energie.ch/de/strom/eigenproduktion",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 2.00,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": true,
+          "cap_rules": [
+            { "kw_min": 0,   "kw_max": 100,  "self_consumption": true,  "cap_rp_kwh": 10.96 },
+            { "kw_min": 0,   "kw_max": 100,  "self_consumption": false, "cap_rp_kwh":  8.20 },
+            { "kw_min": 100, "kw_max": null, "self_consumption": true,  "cap_rp_kwh":  7.20 },
+            { "kw_min": 100, "kw_max": null, "self_consumption": false, "cap_rp_kwh":  5.40 }
+          ]
+        }
+      ]
+    },
+
+    "romande_energie": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "Romande Energie",
+      "name_fr": "Romande Energie",
+      "homepage": "https://www.romande-energie.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.romande-energie.ch/produire-mon-electricite",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 1.50,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "sak": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "SAK (St. Galler Stadtwerke)",
+      "name_fr": "SAK (Services industriels de Saint-Gall)",
+      "homepage": "https://www.sak.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.sak.ch/privatkunden/solar/einspeisung",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 1.50,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "sgsw": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "SGSW (St. Gallen Stadt)",
+      "name_fr": "SGSW (Ville de Saint-Gall)",
+      "homepage": "https://www.sgsw.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.sgsw.ch/privatkunden/solarenergie/einspeisung.html",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 4.60,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "ewz": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "ewz (Elektrizitätswerk der Stadt Zürich)",
+      "name_fr": "ewz (Services industriels de la ville de Zurich)",
+      "homepage": "https://www.ewz.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.ewz.ch/de/private/solaranlagen/verrechnungsloesungen/stromruecklieferung.html",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "fixed_flat",
+              "fixed_rp_kwh": 7.91,
+              "hkn_rp_kwh": 5.00,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "iwb": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "IWB (Industrielle Werke Basel)",
+      "name_fr": "IWB (Services industriels de Bâle)",
+      "homepage": "https://www.iwb.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.iwb.ch/privatkunden/solarenergie",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "fixed_flat",
+              "fixed_rp_kwh": 12.95,
+              "hkn_rp_kwh": 0.00,
+              "hkn_structure": "bundled"
+            }
+          ],
+          "hkn_switch_cadence": "contract",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "sig": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "SIG (Services Industriels de Genève)",
+      "name_fr": "SIG (Services Industriels de Genève)",
+      "homepage": "https://www.sig-ge.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.sig-ge.ch/electricite/produire-de-l-electricite",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "fixed_flat",
+              "fixed_rp_kwh": 8.16,
+              "hkn_rp_kwh": 2.80,
+              "hkn_structure": "additive_optin"
+            }
+          ],
+          "hkn_switch_cadence": "annual",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "aew_fixpreis": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "AEW Energie — Rücklieferung Fixpreis",
+      "name_fr": "AEW Energie — Rétrocédage prix fixe",
+      "homepage": "https://www.aew.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.aew.ch/sites/default/files/2025-11/AEW_Ruecklieferung_Fixpreis_2026.pdf",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": 30,
+              "base_model": "fixed_flat",
+              "fixed_rp_kwh": 8.20,
+              "hkn_rp_kwh": 0.00,
+              "hkn_structure": "bundled"
+            }
+          ],
+          "hkn_switch_cadence": "contract",
+          "requires_naturemade_star": true,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    },
+
+    "aew_rmp": {
+      "nr_elcom": null,
+      "uid": null,
+      "name_de": "AEW Energie — Rücklieferung Referenzmarktpreis",
+      "name_fr": "AEW Energie — Rétrocédage prix de marché de référence",
+      "homepage": "https://www.aew.ch",
+      "rates": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null,
+          "settlement_period": "quartal",
+          "tarif_url": "https://www.aew.ch/sites/default/files/2025-11/AEW_Ruecklieferung_Referenzmarktpreis_2026.pdf",
+          "power_tiers": [
+            {
+              "kw_min": 0, "kw_max": null,
+              "base_model": "rmp_quartal",
+              "hkn_rp_kwh": 0.00,
+              "hkn_structure": "none"
+            }
+          ],
+          "hkn_switch_cadence": "contract",
+          "requires_naturemade_star": false,
+          "price_floor_rp_kwh": null,
+          "bonuses": [],
+          "seasonal": null,
+          "cap_mode": false,
+          "cap_rules": null
+        }
+      ]
+    }
+  }
+}

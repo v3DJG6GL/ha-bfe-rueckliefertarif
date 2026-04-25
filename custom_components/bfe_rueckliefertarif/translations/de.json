@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "BFE Rückliefertarif — Energieversorger wählen",
-        "description": "## Übersicht der Rückliefertarife 2026\n\n| Energieversorger | Basisvergütung | HKN-Vergütung (Opt-in) | Vergütungs-Obergrenze | Abrechnung |\n|---|---|---|---|---|\n| EKZ | Referenz-Marktpreis | bis 3.00 Rp/kWh | **Ja** | Quartal |\n| BKW | Referenz-Marktpreis | bis 2.00 Rp/kWh (naturemade star) | Nein | Quartal |\n| CKW | Referenz-Marktpreis | bis 3.00 Rp/kWh | Nein | Quartal |\n| Groupe E | Referenz-Marktpreis | bis 4.00 Rp/kWh | **Ja** | Quartal |\n| Primeo Energie | Referenz-Marktpreis | bis 2.00 Rp/kWh | **Ja** | Quartal |\n| Romande Energie | Referenz-Marktpreis | 1.50 Rp/kWh | Nein | Quartal |\n| SAK | Referenz-Marktpreis | bis 1.50 Rp/kWh | Nein | Quartal |\n| SGSW | Referenz-Marktpreis | bis 4.60 Rp/kWh | Nein | Quartal |\n| ewz | Fixpreis 7.91 Rp/kWh | bis 5.00 Rp/kWh (additiv) | Nein | Quartal |\n| IWB | Fixpreis 12.95 Rp/kWh | in Basisvergütung enthalten | Nein | Quartal |\n| SIG | Fixpreis 8.16 Rp/kWh | bis 2.80 Rp/kWh (additiv) | Nein | Quartal |\n| AEW | Fixpreis 8.20 Rp/kWh (HKN inklusive) | 0.00 | Nein | Quartal |\n| Anderer / Custom | — | — | konfigurierbar | — |\n\n**Vergütungs-Obergrenze** = ob der Versorger die Gesamtvergütung (Basis + HKN) auf eine anlagenspezifische Obergrenze deckelt. Nur EKZ, Groupe E und Primeo wenden diese Deckelung an; alle anderen zahlen Basis + HKN voll additiv aus. Die Cap-*Formel* stammt aus [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}), seit 1.1.2026 in Kraft — die konkreten Werte sind versorgereigene Herleitungen.\n\nDie Auswahl füllt die Werte im nächsten Schritt vor — du kannst alles anpassen.\n\n---\n\n**Quellen:** [BFE Einspeisevergütung]({agency_url}) · [opendata.swiss Referenz-Marktpreis-Dataset]({opendata_url})",
+        "description": "## Übersicht der Rückliefertarife 2026\n\n| Energieversorger | Basisvergütung | HKN-Vergütung (Opt-in) | Cap aktiv | Hinweise |\n|---|---|---|---|---|\n| EKZ | Referenz-Marktpreis | bis 3.00 Rp/kWh | **Ja** | Cap kürzt HKN bei Basis+HKN > Grenze |\n| BKW | Referenz-Marktpreis | bis 2.00 Rp/kWh | Nein | naturemade-star für HKN nötig |\n| CKW | Referenz-Marktpreis | bis 3.00 Rp/kWh | Nein | |\n| Groupe E | Referenz-Marktpreis | bis 4.00 Rp/kWh | **Ja** | |\n| Primeo Energie | Referenz-Marktpreis | bis 2.00 Rp/kWh | **Ja** | |\n| Romande Energie | Referenz-Marktpreis | 1.50 Rp/kWh | Nein | |\n| SAK | Referenz-Marktpreis | bis 1.50 Rp/kWh | Nein | |\n| SGSW | Referenz-Marktpreis | bis 4.60 Rp/kWh | Nein | |\n| ewz | Fixpreis 7.91 Rp/kWh | bis 5.00 Rp/kWh (additiv) | Nein | |\n| IWB | Fixpreis 12.95 Rp/kWh | in Basis enthalten | Nein | 12-Jahres-Vertrag |\n| SIG | Fixpreis 8.16 Rp/kWh | bis 2.80 Rp/kWh (additiv) | Nein | |\n| AEW Fixpreis | Fixpreis 8.20 Rp/kWh (≤30 kW) | in Basis enthalten | Nein | naturemade-star nötig |\n| AEW RMP | Referenz-Marktpreis | keine | Nein | Alle Grössen |\n\n**Cap aktiv** = ob der Versorger die Gesamtvergütung an der Anrechenbarkeitsobergrenze deckelt. Nur EKZ, Groupe E und Primeo wenden den Cap an; alle anderen zahlen Basis + HKN voll additiv aus. Die Cap-*Formel* stammt aus [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}), seit 1.1.2026 in Kraft — die konkreten Werte sind versorgereigene Herleitungen.\n\n---\n\n**Quellen:** [BFE Einspeisevergütung]({agency_url}) · [opendata.swiss Referenz-Marktpreis-Dataset]({opendata_url})",
         "menu_options": {
           "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
           "preset_bkw": "BKW — Berner Kraftwerke",
@@ -16,30 +16,24 @@
           "preset_ewz": "ewz — Elektrizitätswerk der Stadt Zürich",
           "preset_iwb": "IWB — Industrielle Werke Basel",
           "preset_sig": "SIG — Services Industriels Genève",
-          "preset_aew": "AEW Energie (Aargau)",
-          "preset_custom": "Anderer / Custom"
+          "preset_aew_fixpreis": "AEW Energie — Rücklieferung Fixpreis (≤30 kW, naturemade-star)",
+          "preset_aew_rmp": "AEW Energie — Rücklieferung Referenzmarktpreis"
         }
       },
       "tariff": {
         "title": "Tarif konfigurieren ({utility_name})",
-        "description": "Alle Werte unten sind aus dem gewählten Versorger vorausgefüllt. Details findest du direkt bei jedem Feld. Änderungen gelten für alle zukünftigen Re-Imports.",
+        "description": "Trag deine Anlagedaten ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.",
         "data": {
-          "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
-          "basisverguetung": "Basisvergütung",
-          "hkn_verguetung_rp_kwh": "HKN-Vergütung (Rp/kWh)",
-          "fixpreis_rp_kwh": "Fixpreis (Rp/kWh)",
-          "verguetungs_obergrenze": "Vergütungs-Obergrenze",
+          "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
+          "hkn_aktiviert": "HKN an Versorger verkaufen?",
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "## Grösse + Eigenverbrauch\nbestimmen die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft) — wird automatisch angewendet.\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| ≤30 kW | mit Eigenverbrauch | **6.00** |\n| ≤30 kW | ohne Eigenverbrauch | **6.00** |\n| 30–<100 kW | mit Eigenverbrauch | **180÷kW** |\n| 30–<100 kW | ohne Eigenverbrauch | **6.20** |\n| 100–<150 kW | mit Eigenverbrauch | **180÷kW** |\n| 100–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | mit Eigenverbrauch | keine Min. |\n| ≥150 kW | ohne Eigenverbrauch | keine Min. |",
-          "installierte_leistung_kw": "## Degressive Formel\n**Nur nötig** bei 30–<150 kW mit Eigenverbrauch — die Mindestvergütung folgt der Formel `180 ÷ kW`.\n\nBei allen anderen Kategorien: bei `0` lassen.",
-          "basisverguetung": "## Preismodell\n- **Referenz-Marktpreis** → die meisten Versorger: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixpreis** → ewz, IWB, SIG, AEW.\n\nDer Referenz-Marktpreis wird quartalsweise vom [Bundesamt für Energie (BFE)]({agency_url}) publiziert. Datenquelle: [opendata.swiss]({opendata_url}).",
-          "fixpreis_rp_kwh": "## Beispiele 2026\nNur bei **Basisvergütung = Fixpreis**.\n\n| Versorger | Fixpreis (Rp/kWh) | HKN |\n|---|---|---|\n| ewz | **7.91** | + 5.00 (additiv) |\n| IWB | **12.95** | inklusive |\n| SIG | **8.16** | + 2.80 (additiv) |\n| AEW | **8.20** | inklusive |",
-          "hkn_verguetung_rp_kwh": "## HKN-Opt-in\nVergütung für **HKN** (*Herkunftsnachweise*).\n\n**Opt-in bei den meisten Versorgern** — bei `0.0` lassen, wenn du keine HKN verkaufst. EKZ zahlt bis **3.00 Rp/kWh** nach Anmeldung auf *myEKZ*.",
-          "verguetungs_obergrenze": "## Cap-Verhalten\nWenn **aktiv**: übersteigt Basis + HKN die anlagenspezifische Obergrenze, wird HKN nur soweit gekürzt, dass die Summe der Obergrenze entspricht. Wenn **inaktiv**: Versorger zahlt Basis + HKN voll additiv aus.\n\n- **Aktiv** → EKZ, Groupe E, Primeo\n- **Inaktiv** → alle anderen Schweizer Versorger (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …\n\nObergrenzen-Werte bei **aktiv** (EKZ-Herleitung gemäss [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}), AS 2025 139, seit 1.1.2026 in Kraft — die Verordnung schreibt eine *Formel* vor (Gestehungskosten einer Referenzanlage abzüglich Fördermittel); die Werte selbst sind nicht im Gesetz festgehalten. Groupe E und Primeo kommen auf ähnliche Zahlen, weil die zugrunde liegenden Bundeskosten-Referenzwerte einheitlich sind):\n\n| Anlage | Cap (Rp/kWh) |\n|---|---|\n| <100 kW mit Eigenverbrauch | **10.96** |\n| <100 kW ohne Eigenverbrauch | **8.20** |\n| ≥100 kW mit Eigenverbrauch | **7.20** |\n| ≥100 kW ohne Eigenverbrauch | **5.40** |",
-          "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**"
+          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |",
+          "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** wenn ein Teil deiner PV-Produktion vor Ort verbraucht wird (typische Wohn- / Gewerbeanlage). **Nein** für Volleinspeisung (gesamte Produktion ins Netz).\n\nBeeinflusst das Mindestvergütungsband — bei 30–<150 kW ist der Unterschied erheblich (degressiv 180÷kW mit Eigenverbrauch vs. flat 6.20 Rp/kWh ohne).",
+          "hkn_aktiviert": "## HKN-Opt-in (Herkunftsnachweis)\n**Ja** wenn du *Herkunftsnachweise* an deinen Versorger verkaufst. Die meisten Versorger bieten das als Opt-in über das Kundenportal an.\n\nDer Satz ist vom Versorger fixiert und in der Tarif-Datenbank hinterlegt — keine Eingabe nötig. **Nein** wenn du keine HKN verkaufst oder die Anlage anderweitig zertifiziert hast (z. B. *naturemade star*) und HKN auf dem freien Markt verkaufst.",
+          "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.** Bei monatlicher Abrechnung verwendet die Integration die BFE-Monatspreise für M1/M2 und einen abgeleiteten Satz für M3, sodass die Quartalssumme exakt Q_kWh × Q_Quartalsrate entspricht."
         }
       },
       "entities": {
@@ -58,8 +52,7 @@
       }
     },
     "error": {
-      "kw_required_for_degressive": "Installierte Leistung (kW) ist bei 30–<150 kW mit Eigenverbrauch Pflicht — die Mindestvergütung wird gemäss Bundesrecht über die Formel 180 ÷ kW berechnet.",
-      "fixpreis_required": "Fixpreis muss > 0 sein, wenn Basisvergütung auf 'Fixpreis' steht."
+      "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein."
     }
   },
   "options": {
@@ -68,41 +61,35 @@
         "title": "BFE Rückliefertarif — Optionen",
         "description": "Was möchtest du tun?",
         "menu_options": {
-          "tariff": "Tarifeinstellungen anpassen",
-          "reimport_quarter": "Bestimmtes Quartal neu importieren",
+          "tariff": "Tarif-Einstellungen anpassen",
+          "reimport_quarter": "Spezifisches Quartal neu importieren",
           "entities": "Home-Assistant-Entitäten neu verbinden"
         }
       },
       "tariff": {
-        "title": "Tarifeinstellungen anpassen",
-        "description": "Alle Werte unten sind aus dem gewählten Versorger vorausgefüllt. Details findest du direkt bei jedem Feld. Änderungen gelten für alle zukünftigen Re-Imports.",
+        "title": "Tarif-Einstellungen anpassen",
+        "description": "Anlage-Daten anpassen. Versorgerseiten (HKN, Cap, Fixpreise) kommen aus der Tarif-Datenbank und sind nicht editierbar.",
         "data": {
-          "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
-          "basisverguetung": "Basisvergütung",
-          "hkn_verguetung_rp_kwh": "HKN-Vergütung (Rp/kWh)",
-          "fixpreis_rp_kwh": "Fixpreis (Rp/kWh)",
-          "verguetungs_obergrenze": "Vergütungs-Obergrenze",
+          "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
+          "hkn_aktiviert": "HKN an Versorger verkaufen?",
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "## Grösse + Eigenverbrauch\nbestimmen die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft) — wird automatisch angewendet.\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| ≤30 kW | mit Eigenverbrauch | **6.00** |\n| ≤30 kW | ohne Eigenverbrauch | **6.00** |\n| 30–<100 kW | mit Eigenverbrauch | **180÷kW** |\n| 30–<100 kW | ohne Eigenverbrauch | **6.20** |\n| 100–<150 kW | mit Eigenverbrauch | **180÷kW** |\n| 100–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | mit Eigenverbrauch | keine Min. |\n| ≥150 kW | ohne Eigenverbrauch | keine Min. |",
-          "installierte_leistung_kw": "## Degressive Formel\n**Nur nötig** bei 30–<150 kW mit Eigenverbrauch — die Mindestvergütung folgt der Formel `180 ÷ kW`.\n\nBei allen anderen Kategorien: bei `0` lassen.",
-          "basisverguetung": "## Preismodell\n- **Referenz-Marktpreis** → die meisten Versorger: EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW.\n- **Fixpreis** → ewz, IWB, SIG, AEW.\n\nDer Referenz-Marktpreis wird quartalsweise vom [Bundesamt für Energie (BFE)]({agency_url}) publiziert. Datenquelle: [opendata.swiss]({opendata_url}).",
-          "fixpreis_rp_kwh": "## Beispiele 2026\nNur bei **Basisvergütung = Fixpreis**.\n\n| Versorger | Fixpreis (Rp/kWh) | HKN |\n|---|---|---|\n| ewz | **7.91** | + 5.00 (additiv) |\n| IWB | **12.95** | inklusive |\n| SIG | **8.16** | + 2.80 (additiv) |\n| AEW | **8.20** | inklusive |",
-          "hkn_verguetung_rp_kwh": "## HKN-Opt-in\nVergütung für **HKN** (*Herkunftsnachweise*).\n\n**Opt-in bei den meisten Versorgern** — bei `0.0` lassen, wenn du keine HKN verkaufst. EKZ zahlt bis **3.00 Rp/kWh** nach Anmeldung auf *myEKZ*.",
-          "verguetungs_obergrenze": "## Cap-Verhalten\nWenn **aktiv**: übersteigt Basis + HKN die anlagenspezifische Obergrenze, wird HKN nur soweit gekürzt, dass die Summe der Obergrenze entspricht. Wenn **inaktiv**: Versorger zahlt Basis + HKN voll additiv aus.\n\n- **Aktiv** → EKZ, Groupe E, Primeo\n- **Inaktiv** → alle anderen Schweizer Versorger (~98%): BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …\n\nObergrenzen-Werte bei **aktiv** (EKZ-Herleitung gemäss [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}), AS 2025 139, seit 1.1.2026 in Kraft — die Verordnung schreibt eine *Formel* vor (Gestehungskosten einer Referenzanlage abzüglich Fördermittel); die Werte selbst sind nicht im Gesetz festgehalten. Groupe E und Primeo kommen auf ähnliche Zahlen, weil die zugrunde liegenden Bundeskosten-Referenzwerte einheitlich sind):\n\n| Anlage | Cap (Rp/kWh) |\n|---|---|\n| <100 kW mit Eigenverbrauch | **10.96** |\n| <100 kW ohne Eigenverbrauch | **8.20** |\n| ≥100 kW mit Eigenverbrauch | **7.20** |\n| ≥100 kW ohne Eigenverbrauch | **5.40** |",
-          "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**"
+          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in kW. Bestimmt die **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
+          "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** für typische Wohn-/Gewerbeanlagen; **Nein** für Volleinspeisung.",
+          "hkn_aktiviert": "## HKN-Opt-in\n**Ja** wenn du *Herkunftsnachweise* an den Versorger verkaufst. Satz wird vom Versorger gesetzt.",
+          "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus des Versorgers. Die meisten rechnen quartalsweise ab."
         }
       },
       "reimport_quarter": {
-        "title": "Bestimmtes Quartal neu importieren",
-        "description": "Berechnet die Rückliefervergütung CHF/h für ein bestimmtes vergangenes Quartal neu. Nützlich nach einer Tarifkorrektur, um ein bereits publiziertes Quartal zu aktualisieren (z. B. falsche HKN-Einstellung für `2026Q1` korrigieren).",
+        "title": "Spezifisches Quartal neu importieren",
+        "description": "Die Rückliefervergütung in CHF/h für ein spezifisches Quartal neu berechnen. Z. B. nach Korrektur einer falschen Tarif-Einstellung, die für `2026Q1` verwendet wurde.",
         "data": {
           "quarter": "Quartal"
         },
         "data_description": {
-          "quarter": "## Quartal-ID\n**Format:** `JahrQQuartal` (z. B. `2026Q1`, `2025Q4`).\n\nDas Quartal muss bereits vom BFE publiziert sein — typisch ca. **2 Wochen nach Quartalsende**."
+          "quarter": "## Quartal-Bezeichner\n**Format:** `JJJJQN` (z. B. `2026Q1`, `2025Q4`).\n\nDas Quartal muss bereits vom BFE publiziert sein — typischerweise **ca. 2 Wochen nach Quartalsende**."
         }
       },
       "entities": {
@@ -121,36 +108,17 @@
       }
     },
     "error": {
-      "kw_required_for_degressive": "Installierte Leistung (kW) ist bei 30–<150 kW mit Eigenverbrauch Pflicht.",
-      "fixpreis_required": "Fixpreis muss > 0 sein, wenn Basisvergütung 'Fixpreis' ist.",
-      "invalid_quarter": "Ungültiges Format. Erwartet JahrQQuartal (z. B. 2026Q1).",
-      "price_not_yet_published": "BFE hat dieses Quartal noch nicht publiziert. Bitte ca. 2 Wochen nach Quartalsende erneut versuchen.",
-      "reimport_failed": "Neuberechnung fehlgeschlagen. Siehe Einstellungen → System → Logs."
+      "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein.",
+      "invalid_quarter": "Ungültiges Format. Erwartet: JJJJQN (z. B. 2026Q1).",
+      "price_not_yet_published": "BFE hat dieses Quartal noch nicht publiziert. Versuch's ca. 2 Wochen nach Quartalsende erneut.",
+      "reimport_failed": "Re-Import unerwartet fehlgeschlagen. Prüfe Einstellungen → System → Logs."
     }
   },
   "selector": {
-    "anlagenkategorie": {
-      "options": {
-        "small_mit_ev": "≤30 kW mit Eigenverbrauch",
-        "small_ohne_ev": "≤30 kW ohne Eigenverbrauch (Volleinspeisung)",
-        "mid_mit_ev": "30–<100 kW mit Eigenverbrauch",
-        "mid_ohne_ev": "30–<100 kW ohne Eigenverbrauch",
-        "large_mit_ev": "100–<150 kW mit Eigenverbrauch",
-        "large_ohne_ev": "100–<150 kW ohne Eigenverbrauch",
-        "xl_mit_ev": "≥150 kW mit Eigenverbrauch",
-        "xl_ohne_ev": "≥150 kW ohne Eigenverbrauch"
-      }
-    },
-    "basisverguetung": {
-      "options": {
-        "referenz_marktpreis": "Referenz-Marktpreis (BFE, quartalsweise)",
-        "fixpreis": "Fixpreis (vom Versorger festgelegt)"
-      }
-    },
     "abrechnungs_rhythmus": {
       "options": {
-        "quartal": "Quartal",
-        "monat": "Monat"
+        "quartal": "Quartalsweise",
+        "monat": "Monatlich"
       }
     }
   },
@@ -163,27 +131,30 @@
         "name": "Aktuelle Vergütung"
       },
       "hkn_verguetung": {
-        "name": "HKN-Vergütung (konfiguriert)"
+        "name": "HKN-Vergütung (resolved)"
       },
       "naechste_referenzmarktpreis_publikation": {
         "name": "Nächste Referenz-Marktpreis-Publikation"
       },
       "referenzmarktpreis_q": {
-        "name": "Referenz-Marktpreis aktuelles Quartal"
+        "name": "Referenz-Marktpreis (aktuelles Quartal)"
       },
       "referenzmarktpreis_m": {
-        "name": "Referenz-Marktpreis aktueller Monat"
+        "name": "Referenz-Marktpreis (aktueller Monat)"
+      },
+      "tariffs_last_remote_update": {
+        "name": "Tarif-Datenbank — letztes Remote-Update"
       }
     },
     "button": {
       "reload_referenzmarktpreise": {
-        "name": "Referenz-Marktpreise jetzt laden"
+        "name": "Referenz-Marktpreise neu laden"
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Letztes publiziertes Quartal neu berechnen"
       },
       "recompute_aktuelles_quartal_estimate": {
-        "name": "Laufendes Quartal mit Schätzung neu berechnen"
+        "name": "Aktuelles Quartal neu berechnen (Schätzung)"
       },
       "recompute_historie": {
         "name": "Gesamte Historie neu berechnen"

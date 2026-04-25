@@ -15,30 +15,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .bfe import BfePrice, PriceNotYetPublished
-from .const import (
-    ABRECHNUNGS_RHYTHMUS_MONAT,
-    BASISVERGUETUNG_FIXPREIS,
-    BASISVERGUETUNG_REFERENZMARKTPREIS,
-)
+from .const import ABRECHNUNGS_RHYTHMUS_MONAT
 from .quarters import Month, Quarter, hours_in_range, month_bounds_utc, quarter_bounds_utc
 from .tariff import (
-    Segment,
     chf_per_mwh_to_rp_per_kwh,
     effective_rp_kwh,
     rp_per_kwh_to_chf_per_kwh,
 )
 
+if TYPE_CHECKING:
+    from .tariffs_db import ResolvedTariff
+
 
 @dataclass(frozen=True)
 class TariffConfig:
-    anlagenkategorie: Segment
+    """Resolved tariff inputs for one quarter of math.
+
+    Wraps a ``ResolvedTariff`` (utility-published values from tariffs.json)
+    plus the user's personal inputs (kW, Eigenverbrauch yes/no, HKN opt-in
+    yes/no). The ``hkn_rp_kwh_resolved`` value is the JSON's HKN multiplied
+    by 0 or 1 depending on whether the user opted in.
+    """
+
+    eigenverbrauch_aktiviert: bool
     installierte_leistung_kw: float
-    basisverguetung: str                       # BASISVERGUETUNG_REFERENZMARKTPREIS | BASISVERGUETUNG_FIXPREIS
-    hkn_verguetung_rp_kwh: float
-    verguetungs_obergrenze: bool = False
-    fixpreis_rp_kwh: float | None = None
+    hkn_aktiviert: bool
+    hkn_rp_kwh_resolved: float          # JSON's HKN if opted in, else 0.0
+    resolved: "ResolvedTariff"
 
 
 @dataclass(frozen=True)
@@ -63,22 +69,35 @@ class QuarterPlan:
 
 
 def _effective_rate(
-    cfg: TariffConfig, reference_or_fixed_rp_kwh: float
+    cfg: TariffConfig, reference_rp_kwh: float
 ) -> float:
-    if cfg.basisverguetung == BASISVERGUETUNG_FIXPREIS:
-        if cfg.fixpreis_rp_kwh is None:
-            raise ValueError("fixpreis_rp_kwh required for fixpreis basisverguetung")
-        base = cfg.fixpreis_rp_kwh
-    elif cfg.basisverguetung == BASISVERGUETUNG_REFERENZMARKTPREIS:
-        base = reference_or_fixed_rp_kwh
+    """Single-rate computation for one BFE reference price.
+
+    Selects the right base depending on the utility's published `base_model`:
+    - rmp_quartal/rmp_monat → use the BFE reference price the caller supplied
+    - fixed_flat → use the JSON's `fixed_rp_kwh`
+    - fixed_ht_nt → fall back to `fixed_annualized_rp_kwh` (HT/NT-window
+      evaluation arrives in v0.6); if that's not set, use the HT rate as a
+      conservative default.
+    """
+    rt = cfg.resolved
+    if rt.base_model in ("rmp_quartal", "rmp_monat"):
+        base = reference_rp_kwh
+    elif rt.base_model == "fixed_flat":
+        if rt.fixed_rp_kwh is None:
+            raise ValueError(f"{rt.utility_key}: fixed_flat requires fixed_rp_kwh")
+        base = rt.fixed_rp_kwh
+    elif rt.base_model == "fixed_ht_nt":
+        # v0.6 will switch on hour; v0.5 uses the production-weighted annual.
+        base = rt.fixed_ht_rp_kwh if rt.fixed_ht_rp_kwh is not None else 0.0
     else:
-        raise ValueError(f"Unknown basisverguetung: {cfg.basisverguetung!r}")
+        raise ValueError(f"Unknown base_model {rt.base_model!r}")
     return effective_rp_kwh(
         base,
-        cfg.anlagenkategorie,
-        cfg.installierte_leistung_kw,
-        cfg.hkn_verguetung_rp_kwh,
-        verguetungs_obergrenze=cfg.verguetungs_obergrenze,
+        cfg.hkn_rp_kwh_resolved,
+        federal_floor_rp_kwh=rt.federal_floor_rp_kwh,
+        cap_rp_kwh=rt.cap_rp_kwh,
+        cap_mode=rt.cap_mode,
     )
 
 
@@ -99,7 +118,11 @@ def _rate_rp_kwh_at_hour(
     """
     q_rp = chf_per_mwh_to_rp_per_kwh(quarterly_price.chf_per_mwh)
 
-    if cfg.basisverguetung == BASISVERGUETUNG_FIXPREIS or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
+    # Fixed-rate utilities don't track BFE monthly prices — every hour uses the
+    # same rate regardless of billing rhythm. Only RMP-based base_models need
+    # the M1/M2/M3 monthly-price decomposition.
+    is_fixed_base = cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt")
+    if is_fixed_base or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
         return _effective_rate(cfg, q_rp)
 
     assert monthly_prices is not None

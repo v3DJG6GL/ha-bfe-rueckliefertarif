@@ -86,89 +86,112 @@ class BfeCoordinator(DataUpdateCoordinator):
     def _tariff_breakdown(self) -> dict[str, Any] | None:
         """Return a dict explaining how the effective Rückliefervergütung is computed.
 
-        Used by the BasisVerguetungSensor extra_state_attributes so the user
-        can verify whether the Vergütungs-Obergrenze (Anrechenbarkeitsgrenze)
-        is binding for their utility's setup.
-        """
-        from .const import (
-            BASISVERGUETUNG_FIXPREIS,
-            CONF_ANLAGENKATEGORIE,
-            CONF_BASISVERGUETUNG,
-            CONF_FIXPREIS_RP_KWH,
-            CONF_HKN_VERGUETUNG_RP_KWH,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
-            CONF_VERGUETUNGS_OBERGRENZE,
-        )
-        from .tariff import (
-            Segment,
-            anrechenbarkeitsgrenze_rp_kwh,
-            effective_rp_kwh,
-            mindestverguetung_rp_kwh,
-        )
+        Used by the BasisVerguetungSensor / AktuelleVerguetungChfKwhSensor
+        extra_state_attributes so the user can verify what their tariff
+        settings actually resolve to. v0.5 fields:
 
-        try:
-            seg = Segment(self._config[CONF_ANLAGENKATEGORIE])
-        except (KeyError, ValueError):
+        - ``utility``, ``tariff_source``, ``floor_label`` — from tariffs.json
+        - ``eigenverbrauch_aktiviert``, ``hkn_aktiviert`` — user choice
+        - ``base_input_rp_kwh``, ``base_source`` — how the base is sourced
+          (fixed_flat / rmp_quartal price / fallback floor)
+        - ``minimalverguetung_rp_kwh`` — federal floor for (kW, EV)
+        - ``anrechenbarkeitsgrenze_rp_kwh`` — utility cap (None when cap_mode is off)
+        - ``obergrenze_aktiv`` — whether the cap binds the producer's payment
+        - ``effective_rp_kwh`` / ``effective_chf_kwh`` — final per-kWh rate
+        - ``is_estimate``, ``estimate_basis`` — set when BFE hasn't published
+          the running quarter yet
+        """
+        from datetime import date
+
+        from .const import (
+            CONF_EIGENVERBRAUCH_AKTIVIERT,
+            CONF_ENERGIEVERSORGER,
+            CONF_HKN_AKTIVIERT,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+        )
+        from .tariff import effective_rp_kwh
+        from .tariffs_db import resolve_tariff_at
+
+        utility_key = self._config.get(CONF_ENERGIEVERSORGER)
+        if not utility_key:
             return None
         kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
-        hkn = float(self._config.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0))
-        basisverguetung = self._config.get(CONF_BASISVERGUETUNG)
-        obergrenze = bool(self._config.get(CONF_VERGUETUNGS_OBERGRENZE, False))
+        eigenverbrauch = bool(self._config.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True))
+        hkn_aktiviert = bool(self._config.get(CONF_HKN_AKTIVIERT, False))
 
-        floor = mindestverguetung_rp_kwh(seg, kw) if kw > 0 or seg.value not in (
-            "mid_mit_ev", "large_mit_ev"
-        ) else 0.0
-        floor = floor if floor is not None else 0.0
-        cap = anrechenbarkeitsgrenze_rp_kwh(seg)
+        try:
+            rt = resolve_tariff_at(
+                utility_key, date.today(), kw=kw, eigenverbrauch=eigenverbrauch
+            )
+        except (KeyError, LookupError):
+            return None
+
+        hkn = rt.hkn_rp_kwh if hkn_aktiviert else 0.0
+        floor = rt.federal_floor_rp_kwh
+        floor_value = floor if floor is not None else 0.0
+        cap = rt.cap_rp_kwh if rt.cap_mode else None
 
         now = datetime.now(timezone.utc)
         q = quarter_of(now)
         is_estimate = False
         estimate_basis: str | None = None
-        if basisverguetung == BASISVERGUETUNG_FIXPREIS:
-            base_input = float(self._config.get(CONF_FIXPREIS_RP_KWH, 0.0) or 0.0)
-            base_label = "fixpreis"
+        if rt.base_model == "fixed_flat":
+            base_input = rt.fixed_rp_kwh or 0.0
+            base_label = "fixed_flat"
+        elif rt.base_model == "fixed_ht_nt":
+            base_input = rt.fixed_ht_rp_kwh or 0.0
+            base_label = "fixed_ht_nt"
         elif q in self.quarterly:
             base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
             base_label = f"referenz_marktpreis_{q}"
         else:
             # BFE has not yet published the running quarter (or no BFE data
-            # at all) — fall back to the configured Plant-category floor.
-            # Never leak historical BFE prices: the estimate must derive
-            # only from user-configured values (Plant category → floor,
-            # HKN, cap mode). Once BFE publishes the running quarter, the
-            # normal import path overwrites LTS with the exact value.
-            base_input = floor
+            # at all) — fall back to the federal floor. Never leak historical
+            # BFE prices: the estimate must derive only from configured values.
+            # Once BFE publishes, the normal import path overwrites LTS exactly.
+            base_input = floor_value
             base_label = "fallback_mindestverguetung"
             is_estimate = True
             estimate_basis = "mindestverguetung_floor"
 
-        base_after_floor = max(base_input, floor)
+        base_after_floor = max(base_input, floor_value)
         theoretical_total = base_after_floor + hkn
         effective = effective_rp_kwh(
-            base_input, seg, kw, hkn, verguetungs_obergrenze=obergrenze
+            base_input,
+            hkn,
+            federal_floor_rp_kwh=floor,
+            cap_rp_kwh=cap,
+            cap_mode=rt.cap_mode,
         )
-        if obergrenze:
+        if rt.cap_mode and cap is not None:
             obergrenze_aktiv = theoretical_total > cap
-            if obergrenze_aktiv:
-                hkn_gekuerzt_auf = max(0.0, cap - base_after_floor) if base_after_floor < cap else 0.0
-            else:
-                hkn_gekuerzt_auf = None
+            hkn_gekuerzt_auf = (
+                max(0.0, cap - base_after_floor)
+                if obergrenze_aktiv and base_after_floor < cap
+                else None
+            )
         else:
             obergrenze_aktiv = False
             hkn_gekuerzt_auf = None
 
+        tariff_source = (
+            f"tariffs.json v{rt.tariffs_json_version} {rt.utility_key} "
+            f"@ {rt.valid_from} ({rt.tariffs_json_source})"
+        )
         return {
-            "anlagenkategorie": seg.value,
-            "basisverguetung": basisverguetung,
-            "verguetungs_obergrenze": obergrenze,
+            "utility": rt.utility_key,
+            "tariff_source": tariff_source,
+            "floor_label": rt.federal_floor_label,
+            "eigenverbrauch_aktiviert": eigenverbrauch,
+            "hkn_aktiviert": hkn_aktiviert,
+            "base_model": rt.base_model,
             "base_input_rp_kwh": round(base_input, 4),
             "base_source": base_label,
-            "minimalverguetung_rp_kwh": round(floor, 4),
+            "minimalverguetung_rp_kwh": round(floor_value, 4),
             "base_after_floor_rp_kwh": round(base_after_floor, 4),
             "hkn_verguetung_rp_kwh": round(hkn, 4),
             "theoretical_total_rp_kwh": round(theoretical_total, 4),
-            "anrechenbarkeitsgrenze_rp_kwh": round(cap, 4),
+            "anrechenbarkeitsgrenze_rp_kwh": round(cap, 4) if cap is not None else None,
             "effective_rp_kwh": round(effective, 4),
             "effective_chf_kwh": round(effective / 100.0, 6),
             "obergrenze_aktiv": obergrenze_aktiv,
@@ -178,25 +201,23 @@ class BfeCoordinator(DataUpdateCoordinator):
         }
 
     async def _auto_import_newly_published(self) -> None:
-        """Detect quarters in BFE data that aren't imported yet or were imported at a different price."""
+        """Detect quarters in BFE data that aren't imported yet or were imported at a different price.
+
+        ``_reimport_quarter`` updates ``self._imported[key]`` itself with the
+        full snapshot (Phase 4), so this just drives the loop and skips
+        quarters that are already imported at the current price.
+        """
         from .services import _reimport_quarter
 
         for q, price in sorted(self.quarterly.items()):
             key = str(q)
             prior = self._imported.get(key)
-            price_chf = price.chf_per_mwh
-            if prior and prior.get("q_price_chf_mwh") == price_chf:
+            if prior and prior.get("q_price_chf_mwh") == price.chf_per_mwh:
                 continue
             try:
                 await _reimport_quarter(self.hass, q)
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
-                continue
-            self._imported[key] = {
-                "q_price_chf_mwh": price_chf,
-                "imported_at": datetime.now(timezone.utc).isoformat(),
-            }
-        await self._async_save_state()
 
 def _next_publication_estimate(now: datetime) -> datetime:
     """Rough estimate: 2 weeks after each quarter end. For the diagnostic sensor."""

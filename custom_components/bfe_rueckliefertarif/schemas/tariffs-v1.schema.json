@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/v3DJG6GL/bfe-tariffs-data/main/schemas/tariffs-v1.schema.json",
+  "title": "BFE Rückliefertarif external tariff database (v1)",
+  "type": "object",
+  "required": ["schema_version", "last_updated", "federal_minimum", "utilities"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema":        { "type": "string" },
+    "schema_version": { "type": "string", "pattern": "^1\\.\\d+\\.\\d+$" },
+    "last_updated":   { "type": "string", "format": "date" },
+    "notes":          { "type": "string" },
+
+    "federal_minimum": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/federal_record" }
+    },
+
+    "utilities": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": { "$ref": "#/$defs/utility" }
+      },
+      "additionalProperties": false
+    }
+  },
+
+  "$defs": {
+
+    "iso_date_or_null": {
+      "oneOf": [
+        { "type": "string", "format": "date" },
+        { "type": "null" }
+      ]
+    },
+
+    "federal_record": {
+      "type": "object",
+      "required": ["valid_from", "valid_to", "rules"],
+      "additionalProperties": true,
+      "properties": {
+        "valid_from":    { "type": "string", "format": "date" },
+        "valid_to":      { "$ref": "#/$defs/iso_date_or_null" },
+        "legal_basis":   { "type": "string" },
+        "as_reference":  { "type": "string" },
+        "url":           { "type": "string", "format": "uri" },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/floor_rule" }
+        }
+      }
+    },
+
+    "floor_rule": {
+      "type": "object",
+      "required": ["kw_min", "kw_max", "self_consumption"],
+      "additionalProperties": true,
+      "properties": {
+        "kw_min": { "type": "number", "minimum": 0 },
+        "kw_max": {
+          "oneOf": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "self_consumption": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "min_rp_kwh": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "null" }
+          ]
+        },
+        "formula": { "type": "string" },
+        "min_rp_kwh_at_kw_min": { "type": "number" },
+        "min_rp_kwh_at_kw_max": { "type": "number" }
+      }
+    },
+
+    "utility": {
+      "type": "object",
+      "required": ["name_de", "homepage", "rates"],
+      "additionalProperties": true,
+      "properties": {
+        "nr_elcom":  { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "uid":       { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "name_de":   { "type": "string", "minLength": 1 },
+        "name_fr":   { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "name_en":   { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "homepage":  { "type": "string", "format": "uri" },
+        "rates": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/rate_window" }
+        }
+      }
+    },
+
+    "rate_window": {
+      "type": "object",
+      "required": [
+        "valid_from", "valid_to", "settlement_period",
+        "power_tiers", "cap_mode"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "valid_from":         { "type": "string", "format": "date" },
+        "valid_to":           { "$ref": "#/$defs/iso_date_or_null" },
+        "settlement_period":  { "type": "string", "enum": ["quartal", "monat", "stunde"] },
+        "tarif_url":          { "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }] },
+
+        "power_tiers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/power_tier" }
+        },
+
+        "hkn_switch_cadence": {
+          "oneOf": [
+            { "type": "string", "enum": ["quarterly", "annual", "contract"] },
+            { "type": "null" }
+          ]
+        },
+        "requires_naturemade_star": { "type": "boolean" },
+        "price_floor_rp_kwh": {
+          "oneOf": [{ "type": "number" }, { "type": "null" }]
+        },
+
+        "bonuses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/bonus" }
+        },
+
+        "seasonal": {
+          "oneOf": [
+            { "$ref": "#/$defs/seasonal" },
+            { "type": "null" }
+          ]
+        },
+
+        "cap_mode": { "type": "boolean" },
+        "cap_rules": {
+          "oneOf": [
+            { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/cap_rule" } },
+            { "type": "null" }
+          ]
+        }
+      },
+
+      "allOf": [
+        {
+          "comment": "If cap_mode is true, cap_rules MUST be a non-empty array.",
+          "if":   { "properties": { "cap_mode": { "const": true } }, "required": ["cap_mode"] },
+          "then": { "properties": { "cap_rules": { "type": "array", "minItems": 1 } }, "required": ["cap_rules"] }
+        }
+      ]
+    },
+
+    "power_tier": {
+      "type": "object",
+      "required": ["kw_min", "kw_max", "base_model", "hkn_rp_kwh", "hkn_structure"],
+      "additionalProperties": true,
+      "properties": {
+        "kw_min": { "type": "number", "minimum": 0 },
+        "kw_max": {
+          "oneOf": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "base_model": {
+          "type": "string",
+          "enum": ["fixed_flat", "fixed_ht_nt", "rmp_quartal", "rmp_monat"]
+        },
+
+        "fixed_rp_kwh":           { "type": "number" },
+        "fixed_ht_rp_kwh":        { "type": "number" },
+        "fixed_nt_rp_kwh":        { "type": "number" },
+        "fixed_annualized_rp_kwh":{ "type": "number" },
+        "ht_window": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "mofr": { "oneOf": [{ "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }, { "type": "null" }] },
+            "sa":   { "oneOf": [{ "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }, { "type": "null" }] },
+            "su":   { "oneOf": [{ "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }, { "type": "null" }] }
+          }
+        },
+
+        "hkn_rp_kwh":    { "type": "number", "minimum": 0 },
+        "hkn_structure": { "type": "string", "enum": ["additive_optin", "bundled", "none"] }
+      },
+
+      "allOf": [
+        {
+          "comment": "fixed_flat requires fixed_rp_kwh.",
+          "if":   { "properties": { "base_model": { "const": "fixed_flat" } }, "required": ["base_model"] },
+          "then": { "required": ["fixed_rp_kwh"] }
+        },
+        {
+          "comment": "fixed_ht_nt requires HT/NT pair.",
+          "if":   { "properties": { "base_model": { "const": "fixed_ht_nt" } }, "required": ["base_model"] },
+          "then": { "required": ["fixed_ht_rp_kwh", "fixed_nt_rp_kwh"] }
+        }
+      ]
+    },
+
+    "bonus": {
+      "type": "object",
+      "required": ["name", "rate_rp_kwh", "applies_when"],
+      "additionalProperties": true,
+      "properties": {
+        "name":         { "type": "string", "minLength": 1 },
+        "rate_rp_kwh":  { "type": "number" },
+        "applies_when": { "type": "string", "enum": ["always", "opt_in"] },
+        "note":         { "type": "string" }
+      }
+    },
+
+    "seasonal": {
+      "type": "object",
+      "required": ["summer_months", "winter_months"],
+      "additionalProperties": true,
+      "properties": {
+        "summer_months": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 12 }, "minItems": 1 },
+        "winter_months": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 12 }, "minItems": 1 },
+        "summer_rp_kwh":     { "type": "number" },
+        "winter_rp_kwh":     { "type": "number" },
+        "summer_ht_rp_kwh":  { "type": "number" },
+        "summer_nt_rp_kwh":  { "type": "number" },
+        "winter_ht_rp_kwh":  { "type": "number" },
+        "winter_nt_rp_kwh":  { "type": "number" }
+      }
+    },
+
+    "cap_rule": {
+      "type": "object",
+      "required": ["kw_min", "kw_max", "self_consumption", "cap_rp_kwh"],
+      "additionalProperties": true,
+      "properties": {
+        "kw_min": { "type": "number", "minimum": 0 },
+        "kw_max": {
+          "oneOf": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "self_consumption": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "cap_rp_kwh": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

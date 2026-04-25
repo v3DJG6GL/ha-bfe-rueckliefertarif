@@ -20,7 +20,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
     CONF_ABRECHNUNGS_RHYTHMUS,
-    CONF_HKN_VERGUETUNG_RP_KWH,
+    CONF_EIGENVERBRAUCH_AKTIVIERT,
+    CONF_ENERGIEVERSORGER,
+    CONF_HKN_AKTIVIERT,
+    CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_NAMENSPRAEFIX,
     DOMAIN,
 )
@@ -41,6 +44,10 @@ async def async_setup_entry(
     async_add_entities: "AddEntitiesCallback",
 ) -> None:
     """Register diagnostic sensors for this config entry."""
+    from datetime import date
+
+    from .tariffs_db import resolve_tariff_at
+
     cfg = hass.data[DOMAIN][entry.entry_id]["config"]
     prefix = cfg.get(CONF_NAMENSPRAEFIX, "bfe_rueckliefertarif")
 
@@ -49,12 +56,28 @@ async def async_setup_entry(
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
+    # Resolve HKN from tariffs.json for the diagnostic sensor's static value.
+    # If the user opted in, surface the utility's published HKN; otherwise 0.
+    hkn_value = 0.0
+    try:
+        rt = resolve_tariff_at(
+            cfg[CONF_ENERGIEVERSORGER],
+            date.today(),
+            kw=float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
+            eigenverbrauch=bool(cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
+        )
+        if cfg.get(CONF_HKN_AKTIVIERT, False):
+            hkn_value = rt.hkn_rp_kwh
+    except (KeyError, LookupError):
+        pass
+
     sensors: list[SensorEntity] = [
         BasisVerguetungSensor(coordinator, entry, prefix),
         AktuelleVerguetungChfKwhSensor(coordinator, entry, prefix),
-        HknVerguetungSensor(entry, prefix, cfg.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0)),
+        HknVerguetungSensor(entry, prefix, hkn_value),
         NaechsteReferenzmarktpreisPublikationSensor(coordinator, entry, prefix),
         ReferenzmarktpreisQSensor(coordinator, entry, prefix),
+        TariffsDataLastUpdateSensor(entry, prefix),
     ]
     if cfg.get(CONF_ABRECHNUNGS_RHYTHMUS) == ABRECHNUNGS_RHYTHMUS_MONAT:
         sensors.append(ReferenzmarktpreisMSensor(coordinator, entry, prefix))
@@ -221,6 +244,43 @@ class ReferenzmarktpreisQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         q = quarter_of(datetime.now(timezone.utc))
         price = prices.get(q)
         return price.chf_per_mwh if price else None
+
+
+class TariffsDataLastUpdateSensor(_BaseSensor):
+    """Diagnostic: when the companion repo's tariffs.json was last fetched.
+
+    `None` while the bundled file is in use (no successful fetch yet, or
+    the user disconnected from the network). Phase 6 of the v0.5 plan.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, entry: "ConfigEntry", prefix: str) -> None:
+        super().__init__(
+            entry, prefix,
+            "tariffs_last_remote_update",
+            "tariffs_last_remote_update",
+        )
+        self._entry = entry
+
+    @property
+    def native_value(self) -> "datetime | None":
+        from .const import DOMAIN as _DOMAIN  # avoid top-level cycle
+
+        tdc = self.hass.data.get(_DOMAIN, {}).get("_tariffs_data") if self.hass else None
+        return tdc.last_remote_update if tdc else None
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        from .const import DOMAIN as _DOMAIN
+        from .tariffs_db import get_source
+
+        tdc = self.hass.data.get(_DOMAIN, {}).get("_tariffs_data") if self.hass else None
+        return {
+            "source": get_source(),
+            "last_error": tdc.last_error if tdc else None,
+        }
 
 
 class ReferenzmarktpreisMSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):

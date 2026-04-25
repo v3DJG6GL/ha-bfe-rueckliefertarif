@@ -1,6 +1,6 @@
 [project]
 name = "bfe-rueckliefertarif"
-version = "0.4.5"
+version = "0.5.0"
 description = "Home Assistant integration for Swiss PV Rückliefertarif (Art. 15 EnFV)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -13,6 +13,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-homeassistant-custom-component>=0.13",
     "aioresponses>=0.7",
+    "jsonschema>=4",
 ]
 
 [tool.pytest.ini_options]

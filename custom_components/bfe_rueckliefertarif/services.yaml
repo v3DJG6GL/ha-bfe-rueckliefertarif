@@ -42,3 +42,11 @@ refresh:
   description: >
     Force-poll BFE now (instead of waiting for the 6h coordinator tick).
     Triggers retro-import automatically if new data has been published.
+
+refresh_tariffs:
+  name: Refresh tariff database
+  description: >
+    Force-fetch tariffs.json from the companion repo (https://github.com/v3DJG6GL/bfe-tariffs-data).
+    Falls back to the bundled file silently on any error (network or schema).
+    The integration also auto-refreshes daily; use this only when you know an
+    update has just landed.

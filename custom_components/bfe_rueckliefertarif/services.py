@@ -11,15 +11,15 @@ from .bfe import PriceNotYetPublished, fetch_monthly, fetch_quarterly
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
     CONF_ABRECHNUNGS_RHYTHMUS,
-    CONF_ANLAGENKATEGORIE,
-    CONF_BASISVERGUETUNG,
-    CONF_FIXPREIS_RP_KWH,
-    CONF_HKN_VERGUETUNG_RP_KWH,
+    CONF_EIGENVERBRAUCH_AKTIVIERT,
+    CONF_ENERGIEVERSORGER,
+    CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
-    CONF_VERGUETUNGS_OBERGRENZE,
     DOMAIN,
+    OPT_HKN_OPTIN_HISTORY,
+    OPT_PLANT_HISTORY,
 )
 from .ha_recorder import (
     build_compensation_stats,
@@ -31,7 +31,7 @@ from .ha_recorder import (
 )
 from .importer import TariffConfig, compute_quarter_plan, cumulative_sums
 from .quarters import Quarter, hours_in_range, quarter_bounds_utc, quarter_of
-from .tariff import Segment
+from .tariffs_db import find_active, resolve_tariff_at
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -67,34 +67,97 @@ async def async_register_services(hass: "HomeAssistant") -> None:
         DOMAIN, "reimport_all_history", _handle_reimport_all_history
     )
     hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
+    hass.services.async_register(
+        DOMAIN, "refresh_tariffs", _handle_refresh_tariffs
+    )
 
 
-def _cfg_for_entry(hass: "HomeAssistant") -> tuple[dict, TariffConfig]:
-    """Pull the first config entry's config (v1 supports a single entry)."""
+def _cfg_for_entry(
+    hass: "HomeAssistant", *, for_quarter: Quarter | None = None
+) -> tuple[dict, TariffConfig]:
+    """Build the TariffConfig for a config entry, optionally as-of a quarter.
+
+    When `for_quarter` is given, plant_history and hkn_optin_history (in
+    `entry.options`) are consulted at the quarter's start date, so past
+    quarters get the kW / EV / HKN-opt-in values that were active back
+    then. When omitted, today's `entry.data` is used.
+    """
+    from datetime import date
+
     entries = hass.data.get(DOMAIN, {})
     if not entries:
         raise RuntimeError("BFE Rückliefertarif not configured")
-    # Use first entry
     entry_data = next(iter(entries.values()))
     cfg = entry_data["config"]
+    options = entry_data.get("options") or {}
+
+    utility_key = cfg.get(CONF_ENERGIEVERSORGER)
+
+    if for_quarter is not None:
+        at_date = date(for_quarter.year, ((for_quarter.q - 1) * 3) + 1, 1)
+    else:
+        at_date = date.today()
+
+    kw, eigenverbrauch = _resolve_plant(cfg, options, at_date)
+    hkn_aktiviert = _resolve_hkn_optin(cfg, options, at_date)
+
+    resolved = resolve_tariff_at(
+        utility_key, at_date, kw=kw, eigenverbrauch=eigenverbrauch
+    )
+    hkn_resolved = resolved.hkn_rp_kwh if hkn_aktiviert else 0.0
+
     tariff_cfg = TariffConfig(
-        anlagenkategorie=Segment(cfg[CONF_ANLAGENKATEGORIE]),
-        installierte_leistung_kw=float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
-        basisverguetung=cfg[CONF_BASISVERGUETUNG],
-        hkn_verguetung_rp_kwh=float(cfg.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0)),
-        verguetungs_obergrenze=bool(cfg.get(CONF_VERGUETUNGS_OBERGRENZE, False)),
-        fixpreis_rp_kwh=(
-            float(cfg[CONF_FIXPREIS_RP_KWH]) if cfg.get(CONF_FIXPREIS_RP_KWH) else None
-        ),
+        eigenverbrauch_aktiviert=eigenverbrauch,
+        installierte_leistung_kw=kw,
+        hkn_aktiviert=hkn_aktiviert,
+        hkn_rp_kwh_resolved=hkn_resolved,
+        resolved=resolved,
     )
     return cfg, tariff_cfg
 
 
-async def _reimport_quarter(hass: "HomeAssistant", q: Quarter) -> None:
-    """Core re-import routine for a single quarter."""
+def _resolve_plant(cfg: dict, options: dict, at_date) -> tuple[float, bool]:
+    """Pick (kW, eigenverbrauch) active at `at_date` from plant_history or fall
+    back to current entry.data."""
+    history = options.get(OPT_PLANT_HISTORY) or []
+    rec = find_active(history, at_date) if history else None
+    if rec is not None:
+        return float(rec["installierte_leistung_kw"]), bool(rec["eigenverbrauch_aktiviert"])
+    return (
+        float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
+        bool(cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
+    )
+
+
+def _resolve_hkn_optin(cfg: dict, options: dict, at_date) -> bool:
+    """Pick HKN opt-in state active at `at_date` from hkn_optin_history."""
+    history = options.get(OPT_HKN_OPTIN_HISTORY) or []
+    rec = find_active(history, at_date) if history else None
+    if rec is not None:
+        return bool(rec["opted_in"])
+    return bool(cfg.get(CONF_HKN_AKTIVIERT, False))
+
+
+async def _reimport_quarter(
+    hass: "HomeAssistant", q: Quarter, *, force_fresh: bool = False
+) -> None:
+    """Core re-import routine for a single quarter.
+
+    Per-customer history (`plant_history` / `hkn_optin_history` in
+    `entry.options`) is consulted via `_cfg_for_entry(for_quarter=q)`, so
+    past quarters get the kW / EV / HKN-opt-in values that were active at
+    the start of that quarter — not "today's" config. After the LTS write,
+    a snapshot of the resolved values is recorded in
+    `coordinator._imported[<quarter>]["snapshot"]`.
+
+    `force_fresh` is reserved for v0.6: it will signal that the snapshot
+    should be ignored and the rate fully recomputed (used after correcting
+    a wrong tariff entry). For v0.5 the path is identical either way —
+    history-driven recompute is the default.
+    """
     import aiohttp
 
-    cfg, tariff_cfg = _cfg_for_entry(hass)
+    cfg, tariff_cfg = _cfg_for_entry(hass, for_quarter=q)
     export_id = cfg[CONF_STROMNETZEINSPEISUNG_KWH]
     comp_id = cfg[CONF_RUECKLIEFERVERGUETUNG_CHF]
     abrechnungs_rhythmus = cfg[CONF_ABRECHNUNGS_RHYTHMUS]
@@ -158,6 +221,73 @@ async def _reimport_quarter(hass: "HomeAssistant", q: Quarter) -> None:
         plan.post_quarter_delta_chf,
         len(plan.records),
     )
+
+    # Snapshot: freeze the resolved tariff state into _imported[q] so future
+    # tariffs.json edits don't retroactively change what we wrote to LTS.
+    _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg)
+
+
+def _record_snapshot(
+    hass: "HomeAssistant",
+    q: Quarter,
+    q_price_chf_mwh: float,
+    plan,
+    tariff_cfg: TariffConfig,
+) -> None:
+    """Write the per-quarter import snapshot to the coordinator's storage.
+
+    The snapshot makes past LTS values introspectable: a future user (or a
+    sanity-check SQL) can compare implied per-quarter rate vs. "what was
+    the rate when we imported?". v0.6 will additionally use this to
+    short-circuit recompute when force_fresh=False.
+    """
+    entries = hass.data.get(DOMAIN, {})
+    if not entries:
+        return
+    entry_data = next(iter(entries.values()))
+    coordinator = entry_data.get("coordinator")
+    if coordinator is None:
+        return
+
+    rt = tariff_cfg.resolved
+    # Flat per-quarter rate: the rate every hour got, in Rp/kWh. For
+    # ABRECHNUNGS_RHYTHMUS_QUARTAL this is exact; for monthly, it's
+    # Q_total_CHF / Q_kWh, which equals the quarterly effective rate.
+    total_kwh = sum(r.kwh for r in plan.records)
+    if total_kwh > 0:
+        rate_rp_kwh = (plan.final_sum_chf - plan.anchor_sum_chf) * 100.0 / total_kwh
+    else:
+        # No export this quarter — nothing imported, but record the rate
+        # the importer would have applied (first record's rate).
+        rate_rp_kwh = plan.records[0].rate_rp_kwh if plan.records else 0.0
+
+    cap_applied = (
+        rt.cap_mode
+        and rt.cap_rp_kwh is not None
+        and rate_rp_kwh >= rt.cap_rp_kwh - 1e-6
+    )
+
+    snapshot = {
+        "rate_rp_kwh": round(rate_rp_kwh, 4),
+        "kw": tariff_cfg.installierte_leistung_kw,
+        "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
+        "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
+        "hkn_optin": tariff_cfg.hkn_aktiviert,
+        "cap_mode": rt.cap_mode,
+        "cap_applied": bool(cap_applied),
+        "tariffs_json_version": rt.tariffs_json_version,
+        "tariffs_json_source": rt.tariffs_json_source,
+    }
+
+    from datetime import datetime, timezone
+
+    key = str(q)
+    coordinator._imported[key] = {
+        "q_price_chf_mwh": q_price_chf_mwh,
+        "imported_at": datetime.now(timezone.utc).isoformat(),
+        "snapshot": snapshot,
+    }
+    hass.async_create_task(coordinator._async_save_state())
 
 
 def _one_hour() -> "timedelta":
@@ -343,3 +473,16 @@ async def _handle_reimport_all_history(call: "ServiceCall") -> None:
 async def _handle_refresh(call: "ServiceCall") -> None:
     """Force the coordinator to poll BFE now (auto-imports newly-published quarters)."""
     await _refresh_coordinator(call.hass)
+
+
+async def _handle_refresh_tariffs(call: "ServiceCall") -> None:
+    """Force a fresh fetch of the companion repo's tariffs.json.
+
+    Falls back to the bundled file silently on any error (network /
+    schema). Useful after the user knows a yearly update has landed in the
+    companion repo and doesn't want to wait for the next daily refresh.
+    """
+    tdc = call.hass.data.get(DOMAIN, {}).get("_tariffs_data")
+    if tdc is None:
+        raise RuntimeError("BFE Rückliefertarif data coordinator not initialized")
+    await tdc.async_refresh()
