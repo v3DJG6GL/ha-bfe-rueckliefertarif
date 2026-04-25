@@ -22,7 +22,7 @@
       },
       "tariff": {
         "title": "Tariff configuration ({utility_name})",
-        "description": "Every value below is pre-filled from the utility you picked. Adjust as needed; the details next to each field explain what it does.",
+        "description": "Every value below is pre-filled from the utility you picked. Adjust as needed; the details next to each field explain what it does. Changes apply to every future re-import.",
         "data": {
           "anlagenkategorie": "Plant category",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -75,7 +75,7 @@
       },
       "tariff": {
         "title": "Adjust tariff settings",
-        "description": "Edit your tariff configuration. Changes apply to every future re-import.",
+        "description": "Every value below is pre-filled from the utility you picked. Adjust as needed; the details next to each field explain what it does. Changes apply to every future re-import.",
         "data": {
           "anlagenkategorie": "Plant category",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -107,16 +107,16 @@
       },
       "entities": {
         "title": "Re-wire Home Assistant entities",
-        "description": "Change which Home Assistant entities this integration writes to. Use only if your sensor names changed.",
+        "description": "Link the kWh counter for your grid export and the CHF sensor that the Energy Dashboard auto-creates.",
         "data": {
           "stromnetzeinspeisung_kwh": "Grid export (kWh)",
           "rueckliefervergutung_chf": "Feed-in remuneration (CHF)",
           "namenspraefix": "Name prefix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "## kWh counter\nkWh counter wired into the **Energy Dashboard** under *'Return to grid'*.",
-          "rueckliefervergutung_chf": "## Auto-created CHF sensor\nAuto-created CHF sensor (HA suffix `_compensation`, usually `sensor.YOUR_GRID_EXPORT_compensation`).",
-          "namenspraefix": "## Naming prefix\nPrefix used to name this integration's diagnostic sensors and buttons."
+          "stromnetzeinspeisung_kwh": "## kWh counter\nThe **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
+          "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
+          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
         }
       }
     },
@@ -181,6 +181,9 @@
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Recompute most recent published quarter"
+      },
+      "recompute_aktuelles_quartal_estimate": {
+        "name": "Recompute running quarter (estimate)"
       },
       "recompute_historie": {
         "name": "Recompute full history"

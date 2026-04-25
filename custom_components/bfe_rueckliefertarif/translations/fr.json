@@ -22,7 +22,7 @@
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",
-        "description": "Les valeurs sont préremplies depuis le fournisseur choisi. Les détails apparaissent sous chaque champ.",
+        "description": "Les valeurs sont préremplies depuis le fournisseur choisi. Les détails apparaissent sous chaque champ. Les modifications s'appliquent à chaque ré-import futur.",
         "data": {
           "anlagenkategorie": "Catégorie d'installation",
           "installierte_leistung_kw": "Puissance installée (kW)",
@@ -75,7 +75,7 @@
       },
       "tariff": {
         "title": "Ajuster les paramètres tarifaires",
-        "description": "Modifier la configuration tarifaire. Les détails apparaissent sous chaque champ.",
+        "description": "Les valeurs sont préremplies depuis le fournisseur choisi. Les détails apparaissent sous chaque champ. Les modifications s'appliquent à chaque ré-import futur.",
         "data": {
           "anlagenkategorie": "Catégorie d'installation",
           "installierte_leistung_kw": "Puissance installée (kW)",
@@ -107,11 +107,16 @@
       },
       "entities": {
         "title": "Reconfigurer les entités",
-        "description": "Modifier les entités utilisées par cette intégration.",
+        "description": "Reliez le compteur kWh d'injection au réseau et le capteur CHF auto-créé par Energy Dashboard.",
         "data": {
           "stromnetzeinspeisung_kwh": "Injection au réseau (kWh)",
-          "rueckliefervergutung_chf": "Rétribution (CHF)",
+          "rueckliefervergutung_chf": "Rétribution de l'injection (CHF)",
           "namenspraefix": "Préfixe de nom"
+        },
+        "data_description": {
+          "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans Energy Dashboard sous 'Retour au réseau'.",
+          "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF auto-créé par Energy Dashboard (HA ajoute le suffixe `_compensation`, généralement `sensor.VOTRE_INJECTION_compensation`).",
+          "namenspraefix": "## Préfixe\nPréfixe pour les capteurs et boutons de cette intégration. À modifier uniquement en cas de collision."
         }
       }
     },
@@ -176,6 +181,9 @@
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Recalculer le dernier trimestre publié"
+      },
+      "recompute_aktuelles_quartal_estimate": {
+        "name": "Recalculer le trimestre en cours (estimation)"
       },
       "recompute_historie": {
         "name": "Recalculer tout l'historique"

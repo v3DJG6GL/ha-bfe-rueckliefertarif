@@ -375,6 +375,7 @@ class TestStringsAndTranslations:
         [
             "reload_referenzmarktpreise",
             "recompute_letztes_publiziertes_quartal",
+            "recompute_aktuelles_quartal_estimate",
             "recompute_historie",
         ],
     )

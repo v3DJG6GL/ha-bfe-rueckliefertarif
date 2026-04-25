@@ -30,7 +30,7 @@ from .ha_recorder import (
     read_post_quarter_sums,
 )
 from .importer import TariffConfig, compute_quarter_plan, cumulative_sums
-from .quarters import Quarter, quarter_bounds_utc
+from .quarters import Quarter, hours_in_range, quarter_bounds_utc, quarter_of
 from .tariff import Segment
 
 if TYPE_CHECKING:
@@ -216,6 +216,98 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
         "imported": imported,
         "skipped": skipped,
         "failed": failed,
+    }
+
+
+async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
+    """Write LTS for the running quarter using the current effective-rate estimate.
+
+    Used while BFE has not yet published the running quarter so the user
+    can see realistic CHF values in the Energy Dashboard immediately
+    instead of whatever stale price source was wired before. Iterates
+    hours from quarter_start up to the last completed hour and writes
+    ``kWh × effective_rate`` to the compensation LTS.
+
+    The rate comes from ``coordinator.data['tariff_breakdown']['effective_rp_kwh']``
+    — for ``basisverguetung = fixpreis`` it's exact; for
+    ``basisverguetung = referenz_marktpreis`` and a quarter BFE has not
+    yet published, it's the most-recently-published BFE quarter's rate
+    (``is_estimate=True`` in the breakdown). Once BFE publishes the
+    running quarter, the regular import path overwrites these LTS values
+    with exact BFE-based numbers.
+
+    Returns a result dict for the caller to surface in a notification.
+    """
+    from datetime import datetime, timezone
+
+    cfg, _tariff_cfg = _cfg_for_entry(hass)
+    export_id = cfg[CONF_STROMNETZEINSPEISUNG_KWH]
+    comp_id = cfg[CONF_RUECKLIEFERVERGUETUNG_CHF]
+
+    entries = hass.data.get(DOMAIN, {})
+    entry_data = next(iter(entries.values()))
+    coordinator = entry_data.get("coordinator")
+    if coordinator is None or not coordinator.data:
+        raise RuntimeError(
+            "Coordinator not ready — run 'Reload reference market prices' first"
+        )
+    breakdown = coordinator.data.get("tariff_breakdown")
+    if not breakdown:
+        raise RuntimeError("Tariff breakdown unavailable")
+
+    rate_rp_kwh = float(breakdown["effective_rp_kwh"])
+    is_estimate = bool(breakdown.get("is_estimate", False))
+    estimate_basis = breakdown.get("estimate_basis")
+
+    now = datetime.now(timezone.utc)
+    q = quarter_of(now)
+    q_start_utc, _q_end_utc = quarter_bounds_utc(q)
+    last_full_hour = now.replace(minute=0, second=0, microsecond=0)
+
+    if last_full_hour <= q_start_utc:
+        # Quarter has just started — nothing to write yet.
+        return {
+            "quarter": str(q),
+            "rate_rp_kwh": rate_rp_kwh,
+            "hours_imported": 0,
+            "chf_total": 0.0,
+            "is_estimate": is_estimate,
+            "estimate_basis": estimate_basis,
+        }
+
+    hourly_kwh = await read_hourly_export(hass, export_id, q_start_utc, last_full_hour)
+    anchor = await read_compensation_anchor(
+        hass, comp_id, q_start_utc - _one_hour()
+    )
+
+    rate_chf_kwh = rate_rp_kwh / 100.0
+    running_sum = anchor
+    records: list[tuple] = []
+    for h in hours_in_range(q_start_utc, last_full_hour):
+        kwh = hourly_kwh.get(h, 0.0)
+        running_sum += kwh * rate_chf_kwh
+        records.append((h, running_sum))
+
+    if records:
+        await import_statistics(
+            hass,
+            build_metadata_compensation(comp_id),
+            build_compensation_stats(records),
+        )
+
+    chf_total = running_sum - anchor
+    _LOGGER.info(
+        "Imported running %s estimate: rate=%.4f Rp/kWh, hours=%d, total=%.4f CHF (estimate=%s, basis=%s)",
+        q, rate_rp_kwh, len(records), chf_total, is_estimate, estimate_basis,
+    )
+
+    return {
+        "quarter": str(q),
+        "rate_rp_kwh": rate_rp_kwh,
+        "hours_imported": len(records),
+        "chf_total": chf_total,
+        "is_estimate": is_estimate,
+        "estimate_basis": estimate_basis,
     }
 
 

@@ -41,6 +41,7 @@ async def async_setup_entry(
         [
             ReloadReferenzmarktpreiseButton(entry, prefix),
             RecomputeLetztesPubliziertesQuartalButton(entry, prefix),
+            RecomputeAktuellesQuartalEstimateButton(entry, prefix),
             RecomputeHistorieButton(entry, prefix),
         ]
     )
@@ -150,6 +151,58 @@ class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
             msg,
             title="BFE Rückliefertarif",
             notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_quarter",
+        )
+
+
+class RecomputeAktuellesQuartalEstimateButton(_BaseButton):
+    """Re-import LTS for the running quarter using the current effective-rate estimate.
+
+    Useful when BFE has not yet published the running quarter and the user
+    wants the Energy Dashboard to show realistic CHF values immediately
+    instead of whatever stale price source was wired before. Once BFE
+    publishes, the regular import path overwrites these values with exact
+    BFE-based numbers.
+    """
+
+    def __init__(self, entry: "ConfigEntry", prefix: str) -> None:
+        super().__init__(
+            entry,
+            prefix,
+            "recompute_aktuelles_quartal_estimate",
+            "recompute_aktuelles_quartal_estimate",
+        )
+
+    async def async_press(self) -> None:
+        from .services import _import_running_quarter_estimate
+
+        try:
+            result = await _import_running_quarter_estimate(self.hass)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Running-quarter estimate import failed")
+            notify(
+                self.hass,
+                f"Estimate import failed: {exc}",
+                title="BFE Rückliefertarif",
+                notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_estimate",
+            )
+            return
+
+        lines = [
+            f"Quarter {result['quarter']} estimated at "
+            f"{result['rate_rp_kwh']:.4f} Rp/kWh — "
+            f"{result['hours_imported']} hours imported, "
+            f"total {result['chf_total']:.2f} CHF",
+        ]
+        if result["is_estimate"]:
+            lines.append(
+                f"Based on {result['estimate_basis']} — "
+                "will be overwritten with exact values when BFE publishes."
+            )
+        notify(
+            self.hass,
+            "\n".join(lines),
+            title="BFE Rückliefertarif",
+            notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_estimate",
         )
 
 

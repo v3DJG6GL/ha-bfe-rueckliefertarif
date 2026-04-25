@@ -22,7 +22,7 @@
       },
       "tariff": {
         "title": "Tarif konfigurieren ({utility_name})",
-        "description": "Alle Werte unten sind aus dem gewählten Versorger vorausgefüllt. Details findest du direkt bei jedem Feld.",
+        "description": "Alle Werte unten sind aus dem gewählten Versorger vorausgefüllt. Details findest du direkt bei jedem Feld. Änderungen gelten für alle zukünftigen Re-Imports.",
         "data": {
           "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
@@ -75,7 +75,7 @@
       },
       "tariff": {
         "title": "Tarifeinstellungen anpassen",
-        "description": "Tarifkonfiguration anpassen. Änderungen gelten für alle zukünftigen Re-Imports.",
+        "description": "Alle Werte unten sind aus dem gewählten Versorger vorausgefüllt. Details findest du direkt bei jedem Feld. Änderungen gelten für alle zukünftigen Re-Imports.",
         "data": {
           "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
@@ -107,16 +107,16 @@
       },
       "entities": {
         "title": "Home-Assistant-Entitäten neu verbinden",
-        "description": "Ändere, in welche Home-Assistant-Entitäten diese Integration schreibt. Nur nötig, wenn deine Sensor-Namen sich geändert haben.",
+        "description": "Verbinde den kWh-Zähler deiner Stromnetzeinspeisung mit dem CHF-Sensor, den das Energy-Dashboard automatisch anlegt.",
         "data": {
           "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
           "rueckliefervergutung_chf": "Rückliefervergütung (CHF)",
           "namenspraefix": "Namenspräfix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "## kWh-Zähler\nkWh-Zähler im **Energy-Dashboard** unter *'Zurück ins Netz'*.",
-          "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nAuto-erzeugter CHF-Sensor (HA-Suffix `_compensation`, üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`).",
-          "namenspraefix": "## Namens-Präfix\nPräfix für die Diagnose-Sensoren und Buttons dieser Integration."
+          "stromnetzeinspeisung_kwh": "## kWh-Zähler\nDer **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
+          "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
+          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** und **Aktions-Buttons** dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`).\n\n*Nur ändern*, wenn der Standardname kollidiert."
         }
       }
     },
@@ -181,6 +181,9 @@
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Letztes publiziertes Quartal neu berechnen"
+      },
+      "recompute_aktuelles_quartal_estimate": {
+        "name": "Laufendes Quartal mit Schätzung neu berechnen"
       },
       "recompute_historie": {
         "name": "Gesamte Historie neu berechnen"
