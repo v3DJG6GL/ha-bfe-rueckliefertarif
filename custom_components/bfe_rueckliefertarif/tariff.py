@@ -4,10 +4,17 @@ Tables are nationally mandated and identical for every Swiss Netzbetreiber.
 User-configurable inputs are limited to HKN bonus (utility commercial choice)
 and the optional fixed rate (for utilities that pay above the BFE reference).
 
-Legal references:
-- EnG Art. 15 Abs. 1 + EnFV Art. 15: Basisvergütung = BFE Referenz-Marktpreis
-- EnG Art. 15 Abs. 1bis + EnV Art. 12 Abs. 1bis: Mindestvergütung floor
-- StromVV Art. 4a: Anrechenbarkeitsgrenze (4-tier cap)
+Legal references (all in force since 1.1.2026 via the Mantelerlass / Stromgesetz):
+- EnG Art. 15 Abs. 1 + EnFV Art. 15:
+    Basisvergütung = BFE Referenz-Marktpreis (quartalsweise publiziert).
+- EnG Art. 15 Abs. 1bis + EnV Art. 12 Abs. 1bis Bst. a/b/c/d (SR 730.01, AS 2025 138):
+    Mindestvergütung floor — 6.00 / 6.20 / 180/kW / 12.00 Rp/kWh.
+- StromVV Art. 4 Abs. 3 Bst. e i.V.m. EnG Art. 15 Abs. 1 (SR 734.71, AS 2025 139):
+    Anrechenbarkeitsgrenze cap — formula: max remuneration = Gestehungskosten of
+    the reference plant minus subsidies. The four cap values used here (10.96 /
+    8.20 / 7.20 / 5.40) are EKZ's published derivation; other utilities applying
+    the cap typically arrive at similar numbers because the reference Gestehungskosten
+    are nationally uniform.
 """
 
 from __future__ import annotations
@@ -37,7 +44,11 @@ def has_eigenverbrauch(seg: Segment) -> bool:
 
 
 def mindestverguetung_rp_kwh(seg: Segment, kw: float) -> float | None:
-    """EnV Art. 12 Abs. 1bis federal minimum compensation in Rp/kWh.
+    """Federal Mindestvergütung floor in Rp/kWh.
+
+    Source: EnV Art. 12 Abs. 1bis Bst. a/b/c/d (SR 730.01, AS 2025 138,
+    in force since 1.1.2026). Pre-2026 there was no federal Rp/kWh floor —
+    Art. 12 Abs. 1 just required "avoided procurement cost".
 
     Returns None for ≥150 kW segments (no federal floor).
     For mit-Eigenverbrauch 30–<150 kW: degressive formula 180/kW (range 1.20–6.00).
@@ -57,9 +68,16 @@ def mindestverguetung_rp_kwh(seg: Segment, kw: float) -> float | None:
 
 
 def anrechenbarkeitsgrenze_rp_kwh(seg: Segment) -> float:
-    """StromVV Art. 4a 4-tier cap in Rp/kWh.
+    """Anrechenbarkeitsgrenze cap in Rp/kWh — 4 tiers by 100 kW × Eigenverbrauch.
 
-    Boundaries: 100 kW × Eigenverbrauch.
+    Legal source: StromVV Art. 4 Abs. 3 Bst. e (SR 734.71, AS 2025 139,
+    in force since 1.1.2026). The article mandates a *formula* — the cap on
+    what utilities may charge captive customers for procured PV equals the
+    Gestehungskosten of a reference plant minus subsidies. The four numbers
+    here (10.96 / 8.20 / 7.20 / 5.40) are EKZ's published derivation per
+    plant-size×Eigenverbrauch quadrant; other Swiss utilities applying this
+    cap converge on similar values because the reference Gestehungskosten
+    are nationally uniform.
     """
     if has_eigenverbrauch(seg):
         if seg == Segment.SMALL_MIT_EV or seg == Segment.MID_MIT_EV:
@@ -81,11 +99,11 @@ def effective_rp_kwh(
 ) -> float:
     """Effective Rückliefervergütung in Rp/kWh.
 
-    Federal floor (Mindestvergütung, EnV Art. 12) is always applied to the base.
-    Whether the Anrechenbarkeitsgrenze (StromVV Art. 4) acts as a payment cap is
-    a per-utility commercial choice — most Swiss utilities pay base + HKN
-    additively without enforcing the cap; only EKZ, Groupe E, and Primeo apply
-    it strictly per their published 2026 terms.
+    Federal floor (Mindestvergütung, EnV Art. 12 Abs. 1bis) is always applied
+    to the base. Whether the Anrechenbarkeitsgrenze (StromVV Art. 4 Abs. 3
+    Bst. e) acts as a payment cap is a per-utility commercial choice — most
+    Swiss utilities pay base + HKN additively without enforcing the cap; only
+    EKZ, Groupe E, and Primeo apply it strictly per their published 2026 terms.
 
     When ``verguetungs_obergrenze`` is True, the EKZ-style two-clause cap rule
     applies:

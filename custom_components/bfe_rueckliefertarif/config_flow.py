@@ -61,14 +61,31 @@ _OPENDATA_URLS: dict[str, str] = {
     "en": "https://opendata.swiss/en/dataset/referenz-marktpreise-gemass-art-15-enfv",
     "fr": "https://opendata.swiss/fr/dataset/referenz-marktpreise-gemass-art-15-enfv",
 }
+# Fedlex (Swiss federal law portal) — EnV SR 730.01 (Energieverordnung) carries
+# Art. 12 Abs. 1bis (Mindestvergütung floors); StromVV SR 734.71 carries Art. 4
+# Abs. 3 Bst. e (Anrechenbarkeitsgrenze cap formula). Both in force 1.1.2026
+# via AS 2025 138 / AS 2025 139. Fedlex publishes only DE/FR/IT — English users
+# fall back to DE.
+_FEDLEX_ENV_URLS: dict[str, str] = {
+    "de": "https://www.fedlex.admin.ch/eli/cc/2017/763/de",
+    "en": "https://www.fedlex.admin.ch/eli/cc/2017/763/de",
+    "fr": "https://www.fedlex.admin.ch/eli/cc/2017/763/fr",
+}
+_FEDLEX_STROMVV_URLS: dict[str, str] = {
+    "de": "https://www.fedlex.admin.ch/eli/cc/2008/178/de",
+    "en": "https://www.fedlex.admin.ch/eli/cc/2008/178/de",
+    "fr": "https://www.fedlex.admin.ch/eli/cc/2008/178/fr",
+}
 
 
 def _source_links(hass) -> dict[str, str]:
-    """Return locale-correct {agency_url, opendata_url} for description_placeholders."""
+    """Return locale-correct data-source URLs for description_placeholders."""
     lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
     return {
         "agency_url": _AGENCY_URLS.get(lang, _AGENCY_URLS["en"]),
         "opendata_url": _OPENDATA_URLS.get(lang, _OPENDATA_URLS["en"]),
+        "env_url": _FEDLEX_ENV_URLS.get(lang, _FEDLEX_ENV_URLS["en"]),
+        "stromvv_url": _FEDLEX_STROMVV_URLS.get(lang, _FEDLEX_STROMVV_URLS["en"]),
     }
 
 
