@@ -36,6 +36,16 @@ from .const import (
 )
 from .tariffs_db import list_utility_keys, load_tariffs
 
+
+async def _async_warm_cache(hass) -> None:
+    """Pre-load tariffs.json via executor so the in-event-loop callers below
+    hit the lru_cache instead of triggering HA's blocking-I/O detector.
+
+    Cheap to call repeatedly — after the first hit the cache is populated
+    and the executor job is a no-op dict return.
+    """
+    await hass.async_add_executor_job(load_tariffs)
+
 if TYPE_CHECKING:
     from homeassistant.data_entry_flow import FlowResult
 
@@ -226,6 +236,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
+        await _async_warm_cache(self.hass)
         return self.async_show_menu(
             step_id="user",
             menu_options=[f"preset_{k}" for k in list_utility_keys()],

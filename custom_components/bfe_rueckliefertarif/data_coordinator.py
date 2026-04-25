@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .tariffs_db import set_override_path
+from .tariffs_db import load_tariffs, set_override_path
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -67,9 +67,12 @@ class TariffsDataCoordinator:
         if self._cache_path.is_file() and self._is_fresh():
             set_override_path(self._cache_path)
             _LOGGER.debug("Using cached remote tariffs.json (fetched %s)", self.last_remote_update)
-            return
+        else:
+            await self.async_refresh()
 
-        await self.async_refresh()
+        # Warm tariffs_db's lru_cache so subsequent callers in the event loop
+        # hit memory instead of triggering HA's blocking-I/O detector.
+        await self._hass.async_add_executor_job(load_tariffs)
 
     async def async_maybe_refresh(self) -> None:
         """Called periodically by the BfeCoordinator tick — refresh only if stale."""
@@ -107,6 +110,9 @@ class TariffsDataCoordinator:
         self.last_remote_update = datetime.now(timezone.utc)
         self.last_error = None
         set_override_path(self._cache_path)
+        # Warm tariffs_db's lru_cache against the new file so the next caller
+        # — which may be a sync code path in the event loop — hits memory.
+        await self._hass.async_add_executor_job(load_tariffs)
         _LOGGER.info(
             "Remote tariffs.json refreshed (schema_version=%s)",
             data.get("schema_version"),
