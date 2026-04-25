@@ -72,6 +72,21 @@ async def async_register_services(hass: "HomeAssistant") -> None:
     )
 
 
+def _first_entry_data(hass: "HomeAssistant") -> dict:
+    """Return the first config entry's storage dict.
+
+    ``hass.data[DOMAIN]`` carries one slot per config entry (keyed by
+    ``entry_id``) plus a shared ``_tariffs_data`` slot (the
+    TariffsDataCoordinator from Phase 6). Skip underscore-prefixed keys
+    so we always get an actual config entry.
+    """
+    entries = hass.data.get(DOMAIN, {})
+    for key, value in entries.items():
+        if not key.startswith("_") and isinstance(value, dict):
+            return value
+    raise RuntimeError("BFE Rückliefertarif not configured")
+
+
 def _cfg_for_entry(
     hass: "HomeAssistant", *, for_quarter: Quarter | None = None
 ) -> tuple[dict, TariffConfig]:
@@ -84,10 +99,7 @@ def _cfg_for_entry(
     """
     from datetime import date
 
-    entries = hass.data.get(DOMAIN, {})
-    if not entries:
-        raise RuntimeError("BFE Rückliefertarif not configured")
-    entry_data = next(iter(entries.values()))
+    entry_data = _first_entry_data(hass)
     cfg = entry_data["config"]
     options = entry_data.get("options") or {}
 
@@ -241,10 +253,10 @@ def _record_snapshot(
     the rate when we imported?". v0.6 will additionally use this to
     short-circuit recompute when force_fresh=False.
     """
-    entries = hass.data.get(DOMAIN, {})
-    if not entries:
+    try:
+        entry_data = _first_entry_data(hass)
+    except RuntimeError:
         return
-    entry_data = next(iter(entries.values()))
     coordinator = entry_data.get("coordinator")
     if coordinator is None:
         return
@@ -374,8 +386,7 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     export_id = cfg[CONF_STROMNETZEINSPEISUNG_KWH]
     comp_id = cfg[CONF_RUECKLIEFERVERGUETUNG_CHF]
 
-    entries = hass.data.get(DOMAIN, {})
-    entry_data = next(iter(entries.values()))
+    entry_data = _first_entry_data(hass)
     coordinator = entry_data.get("coordinator")
     if coordinator is None or not coordinator.data:
         raise RuntimeError(
@@ -448,10 +459,7 @@ async def _refresh_coordinator(hass: "HomeAssistant") -> dict:
     quarters whose price changed since the last successful import. We snapshot
     its private ``_imported`` map before/after to report what was new this tick.
     """
-    entries = hass.data.get(DOMAIN, {})
-    if not entries:
-        raise RuntimeError("BFE Rückliefertarif not configured")
-    entry_data = next(iter(entries.values()))
+    entry_data = _first_entry_data(hass)
     coordinator = entry_data.get("coordinator")
     if coordinator is None:
         raise RuntimeError("Coordinator not yet ready")

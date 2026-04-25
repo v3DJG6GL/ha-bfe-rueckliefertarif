@@ -153,8 +153,10 @@ class AktuelleVerguetungChfKwhSensor(CoordinatorEntity[BfeCoordinator], _BaseSen
 
     _attr_native_unit_of_measurement = "CHF/kWh"
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 4
+    # HA disallows `MEASUREMENT` with `MONETARY` (monetary expects TOTAL or
+    # None — and a per-kWh price is neither cumulative nor a single point
+    # in time, so leave state_class unset).
 
     def __init__(
         self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
