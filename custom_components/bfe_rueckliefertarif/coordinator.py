@@ -206,9 +206,17 @@ class BfeCoordinator(DataUpdateCoordinator):
         ``_reimport_quarter`` updates ``self._imported[key]`` itself with the
         full snapshot (Phase 4), so this just drives the loop and skips
         quarters that are already imported at the current price.
+
+        Quarters BFE has published but the bundled tariff database doesn't
+        cover (e.g. pre-2026 dates while v0.5 ships only 2026 utility data)
+        produce a single persistent notification listing the gap, instead
+        of one warning per skipped quarter. Populating older years is a
+        community-PR effort against the bfe-tariffs-data companion repo.
+        Genuine errors still surface as warnings.
         """
         from .services import _reimport_quarter
 
+        no_data_skipped: list[str] = []
         for q, price in sorted(self.quarterly.items()):
             key = str(q)
             prior = self._imported.get(key)
@@ -216,8 +224,72 @@ class BfeCoordinator(DataUpdateCoordinator):
                 continue
             try:
                 await _reimport_quarter(self.hass, q)
+            except LookupError as exc:
+                # No tariff data covering this date — expected for pre-2026
+                # quarters. Surface via a persistent notification below.
+                _LOGGER.debug("Auto-import skipped %s: %s", q, exc)
+                no_data_skipped.append(str(q))
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
+
+        self._notify_skipped_quarters(no_data_skipped)
+
+    def _notify_skipped_quarters(self, skipped: list[str]) -> None:
+        """Summarize skipped quarters in a single persistent UI notification.
+
+        ``notification_id`` is stable per entry, so re-running auto-import
+        updates the card in place (no stacking).
+        """
+        from homeassistant.components.persistent_notification import (
+            async_create as _notify,
+            async_dismiss as _dismiss,
+        )
+
+        from .const import CONF_ENERGIEVERSORGER, DOMAIN
+        from .tariffs_db import load_tariffs
+
+        nid = f"{DOMAIN}_{self.entry.entry_id}_skipped_quarters"
+        if not skipped:
+            # Nothing to report — clear any prior card.
+            _dismiss(self.hass, nid)
+            return
+
+        bfe_keys = sorted(str(q) for q in self.quarterly)
+        bfe_range = (
+            f"{bfe_keys[0]} – {bfe_keys[-1]}" if bfe_keys else "(none)"
+        )
+
+        utility_key = self._config.get(CONF_ENERGIEVERSORGER) or "(unknown)"
+        try:
+            db = load_tariffs()
+            rates = db["utilities"].get(utility_key, {}).get("rates") or []
+            earliest_window = min((r["valid_from"] for r in rates), default=None)
+        except Exception:  # noqa: BLE001
+            earliest_window = None
+        window_text = f"**{earliest_window} onwards**" if earliest_window else "(unknown)"
+
+        skipped_text = ", ".join(skipped)
+        msg = (
+            f"BFE published reference market prices for **{len(bfe_keys)} quarter(s)** "
+            f"({bfe_range}). The bundled tariff database for utility "
+            f"**`{utility_key}`** covers {window_text}, so the following "
+            f"**{len(skipped)} earlier quarter(s) were skipped** (no remuneration "
+            f"was written for them):\n\n"
+            f"{skipped_text}\n\n"
+            f"To populate older years, open a PR against the "
+            f"[bfe-tariffs-data](https://github.com/v3DJG6GL/bfe-tariffs-data) "
+            f"companion repo (extend each utility's `rates[]` list with an earlier "
+            f"`valid_from` record). The integration auto-refreshes daily — once the "
+            f"PR is merged, the next refresh will let auto-import pick up the older "
+            f"quarters."
+        )
+
+        _notify(
+            self.hass,
+            msg,
+            title="BFE Rückliefertarif — older quarters skipped (no tariff data)",
+            notification_id=nid,
+        )
 
 def _next_publication_estimate(now: datetime) -> datetime:
     """Rough estimate: 2 weeks after each quarter end. For the diagnostic sensor."""
