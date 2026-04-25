@@ -85,7 +85,7 @@ class ReloadReferenzmarktpreiseButton(_BaseButton):
             _LOGGER.exception("Refresh failed")
             notify(
                 self.hass,
-                f"Fehler beim Aktualisieren: {exc}",
+                f"Refresh failed: {exc}",
                 title="BFE Rückliefertarif",
                 notification_id=f"{DOMAIN}_{self._entry.entry_id}_refresh",
             )
@@ -93,13 +93,13 @@ class ReloadReferenzmarktpreiseButton(_BaseButton):
 
         avail = result["available"]
         new = result["newly_imported"]
-        lines = [f"{len(avail)} Quartale verfügbar"]
+        lines = [f"{len(avail)} quarters available"]
         if avail:
-            lines[0] += f" (neuestes: {max(avail)})"
+            lines[0] += f" (latest: {max(avail)})"
         if new:
-            lines.append(f"Neu importiert: {_format_quarters(new)}")
+            lines.append(f"Newly imported: {_format_quarters(new)}")
         else:
-            lines.append("Keine neuen Quartale seit letztem Import.")
+            lines.append("No new quarters since the last import.")
         notify(
             self.hass,
             "\n".join(lines),
@@ -132,7 +132,7 @@ class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
         if coordinator is None or not coordinator.quarterly:
             notify(
                 self.hass,
-                "Keine Referenz-Marktpreise verfügbar — zuerst 'Referenz-Marktpreise jetzt laden' ausführen.",
+                "No reference market prices available — run 'Reload reference market prices' first.",
                 title="BFE Rückliefertarif",
                 notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_quarter",
             )
@@ -141,10 +141,10 @@ class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
         q = max(coordinator.quarterly.keys())
         try:
             await _reimport_quarter(self.hass, q)
-            msg = f"Rückliefervergütung für {q} neu berechnet."
+            msg = f"Feed-in remuneration for {q} recomputed."
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Recompute %s failed", q)
-            msg = f"Fehler beim Neuberechnen von {q}: {exc}"
+            msg = f"Recompute of {q} failed: {exc}"
         notify(
             self.hass,
             msg,
@@ -171,7 +171,7 @@ class RecomputeHistorieButton(_BaseButton):
             _LOGGER.exception("Reimport history failed")
             notify(
                 self.hass,
-                f"Fehler beim Neuberechnen: {exc}",
+                f"Recompute failed: {exc}",
                 title="BFE Rückliefertarif",
                 notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_history",
             )
@@ -180,13 +180,13 @@ class RecomputeHistorieButton(_BaseButton):
         imported = result["imported"]
         skipped = result["skipped"]
         failed = result["failed"]
-        lines = [f"{len(imported)} Quartale neu berechnet"]
+        lines = [f"{len(imported)} quarters recomputed"]
         if imported:
             lines[0] += f": {_format_quarters(imported)}"
         if skipped:
-            lines.append(f"{len(skipped)} übersprungen (BFE noch nicht publiziert): {_format_quarters(skipped)}")
+            lines.append(f"{len(skipped)} skipped (not yet published by BFE): {_format_quarters(skipped)}")
         if failed:
-            lines.append(f"{len(failed)} Fehler — siehe Logs: {_format_quarters(failed)}")
+            lines.append(f"{len(failed)} errors — see logs: {_format_quarters(failed)}")
         notify(
             self.hass,
             "\n".join(lines),

@@ -359,7 +359,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
                 else:
                     _notify(
                         self.hass,
-                        f"Rückliefervergütung für {q} neu berechnet.",
+                        f"Feed-in remuneration for {q} recomputed.",
                         title="BFE Rückliefertarif",
                         notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_reimport_specific",
                     )
