@@ -78,6 +78,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             "quarterly": self.quarterly,
             "monthly": self.monthly,
             "current_tariff_rp_kwh": breakdown["effective_rp_kwh"] if breakdown else None,
+            "current_tariff_chf_kwh": breakdown["effective_chf_kwh"] if breakdown else None,
             "tariff_breakdown": breakdown,
             "next_publication": _next_publication_estimate(datetime.now(timezone.utc)),
         }
@@ -122,16 +123,30 @@ class BfeCoordinator(DataUpdateCoordinator):
 
         now = datetime.now(timezone.utc)
         q = quarter_of(now)
+        is_estimate = False
+        estimate_basis: str | None = None
         if basisverguetung == BASISVERGUETUNG_FIXPREIS:
             base_input = float(self._config.get(CONF_FIXPREIS_RP_KWH, 0.0) or 0.0)
             base_label = "fixpreis"
+        elif q in self.quarterly:
+            base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
+            base_label = f"referenz_marktpreis_{q}"
+        elif self.quarterly:
+            # BFE has not yet published the running quarter — fall back to the
+            # most recently published BFE quarter as a real-time estimate.
+            # The integration's normal import path will overwrite LTS with
+            # exact values once BFE publishes the running quarter.
+            last_q = max(self.quarterly.keys())
+            base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[last_q].chf_per_mwh)
+            base_label = f"estimate_from_{last_q}"
+            is_estimate = True
+            estimate_basis = str(last_q)
         else:
-            if q in self.quarterly:
-                base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
-                base_label = f"referenz_marktpreis_{q}"
-            else:
-                base_input = floor
-                base_label = "fallback_mindestverguetung"
+            # No BFE data at all — conservative floor-only fallback.
+            base_input = floor
+            base_label = "fallback_mindestverguetung"
+            is_estimate = True
+            estimate_basis = "mindestverguetung_floor"
 
         base_after_floor = max(base_input, floor)
         theoretical_total = base_after_floor + hkn
@@ -160,8 +175,11 @@ class BfeCoordinator(DataUpdateCoordinator):
             "theoretical_total_rp_kwh": round(theoretical_total, 4),
             "anrechenbarkeitsgrenze_rp_kwh": round(cap, 4),
             "effective_rp_kwh": round(effective, 4),
+            "effective_chf_kwh": round(effective / 100.0, 6),
             "obergrenze_aktiv": obergrenze_aktiv,
             "hkn_gekuerzt_auf": round(hkn_gekuerzt_auf, 4) if hkn_gekuerzt_auf is not None else None,
+            "is_estimate": is_estimate,
+            "estimate_basis": estimate_basis,
         }
 
     async def _auto_import_newly_published(self) -> None:

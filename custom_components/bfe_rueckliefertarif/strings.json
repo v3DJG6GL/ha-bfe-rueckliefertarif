@@ -159,6 +159,9 @@
       "basisverguetung": {
         "name": "Base remuneration"
       },
+      "aktuelle_verguetung_chf_kwh": {
+        "name": "Current remuneration"
+      },
       "hkn_verguetung": {
         "name": "HKN remuneration (configured)"
       },

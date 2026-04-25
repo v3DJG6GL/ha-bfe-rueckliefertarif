@@ -358,6 +358,7 @@ class TestStringsAndTranslations:
         "key",
         [
             "basisverguetung",
+            "aktuelle_verguetung_chf_kwh",
             "hkn_verguetung",
             "naechste_referenzmarktpreis_publikation",
             "referenzmarktpreis_q",

@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.const import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -47,6 +51,7 @@ async def async_setup_entry(
 
     sensors: list[SensorEntity] = [
         BasisVerguetungSensor(coordinator, entry, prefix),
+        AktuelleVerguetungChfKwhSensor(coordinator, entry, prefix),
         HknVerguetungSensor(entry, prefix, cfg.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0)),
         NaechsteReferenzmarktpreisPublikationSensor(coordinator, entry, prefix),
         ReferenzmarktpreisQSensor(coordinator, entry, prefix),
@@ -97,6 +102,53 @@ class BasisVerguetungSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("current_tariff_rp_kwh")
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("tariff_breakdown")
+
+
+class AktuelleVerguetungChfKwhSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
+    """Current effective Rückliefervergütung in CHF/kWh — for Energy Dashboard wiring.
+
+    Mirrors ``BasisVerguetungSensor`` but reports in CHF/kWh and exposes
+    ``SensorDeviceClass.MONETARY`` so HA's Energy Dashboard surfaces it as a
+    candidate "Return to grid → Price" entity. Wire this sensor there to get
+    realistic running CHF estimates during the open quarter — the integration
+    overwrites those LTS values with exact BFE-based numbers once the running
+    quarter is published.
+
+    For ``basisverguetung = referenz_marktpreis`` and a quarter BFE has not
+    yet published, the value falls back to the most recently published
+    quarter's rate (see coordinator._tariff_breakdown). The
+    ``extra_state_attributes`` dict carries ``is_estimate`` and
+    ``estimate_basis`` so the user can tell exact from estimated readings.
+    """
+
+    _attr_native_unit_of_measurement = "CHF/kWh"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
+
+    def __init__(
+        self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
+    ) -> None:
+        CoordinatorEntity.__init__(self, coordinator)
+        _BaseSensor.__init__(
+            self,
+            entry,
+            prefix,
+            "aktuelle_verguetung_chf_kwh",
+            "aktuelle_verguetung_chf_kwh",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("current_tariff_chf_kwh")
 
     @property
     def extra_state_attributes(self) -> dict | None:

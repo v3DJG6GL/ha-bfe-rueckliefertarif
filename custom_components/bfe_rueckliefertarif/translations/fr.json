@@ -154,6 +154,9 @@
       "basisverguetung": {
         "name": "Rétribution de base"
       },
+      "aktuelle_verguetung_chf_kwh": {
+        "name": "Rétribution actuelle"
+      },
       "hkn_verguetung": {
         "name": "Rétribution GO (configurée)"
       },
