@@ -50,6 +50,27 @@ _PRESET_LEGACY_TO_NEW: dict[str, str] = {
     "fixed_rate": BASISVERGUETUNG_FIXPREIS,
 }
 
+# Locale-aware data-source URLs surfaced via description_placeholders.
+# Hassfest forbids URLs in translation strings — must be runtime-injected.
+_AGENCY_URLS: dict[str, str] = {
+    "de": "https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html",
+    "en": "https://www.bfe.admin.ch/bfe/en/home/promotion/renewable-energy/feed-in-remuneration-at-cost.html",
+}
+_OPENDATA_URLS: dict[str, str] = {
+    "de": "https://opendata.swiss/de/dataset/referenz-marktpreise-gemass-art-15-enfv",
+    "en": "https://opendata.swiss/en/dataset/referenz-marktpreise-gemass-art-15-enfv",
+    "fr": "https://opendata.swiss/fr/dataset/referenz-marktpreise-gemass-art-15-enfv",
+}
+
+
+def _source_links(hass) -> dict[str, str]:
+    """Return locale-correct {agency_url, opendata_url} for description_placeholders."""
+    lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+    return {
+        "agency_url": _AGENCY_URLS.get(lang, _AGENCY_URLS["en"]),
+        "opendata_url": _OPENDATA_URLS.get(lang, _OPENDATA_URLS["en"]),
+    }
+
 
 def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Build the tariff-step schema with optional pre-filled defaults.
@@ -178,6 +199,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_menu(
             step_id="user",
             menu_options=[f"preset_{k}" for k in list_preset_keys()],
+            description_placeholders=_source_links(self.hass),
         )
 
     async def _apply_preset(self, key: str) -> "FlowResult":
@@ -249,7 +271,10 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="tariff",
             data_schema=_tariff_schema(defaults),
             errors=errors,
-            description_placeholders={"utility_name": preset.display_name},
+            description_placeholders={
+                "utility_name": preset.display_name,
+                **_source_links(self.hass),
+            },
         )
 
     # ----- Step 3: HA entities --------------------------------------------------
@@ -326,6 +351,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
             step_id="tariff",
             data_schema=_tariff_schema(defaults),
             errors=errors,
+            description_placeholders=_source_links(self.hass),
         )
 
     # ----- Sub-step: re-import a specific past quarter -----------------------
