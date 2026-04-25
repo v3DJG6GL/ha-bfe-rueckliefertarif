@@ -22,7 +22,7 @@
       },
       "tariff": {
         "title": "Tariff configuration ({utility_name})",
-        "description": "Configure how your utility calculates Rückliefervergütung. Every value below is pre-filled from the utility you picked — adjust as needed.\n\n### Plant category — legal floor\n\nFixed by Swiss law (EnV Art. 12 Mindestvergütung). The integration applies the floor automatically based on the category you pick.\n\n| Category | Min (Rp/kWh) |\n|---|---|\n| ≤30 kW with self-consumption | 6.00 |\n| ≤30 kW feed-in only | 6.00 |\n| 30–<100 kW with self-consumption | 1.20–6.00 (180÷kW) |\n| 30–<100 kW feed-in only | 6.20 |\n| 100–<150 kW with self-consumption | 1.20–6.00 (180÷kW) |\n| 100–<150 kW feed-in only | 6.20 |\n| ≥150 kW with self-consumption | — |\n| ≥150 kW feed-in only | — |\n\n### Installed power\n\nOnly required for **30–<150 kW with self-consumption** (the degressive `180 ÷ kW` formula). For all other categories the value is ignored — leave at `0`.\n\n### Base price\n\n- **Reference market price (BFE, quarterly)** — most utilities: *EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW*.\n- **Fixed price (set by utility)** — *ewz, IWB, SIG, AEW*.\n\n### Fixed price\n\nOnly read when *Base price* = *Fixed price*. 2026 examples (Rp/kWh):\n\n- ewz: **7.91** (HKN paid separately, see below)\n- IWB: **12.95** (HKN included)\n- SIG: **8.16** (HKN paid separately)\n- AEW: **8.20** (HKN included)\n\n### HKN remuneration\n\nRemuneration for **HKN** (*Herkunftsnachweise* — Swiss guarantees of origin). **Opt-in at most utilities**, so set to `0.0` unless you've enrolled to sell HKN. EKZ pays up to **3.00 Rp/kWh** after enrolling on myEKZ.\n\n### Remuneration cap (Vergütungs-Obergrenze)\n\n**On**: total Vergütung is capped at the Anrechenbarkeitsgrenze per StromVV Art. 4 (10.96 / 8.20 / 7.20 / 5.40 Rp/kWh depending on category). When base + HKN would exceed the cap, the HKN is reduced to fit. Used by **EKZ, Groupe E, Primeo**.\n\n**Off**: utility pays base + HKN additively, no upper limit. Used by every other Swiss utility (BKW, CKW, SAK, SGSW, ewz, IWB, SIG, AEW, Romande Energie, …). Default for *Custom*.\n\nIf unsure, leave it off and verify against your first quarterly invoice — most utilities don't apply a cap.\n\n### Billing period\n\nMatch your utility's invoice cycle. **Most Swiss utilities settle quarterly.**",
+        "description": "Every value below is pre-filled from the utility you picked. Adjust as needed; the details next to each field explain what it does.",
         "data": {
           "anlagenkategorie": "Plant category",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -33,13 +33,13 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "See the table above.",
-          "installierte_leistung_kw": "Only for 30–<150 kW w/ self-consumption.",
-          "basisverguetung": "See 'Base price' section above.",
-          "hkn_verguetung_rp_kwh": "0.0 if not opted in to HKN.",
-          "fixpreis_rp_kwh": "Only with 'Fixed price' base.",
-          "verguetungs_obergrenze": "Enable for EKZ, Groupe E, Primeo. Off for everyone else.",
-          "abrechnungs_rhythmus": "Most utilities: Quarterly."
+          "anlagenkategorie": "Size + self-consumption determines the legal Mindestvergütung (EnV Art. 12) and Anrechenbarkeitsgrenze (StromVV Art. 4). Per category (min / cap, Rp/kWh): ≤30 kW mit EV → 6.00 / 10.96 · ≤30 kW ohne EV → 6.00 / 8.20 · 30–<100 kW mit EV → 180÷kW / 10.96 · 30–<100 kW ohne EV → 6.20 / 8.20 · 100–<150 kW mit EV → 180÷kW / 7.20 · 100–<150 kW ohne EV → 6.20 / 5.40 · ≥150 kW mit EV → no min / 7.20 · ≥150 kW ohne EV → no min / 5.40.",
+          "installierte_leistung_kw": "Required only for 30–<150 kW plants with self-consumption — the Mindestvergütung follows the formula 180 ÷ kW. Leave at 0 for all other categories.",
+          "basisverguetung": "Reference market price → most utilities (EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW). Fixed price → ewz, IWB, SIG, AEW.",
+          "fixpreis_rp_kwh": "Only used when Base price = Fixed price. 2026 examples (Rp/kWh): ewz 7.91 (+ HKN 5.00 additive), IWB 12.95 (HKN incl.), SIG 8.16 (+ HKN 2.80 additive), AEW 8.20 (HKN incl.).",
+          "hkn_verguetung_rp_kwh": "Remuneration for HKN (Herkunftsnachweise / Swiss guarantees of origin). Opt-in at most utilities — set to 0.0 unless you sell HKN. EKZ pays up to 3.00 Rp/kWh after myEKZ enrollment.",
+          "verguetungs_obergrenze": "On: total Vergütung capped at the Anrechenbarkeitsgrenze per StromVV Art. 4 (derived from Plant category above). When base + HKN would exceed the cap, HKN is reduced to fit. Used by EKZ, Groupe E, Primeo. Off: utility pays base + HKN additively, no cap. Used by every other Swiss utility (~98%).",
+          "abrechnungs_rhythmus": "Match your utility's invoice cycle. Most Swiss utilities settle quarterly."
         }
       },
       "entities": {
@@ -51,9 +51,9 @@
           "namenspraefix": "Name prefix"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "The **kWh counter** that tracks energy fed into the grid. Must already be wired into the **Energy Dashboard** under *'Return to grid'*.",
-          "rueckliefervergutung_chf": "The **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'* (HA names it with a `_compensation` suffix, usually `sensor.YOUR_GRID_EXPORT_compensation`).\n\nThis integration writes into its **Long-Term Statistics**.",
-          "namenspraefix": "Prefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
+          "stromnetzeinspeisung_kwh": "The kWh counter that tracks energy fed into the grid. Must already be wired into the Energy Dashboard under 'Return to grid'.",
+          "rueckliefervergutung_chf": "The CHF sensor that the Energy Dashboard auto-creates when you configure 'Return to grid with a price'. HA names it with a `_compensation` suffix, usually `sensor.YOUR_GRID_EXPORT_compensation`. This integration writes into its Long-Term Statistics.",
+          "namenspraefix": "Prefix for this integration's diagnostic sensors and action buttons (e.g. sensor.PREFIX_basisverguetung, button.PREFIX_recompute_aktuelles_quartal). Only change if the default collides."
         }
       }
     },
@@ -75,7 +75,7 @@
       },
       "tariff": {
         "title": "Adjust tariff settings",
-        "description": "Edit your tariff configuration. The values you change here apply to every future re-import.\n\n### Plant category — legal floor\n\nFixed by Swiss law (EnV Art. 12 Mindestvergütung) and applied automatically based on the *Plant category*.\n\n| Category | Min (Rp/kWh) |\n|---|---|\n| ≤30 kW with self-consumption | 6.00 |\n| ≤30 kW feed-in only | 6.00 |\n| 30–<100 kW with self-consumption | 1.20–6.00 (180÷kW) |\n| 30–<100 kW feed-in only | 6.20 |\n| 100–<150 kW with self-consumption | 1.20–6.00 (180÷kW) |\n| 100–<150 kW feed-in only | 6.20 |\n| ≥150 kW with self-consumption | — |\n| ≥150 kW feed-in only | — |\n\n### Installed power\n\nOnly required for **30–<150 kW with self-consumption** (`180 ÷ kW` formula). Leave at `0` otherwise.\n\n### Base price\n\n- **Reference market price** — most utilities (*EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW*).\n- **Fixed price** — *ewz, IWB, SIG, AEW*.\n\n### Fixed price\n\nOnly read with *Fixed price* base. 2026 examples (Rp/kWh): ewz **7.91**, IWB **12.95** (HKN incl.), SIG **8.16**, AEW **8.20** (HKN incl.).\n\n### HKN remuneration\n\nRemuneration for **HKN** (*Herkunftsnachweise*). **Opt-in at most utilities** — set to `0.0` unless enrolled. EKZ pays up to **3.00 Rp/kWh** after myEKZ enrollment.\n\n### Remuneration cap (Vergütungs-Obergrenze)\n\n**On** — total Vergütung capped at the Anrechenbarkeitsgrenze per StromVV Art. 4. Used by EKZ, Groupe E, Primeo.\n\n**Off** — utility pays base + HKN additively, no cap. Used by every other Swiss utility (default for Custom).\n\n### Billing period\n\nMatch your utility's invoice cycle. **Most Swiss utilities settle quarterly.**",
+        "description": "Edit your tariff configuration. Changes apply to every future re-import.",
         "data": {
           "anlagenkategorie": "Plant category",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -86,23 +86,23 @@
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "anlagenkategorie": "See the table above.",
-          "installierte_leistung_kw": "Only for 30–<150 kW w/ self-consumption.",
-          "basisverguetung": "See 'Base price' section above.",
-          "hkn_verguetung_rp_kwh": "0.0 if not opted in to HKN.",
-          "fixpreis_rp_kwh": "Only with 'Fixed price' base.",
-          "verguetungs_obergrenze": "Enable for EKZ, Groupe E, Primeo. Off for everyone else.",
-          "abrechnungs_rhythmus": "Most utilities: Quarterly."
+          "anlagenkategorie": "Size + self-consumption determines the legal Mindestvergütung (EnV Art. 12) and Anrechenbarkeitsgrenze (StromVV Art. 4). Per category (min / cap, Rp/kWh): ≤30 kW mit EV → 6.00 / 10.96 · ≤30 kW ohne EV → 6.00 / 8.20 · 30–<100 kW mit EV → 180÷kW / 10.96 · 30–<100 kW ohne EV → 6.20 / 8.20 · 100–<150 kW mit EV → 180÷kW / 7.20 · 100–<150 kW ohne EV → 6.20 / 5.40 · ≥150 kW mit EV → no min / 7.20 · ≥150 kW ohne EV → no min / 5.40.",
+          "installierte_leistung_kw": "Required only for 30–<150 kW plants with self-consumption — the Mindestvergütung follows the formula 180 ÷ kW. Leave at 0 for all other categories.",
+          "basisverguetung": "Reference market price → most utilities (EKZ, BKW, CKW, Groupe E, Primeo, Romande Energie, SAK, SGSW). Fixed price → ewz, IWB, SIG, AEW.",
+          "fixpreis_rp_kwh": "Only used when Base price = Fixed price. 2026 examples (Rp/kWh): ewz 7.91 (+ HKN 5.00 additive), IWB 12.95 (HKN incl.), SIG 8.16 (+ HKN 2.80 additive), AEW 8.20 (HKN incl.).",
+          "hkn_verguetung_rp_kwh": "Remuneration for HKN (Herkunftsnachweise / Swiss guarantees of origin). Opt-in at most utilities — set to 0.0 unless you sell HKN. EKZ pays up to 3.00 Rp/kWh after myEKZ enrollment.",
+          "verguetungs_obergrenze": "On: total Vergütung capped at the Anrechenbarkeitsgrenze per StromVV Art. 4 (derived from Plant category above). When base + HKN would exceed the cap, HKN is reduced to fit. Used by EKZ, Groupe E, Primeo. Off: utility pays base + HKN additively, no cap. Used by every other Swiss utility (~98%).",
+          "abrechnungs_rhythmus": "Match your utility's invoice cycle. Most Swiss utilities settle quarterly."
         }
       },
       "reimport_quarter": {
         "title": "Re-import a specific quarter",
-        "description": "Recompute Rückliefervergütung CHF/h for a specific past quarter. Use this after fixing tariff settings to update an already-published quarter (e.g. correct a wrong HKN setting that was used for `2026Q1`).\n\n**Format:** `YYYYQN`. Example: `2026Q1`, `2025Q4`.\n\nThe quarter must already be published by BFE — typically about 2 weeks after quarter end.",
+        "description": "Recompute Rückliefervergütung CHF/h for a specific past quarter. Use this after fixing tariff settings to update an already-published quarter (e.g. correct a wrong HKN setting that was used for 2026Q1).",
         "data": {
           "quarter": "Quarter"
         },
         "data_description": {
-          "quarter": "Format: YYYYQN (e.g. 2026Q1)."
+          "quarter": "Format: YYYYQN (e.g. 2026Q1). The quarter must already be published by BFE — typically about 2 weeks after quarter end."
         }
       },
       "entities": {
