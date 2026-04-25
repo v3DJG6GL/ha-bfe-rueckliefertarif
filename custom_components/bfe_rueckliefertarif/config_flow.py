@@ -61,19 +61,21 @@ _OPENDATA_URLS: dict[str, str] = {
     "en": "https://opendata.swiss/en/dataset/referenz-marktpreise-gemass-art-15-enfv",
     "fr": "https://opendata.swiss/fr/dataset/referenz-marktpreise-gemass-art-15-enfv",
 }
-# Fedlex (Swiss federal law portal) — EnV SR 730.01 carries Art. 12 Abs. 1bis
-# (Mindestvergütung floors); StromVV SR 734.71 carries Art. 4 Abs. 3 Bst. e
-# (cap formula). Both in force 1.1.2026 via AS 2025 138 / AS 2025 139.
-# ELI numbers verified via redirect from legacy admin.ch/opc URLs.
+# Fedlex (Swiss federal law portal) — deep-linked to the relevant article:
+# - EnV SR 730.01 (ELI 2017/763), Art. 12 Abs. 1bis: Mindestvergütung floors.
+# - StromVV SR 734.71 (ELI 2008/226), Art. 4 Abs. 3 Bst. e: cap formula.
+# Both in force 1.1.2026 via AS 2025 138 / AS 2025 139.
+# Neither ordinance has a canonical English version on Fedlex — EN falls back
+# to DE. ELI numbers verified by downloading the PDF and grepping the SR header.
 _FEDLEX_ENV_URLS: dict[str, str] = {
-    "de": "https://www.fedlex.admin.ch/eli/cc/2017/766/de",
-    "en": "https://www.fedlex.admin.ch/eli/cc/2017/766/en",
-    "fr": "https://www.fedlex.admin.ch/eli/cc/2017/766/fr",
+    "de": "https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12",
+    "en": "https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12",
+    "fr": "https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12",
 }
 _FEDLEX_STROMVV_URLS: dict[str, str] = {
-    "de": "https://www.fedlex.admin.ch/eli/cc/2008/226/de",
-    "en": "https://www.fedlex.admin.ch/eli/cc/2008/226/en",
-    "fr": "https://www.fedlex.admin.ch/eli/cc/2008/226/fr",
+    "de": "https://www.fedlex.admin.ch/eli/cc/2008/226/de#art_4",
+    "en": "https://www.fedlex.admin.ch/eli/cc/2008/226/de#art_4",
+    "fr": "https://www.fedlex.admin.ch/eli/cc/2008/226/fr#art_4",
 }
 
 
