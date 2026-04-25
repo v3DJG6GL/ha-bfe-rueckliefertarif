@@ -73,7 +73,14 @@ class _BaseSensor(SensorEntity):
 
 
 class BasisVerguetungSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
-    """Current effective Basisvergütung in Rp/kWh (LTS-enabled for graphing)."""
+    """Current effective Basisvergütung in Rp/kWh.
+
+    The sensor's state is the effective per-kWh rate the importer is applying
+    right now. ``extra_state_attributes`` exposes the full computation
+    breakdown (Mindestvergütung floor, Anrechenbarkeitsgrenze cap, whether
+    the cap is binding) so users can verify what their tariff settings
+    actually resolve to.
+    """
 
     _attr_native_unit_of_measurement = "Rp/kWh"
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -90,6 +97,12 @@ class BasisVerguetungSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("current_tariff_rp_kwh")
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("tariff_breakdown")
 
 
 class HknVerguetungSensor(_BaseSensor):

@@ -73,11 +73,80 @@ class BfeCoordinator(DataUpdateCoordinator):
                 self.monthly = await fetch_monthly(session)
 
         await self._auto_import_newly_published()
+        breakdown = self._tariff_breakdown()
         return {
             "quarterly": self.quarterly,
             "monthly": self.monthly,
-            "current_tariff_rp_kwh": self._current_effective_tariff_rp_kwh(),
+            "current_tariff_rp_kwh": breakdown["effective_rp_kwh"] if breakdown else None,
+            "tariff_breakdown": breakdown,
             "next_publication": _next_publication_estimate(datetime.now(timezone.utc)),
+        }
+
+    def _tariff_breakdown(self) -> dict[str, Any] | None:
+        """Return a dict explaining how the effective rate is computed.
+
+        Useful for the diagnostic sensor's attributes so the user can see
+        whether the cap is binding (e.g. 30 + 10 → capped at 10.96).
+        """
+        from .const import (
+            BASISVERGUETUNG_FIXPREIS,
+            CONF_ANLAGENKATEGORIE,
+            CONF_BASISVERGUETUNG,
+            CONF_FIXPREIS_RP_KWH,
+            CONF_HKN_VERGUETUNG_RP_KWH,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+        )
+        from .tariff import (
+            Segment,
+            anrechenbarkeitsgrenze_rp_kwh,
+            mindestverguetung_rp_kwh,
+        )
+
+        try:
+            seg = Segment(self._config[CONF_ANLAGENKATEGORIE])
+        except (KeyError, ValueError):
+            return None
+        kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
+        hkn = float(self._config.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0))
+        basisverguetung = self._config.get(CONF_BASISVERGUETUNG)
+
+        floor = mindestverguetung_rp_kwh(seg, kw) if kw > 0 or seg.value not in (
+            "mid_mit_ev", "large_mit_ev"
+        ) else 0.0
+        floor = floor if floor is not None else 0.0
+        cap = anrechenbarkeitsgrenze_rp_kwh(seg)
+
+        now = datetime.now(timezone.utc)
+        q = quarter_of(now)
+        if basisverguetung == BASISVERGUETUNG_FIXPREIS:
+            base_input = float(self._config.get(CONF_FIXPREIS_RP_KWH, 0.0) or 0.0)
+            base_label = "fixpreis"
+        else:
+            if q in self.quarterly:
+                base_input = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
+                base_label = f"referenz_marktpreis_{q}"
+            else:
+                base_input = floor
+                base_label = "fallback_mindestverguetung"
+
+        base_after_floor = max(base_input, floor)
+        theoretical_total = base_after_floor + hkn
+        effective = min(theoretical_total, cap)
+        cap_binds = theoretical_total > cap
+
+        return {
+            "anlagenkategorie": seg.value,
+            "basisverguetung": basisverguetung,
+            "base_input_rp_kwh": round(base_input, 4),
+            "base_source": base_label,
+            "minimalverguetung_rp_kwh": round(floor, 4),
+            "base_after_floor_rp_kwh": round(base_after_floor, 4),
+            "hkn_verguetung_rp_kwh": round(hkn, 4),
+            "theoretical_total_rp_kwh": round(theoretical_total, 4),
+            "anrechenbarkeitsgrenze_rp_kwh": round(cap, 4),
+            "effective_rp_kwh": round(effective, 4),
+            "cap_binds": cap_binds,
+            "hkn_reduced_to": round(max(0.0, cap - base_after_floor), 4) if cap_binds else None,
         }
 
     async def _auto_import_newly_published(self) -> None:
@@ -100,51 +169,6 @@ class BfeCoordinator(DataUpdateCoordinator):
                 "imported_at": datetime.now(timezone.utc).isoformat(),
             }
         await self._async_save_state()
-
-    def _current_effective_tariff_rp_kwh(self) -> float | None:
-        """Basisvergütung-sensor value: effective Rp/kWh for the current quarter.
-
-        Returns the tariff the importer would apply right now. If the current
-        quarter's BFE price hasn't been published yet, falls back to the
-        Mindestvergütung + HKN-Vergütung (the conservative placeholder shown in
-        HA during the ~2-week publication gap).
-        """
-        from .const import (
-            BASISVERGUETUNG_FIXPREIS,
-            CONF_ANLAGENKATEGORIE,
-            CONF_BASISVERGUETUNG,
-            CONF_FIXPREIS_RP_KWH,
-            CONF_HKN_VERGUETUNG_RP_KWH,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
-        )
-        from .tariff import (
-            Segment,
-            effective_rp_kwh_fixed,
-            effective_rp_kwh_rmp,
-            mindestverguetung_rp_kwh,
-        )
-
-        now = datetime.now(timezone.utc)
-        q = quarter_of(now)
-        seg = Segment(self._config[CONF_ANLAGENKATEGORIE])
-        kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
-        hkn = float(self._config.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0))
-        basisverguetung = self._config[CONF_BASISVERGUETUNG]
-
-        if basisverguetung == BASISVERGUETUNG_FIXPREIS:
-            fixed = float(self._config.get(CONF_FIXPREIS_RP_KWH, 0.0) or 0.0)
-            return effective_rp_kwh_fixed(fixed, seg, kw, hkn)
-
-        # Referenz-Marktpreis mode: need BFE price for current quarter, else fall back
-        if q in self.quarterly:
-            ref = chf_per_mwh_to_rp_per_kwh(self.quarterly[q].chf_per_mwh)
-            return effective_rp_kwh_rmp(ref, seg, kw, hkn)
-
-        floor = mindestverguetung_rp_kwh(seg, kw)
-        if floor is None:
-            return None
-        return floor + hkn
-
 
 def _next_publication_estimate(now: datetime) -> datetime:
     """Rough estimate: 2 weeks after each quarter end. For the diagnostic sensor."""
