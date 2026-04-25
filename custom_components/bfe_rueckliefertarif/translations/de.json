@@ -21,7 +21,7 @@
       },
       "tariff": {
         "title": "Tarif konfigurieren ({utility_name})",
-        "description": "Konfiguriere, wie dein Energieversorger die Rückliefervergütung berechnet. Alle Werte sind aus dem gewählten Energieversorger vorausgefüllt — du kannst sie anpassen.\n\n### Anlagenkategorie — gesetzliche Min./Max.\n\nDie Tabelle ist durch Bundesrecht festgelegt (EnV Art. 12 / StromVV Art. 4). Die Integration wendet die Werte automatisch an, basierend auf der gewählten *Anlagenkategorie*.\n\n| Kategorie | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW mit Eigenverbrauch | 6.00 | 10.96 |\n| ≤30 kW ohne Eigenverbrauch | 6.00 | 8.20 |\n| 30–<100 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW ohne Eigenverbrauch | 6.20 | 8.20 |\n| 100–<150 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW ohne Eigenverbrauch | 6.20 | 5.40 |\n| ≥150 kW mit Eigenverbrauch | — | 7.20 |\n| ≥150 kW ohne Eigenverbrauch | — | 5.40 |\n\n### HKN-Vergütung\n\nOpt-in bei den meisten Versorgern — wenn du keine HKN verkaufst, **muss der Wert 0.0 sein**. Wenn Basis + HKN die Anrechenbarkeitsgrenze übersteigt, reduziert der Versorger die HKN-Vergütung automatisch.",
+        "description": "Konfiguriere, wie dein Energieversorger die Rückliefervergütung berechnet. Alle Werte unten sind aus dem gewählten Versorger vorausgefüllt — du kannst sie anpassen.\n\n### Anlagenkategorie — gesetzliche Min./Max.\n\nDurch Bundesrecht festgelegt (EnV Art. 12 / StromVV Art. 4). Die Integration wendet Floor/Cap automatisch je nach Anlagenkategorie an.\n\n| Kategorie | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW mit Eigenverbrauch | 6.00 | 10.96 |\n| ≤30 kW ohne Eigenverbrauch | 6.00 | 8.20 |\n| 30–<100 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW ohne Eigenverbrauch | 6.20 | 8.20 |\n| 100–<150 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW ohne Eigenverbrauch | 6.20 | 5.40 |\n| ≥150 kW mit Eigenverbrauch | — | 7.20 |\n| ≥150 kW ohne Eigenverbrauch | — | 5.40 |\n\n### Installierte Leistung\n\nNur nötig bei **30–<150 kW mit Eigenverbrauch** (degressive Formel `180 ÷ kW`). Bei allen anderen Kategorien wird der Wert ignoriert — bei `0` lassen.\n\n### Basisvergütung\n\n- **Referenz-Marktpreis (BFE, quartalsweise)** — die meisten Versorger: *EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie*.\n- **Fixpreis (vom Versorger festgelegt)** — *ewz, IWB, SIG, AEW*.\n\n### Fixpreis\n\nNur relevant, wenn *Basisvergütung* = *Fixpreis*. Beispiele 2026 (Rp/kWh):\n\n- ewz: **12.91**\n- IWB: **14.00**\n- SIG: **10.96** (am Cap)\n- AEW: **8.20** (HKN inklusive)\n\n### HKN-Vergütung\n\nVergütung für **HKN** (*Herkunftsnachweise*). **Opt-in bei den meisten Versorgern** — wenn du keine HKN verkaufst, muss der Wert `0.0` sein. EKZ zahlt bis **3.00 Rp/kWh** nach Anmeldung auf myEKZ.\n\nWenn Basisvergütung + HKN-Vergütung die Anrechenbarkeitsgrenze übersteigt, reduziert der Versorger die HKN-Vergütung automatisch auf den Cap.\n\n### Abrechnungs-Rhythmus\n\nPassend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**",
         "data": {
           "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
@@ -31,12 +31,12 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Bestimmt Minimalvergütung + Anrechenbarkeitsgrenze automatisch. Siehe Tabelle oben.",
-          "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch (Formel 180 ÷ kW). Sonst bei 0 lassen.",
-          "basisverguetung": "Referenz-Marktpreis bei den meisten Versorgern; Fixpreis bei ewz / IWB / SIG / AEW.",
-          "hkn_verguetung_rp_kwh": "0.0 wenn keine HKN-Vergütung. Bei EKZ bis 3.00 Rp/kWh nach myEKZ-Opt-in.",
-          "fixpreis_rp_kwh": "Nur bei Basisvergütung 'Fixpreis'. 2026: ewz 12.91, IWB 14.00, SIG 10.96, AEW 8.20.",
-          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus. Die meisten Schweizer Versorger rechnen quartalsweise ab."
+          "anlagenkategorie": "Siehe Tabelle oben.",
+          "installierte_leistung_kw": "Nur bei 30–<150 kW mit Eigenverbrauch.",
+          "basisverguetung": "Siehe Abschnitt 'Basisvergütung' oben.",
+          "hkn_verguetung_rp_kwh": "0.0 wenn keine HKN-Opt-in.",
+          "fixpreis_rp_kwh": "Nur bei Basisvergütung 'Fixpreis'.",
+          "abrechnungs_rhythmus": "Meistens: Quartal."
         }
       },
       "entities": {
@@ -72,7 +72,7 @@
       },
       "tariff": {
         "title": "Tarifeinstellungen anpassen",
-        "description": "Tarifkonfiguration anpassen. Die hier geänderten Werte gelten für alle zukünftigen Re-Imports.\n\n### Anlagenkategorie — gesetzliche Min./Max.\n\nDurch Bundesrecht festgelegt (EnV Art. 12 / StromVV Art. 4) und automatisch je nach *Anlagenkategorie* angewendet.\n\n| Kategorie | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW mit Eigenverbrauch | 6.00 | 10.96 |\n| ≤30 kW ohne Eigenverbrauch | 6.00 | 8.20 |\n| 30–<100 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW ohne Eigenverbrauch | 6.20 | 8.20 |\n| 100–<150 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW ohne Eigenverbrauch | 6.20 | 5.40 |\n| ≥150 kW mit Eigenverbrauch | — | 7.20 |\n| ≥150 kW ohne Eigenverbrauch | — | 5.40 |",
+        "description": "Tarifkonfiguration anpassen. Die hier geänderten Werte gelten für alle zukünftigen Re-Imports.\n\n### Anlagenkategorie — gesetzliche Min./Max.\n\nDurch Bundesrecht festgelegt (EnV Art. 12 / StromVV Art. 4) und automatisch je nach Anlagenkategorie angewendet.\n\n| Kategorie | Min (Rp/kWh) | Max (Rp/kWh) |\n|---|---|---|\n| ≤30 kW mit Eigenverbrauch | 6.00 | 10.96 |\n| ≤30 kW ohne Eigenverbrauch | 6.00 | 8.20 |\n| 30–<100 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 10.96 |\n| 30–<100 kW ohne Eigenverbrauch | 6.20 | 8.20 |\n| 100–<150 kW mit Eigenverbrauch | 1.20–6.00 (180÷kW) | 7.20 |\n| 100–<150 kW ohne Eigenverbrauch | 6.20 | 5.40 |\n| ≥150 kW mit Eigenverbrauch | — | 7.20 |\n| ≥150 kW ohne Eigenverbrauch | — | 5.40 |\n\n### Installierte Leistung\n\nNur nötig bei **30–<150 kW mit Eigenverbrauch** (`180 ÷ kW` Formel). Sonst bei `0` lassen.\n\n### Basisvergütung\n\n- **Referenz-Marktpreis** — die meisten Versorger (*EKZ, BKW, CKW, SAK, SGSW, Groupe E, Romande Energie*).\n- **Fixpreis** — *ewz, IWB, SIG, AEW*.\n\n### Fixpreis\n\nNur bei Basisvergütung *Fixpreis*. Beispiele 2026 (Rp/kWh): ewz **12.91**, IWB **14.00**, SIG **10.96** (am Cap), AEW **8.20** (HKN inklusive).\n\n### HKN-Vergütung\n\nVergütung für **HKN** (*Herkunftsnachweise*). **Opt-in bei den meisten Versorgern** — wenn keine HKN verkauft, `0.0`. EKZ zahlt bis **3.00 Rp/kWh** nach myEKZ-Anmeldung. Cap greift automatisch, wenn Basis + HKN die Anrechenbarkeitsgrenze übersteigt.\n\n### Abrechnungs-Rhythmus\n\nPassend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.**",
         "data": {
           "anlagenkategorie": "Anlagenkategorie",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
@@ -82,12 +82,12 @@
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "anlagenkategorie": "Bestimmt Minimalvergütung + Anrechenbarkeitsgrenze automatisch. Siehe Tabelle oben.",
-          "installierte_leistung_kw": "Nur nötig bei 30–<150 kW mit Eigenverbrauch (Formel 180 ÷ kW).",
-          "basisverguetung": "Referenz-Marktpreis bei den meisten Versorgern; Fixpreis bei ewz / IWB / SIG / AEW.",
-          "hkn_verguetung_rp_kwh": "0.0 wenn keine HKN-Vergütung. Bei EKZ bis 3.00 Rp/kWh nach myEKZ-Opt-in.",
+          "anlagenkategorie": "Siehe Tabelle oben.",
+          "installierte_leistung_kw": "Nur bei 30–<150 kW mit Eigenverbrauch.",
+          "basisverguetung": "Siehe Abschnitt 'Basisvergütung' oben.",
+          "hkn_verguetung_rp_kwh": "0.0 wenn keine HKN-Opt-in.",
           "fixpreis_rp_kwh": "Nur bei Basisvergütung 'Fixpreis'.",
-          "abrechnungs_rhythmus": "Passend zum Rechnungsrhythmus deines Versorgers."
+          "abrechnungs_rhythmus": "Meistens: Quartal."
         }
       },
       "reimport_quarter": {
