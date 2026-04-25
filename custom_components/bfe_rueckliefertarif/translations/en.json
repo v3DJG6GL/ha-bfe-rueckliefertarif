@@ -118,7 +118,9 @@
     "error": {
       "kw_required_for_degressive": "Installed power (kW) is required for 30–<150 kW plants with self-consumption.",
       "fixpreis_required": "Fixed price must be greater than 0 when the base price is set to 'Fixed price'.",
-      "invalid_quarter": "Invalid format. Expected YYYYQN (e.g. 2026Q1)."
+      "invalid_quarter": "Invalid format. Expected YYYYQN (e.g. 2026Q1).",
+      "price_not_yet_published": "BFE has not yet published this quarter. Try again about 2 weeks after quarter end.",
+      "reimport_failed": "Re-import failed unexpectedly. Check Settings → System → Logs."
     }
   },
   "selector": {

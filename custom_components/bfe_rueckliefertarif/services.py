@@ -181,31 +181,71 @@ async def _handle_reimport_range(call: "ServiceCall") -> None:
         q = q.next()
 
 
-async def _handle_reimport_all_history(call: "ServiceCall") -> None:
-    """Re-import every quarter where both BFE data and export LTS are available.
+async def _reimport_all_history(hass: "HomeAssistant") -> dict:
+    """Re-import every quarter BFE has published. Returns a result summary.
 
-    Strategy: fetch quarterly CSV → iterate known quarters → attempt each import.
-    The export-data coverage check is implicit (hours outside coverage → kWh 0).
+    Result dict keys:
+    - ``available``: sorted list of all Quarters BFE has published
+    - ``imported``: list of Quarters successfully recomputed
+    - ``skipped``: list of Quarters skipped because BFE has not yet published them
+    - ``failed``: list of Quarters that errored unexpectedly
     """
     import aiohttp
 
     async with aiohttp.ClientSession() as session:
         quarterly = await fetch_quarterly(session)
+
+    imported: list = []
+    skipped: list = []
+    failed: list = []
     for q in sorted(quarterly.keys()):
         try:
-            await _reimport_quarter(call.hass, q)
+            await _reimport_quarter(hass, q)
+            imported.append(q)
         except PriceNotYetPublished as exc:
             _LOGGER.warning("Skipping %s: %s", q, exc)
+            skipped.append(q)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error("Failed importing %s: %s", q, exc)
+            failed.append(q)
+
+    return {
+        "available": sorted(quarterly.keys()),
+        "imported": imported,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
+async def _refresh_coordinator(hass: "HomeAssistant") -> dict:
+    """Trigger a fresh BFE poll via the coordinator. Returns ``{available, newly_imported}``.
+
+    The coordinator's ``_async_update_data`` fetches BFE prices and auto-imports
+    quarters whose price changed since the last successful import. We snapshot
+    its private ``_imported`` map before/after to report what was new this tick.
+    """
+    entries = hass.data.get(DOMAIN, {})
+    if not entries:
+        raise RuntimeError("BFE Rückliefertarif not configured")
+    entry_data = next(iter(entries.values()))
+    coordinator = entry_data.get("coordinator")
+    if coordinator is None:
+        raise RuntimeError("Coordinator not yet ready")
+
+    before = set(coordinator._imported.keys())
+    await coordinator.async_refresh()
+    after = set(coordinator._imported.keys())
+
+    return {
+        "available": sorted(coordinator.quarterly.keys()),
+        "newly_imported": sorted(after - before),
+    }
+
+
+async def _handle_reimport_all_history(call: "ServiceCall") -> None:
+    await _reimport_all_history(call.hass)
 
 
 async def _handle_refresh(call: "ServiceCall") -> None:
-    """Force-poll BFE now and re-import any newly-published quarter not yet covered.
-
-    Phase 4 wires this into the coordinator; for Phase 3 it behaves like reimport_all_history
-    but only imports quarters that haven't been imported at the currently-published price.
-    """
-    # v1: simplest implementation — same as reimport_all_history. Coordinator in Phase 4
-    # will gate this with a state-file check.
-    await _handle_reimport_all_history(call)
+    """Force the coordinator to poll BFE now (auto-imports newly-published quarters)."""
+    await _refresh_coordinator(call.hass)

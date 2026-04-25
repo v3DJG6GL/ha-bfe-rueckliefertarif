@@ -63,6 +63,10 @@ class _BaseButton(ButtonEntity):
         self._attr_translation_key = translation_key
 
 
+def _format_quarters(qs) -> str:
+    return ", ".join(str(q) for q in qs)
+
+
 class ReloadReferenzmarktpreiseButton(_BaseButton):
     def __init__(self, entry: "ConfigEntry", prefix: str) -> None:
         super().__init__(
@@ -73,10 +77,32 @@ class ReloadReferenzmarktpreiseButton(_BaseButton):
         )
 
     async def async_press(self) -> None:
-        await self.hass.services.async_call(DOMAIN, "refresh", blocking=True)
+        from .services import _refresh_coordinator
+
+        try:
+            result = await _refresh_coordinator(self.hass)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Refresh failed")
+            notify(
+                self.hass,
+                f"Fehler beim Aktualisieren: {exc}",
+                title="BFE Rückliefertarif",
+                notification_id=f"{DOMAIN}_{self._entry.entry_id}_refresh",
+            )
+            return
+
+        avail = result["available"]
+        new = result["newly_imported"]
+        lines = [f"{len(avail)} Quartale verfügbar"]
+        if avail:
+            lines[0] += f" (neuestes: {max(avail)})"
+        if new:
+            lines.append(f"Neu importiert: {_format_quarters(new)}")
+        else:
+            lines.append("Keine neuen Quartale seit letztem Import.")
         notify(
             self.hass,
-            "Referenz-Marktpreise aktualisiert.",
+            "\n".join(lines),
             title="BFE Rückliefertarif",
             notification_id=f"{DOMAIN}_{self._entry.entry_id}_refresh",
         )
@@ -137,12 +163,33 @@ class RecomputeHistorieButton(_BaseButton):
         )
 
     async def async_press(self) -> None:
-        await self.hass.services.async_call(
-            DOMAIN, "reimport_all_history", blocking=True
-        )
+        from .services import _reimport_all_history
+
+        try:
+            result = await _reimport_all_history(self.hass)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Reimport history failed")
+            notify(
+                self.hass,
+                f"Fehler beim Neuberechnen: {exc}",
+                title="BFE Rückliefertarif",
+                notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_history",
+            )
+            return
+
+        imported = result["imported"]
+        skipped = result["skipped"]
+        failed = result["failed"]
+        lines = [f"{len(imported)} Quartale neu berechnet"]
+        if imported:
+            lines[0] += f": {_format_quarters(imported)}"
+        if skipped:
+            lines.append(f"{len(skipped)} übersprungen (BFE noch nicht publiziert): {_format_quarters(skipped)}")
+        if failed:
+            lines.append(f"{len(failed)} Fehler — siehe Logs: {_format_quarters(failed)}")
         notify(
             self.hass,
-            "Rückliefervergütung für die gesamte Historie neu berechnet.",
+            "\n".join(lines),
             title="BFE Rückliefertarif",
             notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_history",
         )

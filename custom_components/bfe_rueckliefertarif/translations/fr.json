@@ -102,7 +102,9 @@
     "error": {
       "kw_required_for_degressive": "Puissance installée requise pour 30–<150 kW avec autoconsommation.",
       "fixpreis_required": "Le tarif fixe doit être > 0 quand la rétribution de base est 'Tarif fixe'.",
-      "invalid_quarter": "Format invalide. Attendu : AAAATN (ex. 2026Q1)."
+      "invalid_quarter": "Format invalide. Attendu : AAAATN (ex. 2026Q1).",
+      "price_not_yet_published": "Le BFE n'a pas encore publié ce trimestre. Réessayez environ 2 semaines après la fin du trimestre.",
+      "reimport_failed": "Échec inattendu du recalcul. Voir Paramètres → Système → Journaux."
     }
   },
   "selector": {

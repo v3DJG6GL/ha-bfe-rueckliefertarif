@@ -51,7 +51,13 @@ _PRESET_LEGACY_TO_NEW: dict[str, str] = {
 
 
 def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Build the tariff-step schema with optional pre-filled defaults."""
+    """Build the tariff-step schema with optional pre-filled defaults.
+
+    Field order is intentional: plant category → installed power →
+    base price (radio) → fixed price (number, conditional on base price) →
+    HKN payment → billing period. Fixed price sits next to the radio that
+    makes it conditional; HKN follows because it's an additive bonus.
+    """
     d = defaults or {}
     return vol.Schema(
         {
@@ -90,18 +96,6 @@ def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     mode=selector.SelectSelectorMode.LIST,
                 )
             ),
-            vol.Required(
-                CONF_HKN_VERGUETUNG_RP_KWH,
-                default=d.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=10,
-                    step=0.01,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="Rp/kWh",
-                )
-            ),
             vol.Optional(
                 CONF_FIXPREIS_RP_KWH,
                 default=d.get(CONF_FIXPREIS_RP_KWH, 0.0),
@@ -109,6 +103,18 @@ def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 selector.NumberSelectorConfig(
                     min=0,
                     max=30,
+                    step=0.01,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="Rp/kWh",
+                )
+            ),
+            vol.Required(
+                CONF_HKN_VERGUETUNG_RP_KWH,
+                default=d.get(CONF_HKN_VERGUETUNG_RP_KWH, 0.0),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=10,
                     step=0.01,
                     mode=selector.NumberSelectorMode.BOX,
                     unit_of_measurement="Rp/kWh",
@@ -318,29 +324,44 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     async def async_step_reimport_quarter(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
+        from homeassistant.components.persistent_notification import (
+            async_create as _notify,
+        )
+
+        from .bfe import PriceNotYetPublished
         from .quarters import Quarter
+        from .services import _reimport_quarter
 
         errors: dict[str, str] = {}
         if user_input is not None:
             quarter_str = (user_input.get("quarter") or "").strip()
             try:
-                Quarter.parse(quarter_str)
+                q = Quarter.parse(quarter_str)
             except ValueError:
                 errors["quarter"] = "invalid_quarter"
-            if not errors:
-                await self.hass.services.async_call(
-                    DOMAIN,
-                    "reimport_quarter",
-                    {"quarter": quarter_str},
-                    blocking=False,
-                )
-                return self.async_create_entry(title="", data={})
+                q = None
+            if q is not None:
+                try:
+                    await _reimport_quarter(self.hass, q)
+                except PriceNotYetPublished:
+                    errors["quarter"] = "price_not_yet_published"
+                except Exception:  # noqa: BLE001
+                    errors["base"] = "reimport_failed"
+                else:
+                    _notify(
+                        self.hass,
+                        f"Rückliefervergütung für {q} neu berechnet.",
+                        title="BFE Rückliefertarif",
+                        notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_reimport_specific",
+                    )
+                    return self.async_create_entry(title="", data={})
 
-        schema = vol.Schema(
-            {
-                vol.Required("quarter", default=user_input.get("quarter", "") if user_input else ""): str,
-            }
+        default = (
+            user_input.get("quarter", "")
+            if user_input
+            else ""
         )
+        schema = vol.Schema({vol.Required("quarter", default=default): str})
         return self.async_show_form(
             step_id="reimport_quarter",
             data_schema=schema,

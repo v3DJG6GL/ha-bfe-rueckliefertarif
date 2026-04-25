@@ -118,7 +118,9 @@
     "error": {
       "kw_required_for_degressive": "Installierte Leistung (kW) ist bei 30–<150 kW mit Eigenverbrauch Pflicht.",
       "fixpreis_required": "Fixpreis muss > 0 sein, wenn Basisvergütung 'Fixpreis' ist.",
-      "invalid_quarter": "Ungültiges Format. Erwartet JahrQQuartal (z. B. 2026Q1)."
+      "invalid_quarter": "Ungültiges Format. Erwartet JahrQQuartal (z. B. 2026Q1).",
+      "price_not_yet_published": "BFE hat dieses Quartal noch nicht publiziert. Bitte ca. 2 Wochen nach Quartalsende erneut versuchen.",
+      "reimport_failed": "Neuberechnung fehlgeschlagen. Siehe Einstellungen → System → Logs."
     }
   },
   "selector": {
