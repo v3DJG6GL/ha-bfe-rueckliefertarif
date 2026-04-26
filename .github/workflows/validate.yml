@@ -14,7 +14,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # 3.13 because pytest-homeassistant-custom-component releases that
+          # bundle HA >= 2024.11 (needed for OptionsFlowWithReload) and
+          # match HACS's HA min (2025.1.0) only have 3.13+ wheels. On 3.12
+          # pip falls back to the pre-2024.11 0.13.205 release.
+          python-version: "3.13"
       - name: Install dependencies
         run: |
           python -m pip install -U pip

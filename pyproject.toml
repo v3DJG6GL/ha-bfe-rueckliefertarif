@@ -1,6 +1,6 @@
 [project]
 name = "bfe-rueckliefertarif"
-version = "0.8.3"
+version = "0.8.4"
 description = "Home Assistant integration for Swiss PV Rückliefertarif (Art. 15 EnFV)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -11,7 +11,9 @@ authors = [{ name = "bfe-rueckliefertarif contributors" }]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
-    "pytest-homeassistant-custom-component>=0.13",
+    # >=0.13.243 bundles HA >= 2025.1.0 (HACS min); also gives us
+    # OptionsFlowWithReload (HA 2024.11+).
+    "pytest-homeassistant-custom-component>=0.13.243",
     "aioresponses>=0.7",
     "jsonschema>=4",
 ]
