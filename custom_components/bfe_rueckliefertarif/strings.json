@@ -127,7 +127,8 @@
       "invalid_quarter": "Invalid format. Expected YYYYQN (e.g. 2026Q1).",
       "invalid_valid_from": "Invalid date or quarter — expected YYYY-MM-DD (e.g. 2024-08-15) or YYYYQN (e.g. 2024Q3).",
       "price_not_yet_published": "SFOE has not yet published this quarter. Try again about 2 weeks after quarter end.",
-      "reimport_failed": "Re-import failed unexpectedly. Check Settings → System → Logs."
+      "reimport_failed": "Re-import failed unexpectedly. Check Settings → System → Logs.",
+      "cannot_delete_last_record": "Cannot delete the only history record — at least one must remain. Edit it instead."
     }
   },
   "selector": {

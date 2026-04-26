@@ -33,7 +33,11 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool
     # v0.8.0: synthesize an initial sentinel record on first setup so the
     # per-quarter config resolver always finds a covering entry. Also drops
     # legacy v0.7-era history keys (clean break, no migration).
-    if OPT_CONFIG_HISTORY not in (entry.options or {}):
+    # Falsy guard (not just `not in`): also re-seeds the sentinel when
+    # OPT_CONFIG_HISTORY exists but is an empty list — that state could
+    # otherwise leak in via a deleted-last-record scenario and silently
+    # break per-quarter resolution.
+    if not (entry.options or {}).get(OPT_CONFIG_HISTORY):
         new_options = {**(entry.options or {})}
         new_options.pop("plant_history", None)
         new_options.pop("hkn_optin_history", None)

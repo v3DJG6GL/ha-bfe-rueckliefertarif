@@ -14,8 +14,10 @@ from __future__ import annotations
 from datetime import date
 
 from custom_components.bfe_rueckliefertarif.config_flow import (
+    _append_history_record,
     _apply_config_change,
     _format_config_summary,
+    _make_sentinel_record,
     _normalize_history,
     _parse_valid_from,
     _sync_entry_data_from_history,
@@ -81,7 +83,11 @@ class TestResolveConfigAt:
         assert r[CONF_INSTALLIERTE_LEISTUNG_KW] == 35.0
         assert r[CONF_ABRECHNUNGS_RHYTHMUS] == ABRECHNUNGS_RHYTHMUS_MONAT
 
-    def test_predating_first_record_returns_first_record(self):
+    def test_predating_first_record_falls_back_to_entry_data(self):
+        # When at_date predates every record's valid_from, the resolver
+        # MUST NOT extrapolate the newer tariff backward in time. It falls
+        # back to entry.data (today's open-ended config) and logs a warning
+        # so the missing-sentinel state is observable.
         opts = {
             OPT_CONFIG_HISTORY: [
                 {"valid_from": "2025-04-01", "valid_to": None,
@@ -89,9 +95,7 @@ class TestResolveConfigAt:
             ]
         }
         r = _resolve_config_at(opts, date(2024, 1, 1), _cfg(utility="other"))
-        # First record covers everything before its valid_from too — best guess.
-        assert r[CONF_ENERGIEVERSORGER] == "ewz"
-        assert r[CONF_HKN_AKTIVIERT] is True
+        assert r[CONF_ENERGIEVERSORGER] == "other"
 
     def test_boundary_valid_from_belongs_to_new_record(self):
         opts = {
@@ -107,6 +111,62 @@ class TestResolveConfigAt:
             CONF_ENERGIEVERSORGER] == "ewz"
         assert _resolve_config_at(opts, date(2025, 3, 31), _cfg())[
             CONF_ENERGIEVERSORGER] == "ekz"
+
+
+class TestMakeSentinelRecord:
+    def test_uses_entry_data(self):
+        rec = _make_sentinel_record(_cfg(utility="bkw", kw=12.5, hkn=True))
+        assert rec["valid_from"] == "1970-01-01"
+        assert rec["valid_to"] is None
+        assert rec["config"][CONF_ENERGIEVERSORGER] == "bkw"
+        assert rec["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 12.5
+        assert rec["config"][CONF_HKN_AKTIVIERT] is True
+
+
+class TestAppendHistoryRecord:
+    def test_seeds_sentinel_when_history_is_empty(self):
+        new_rec = {
+            "valid_from": "2026-04-01",
+            "valid_to": None,
+            "config": _cfg(utility="age_sa", kw=105.0),
+        }
+        out = _append_history_record(
+            [], new_rec, _cfg(utility="ekz", kw=10.0)
+        )
+        # Sentinel auto-prepended so past quarters resolve to entry.data,
+        # not to the just-added 2026 record.
+        assert len(out) == 2
+        assert out[0]["valid_from"] == "1970-01-01"
+        assert out[0]["config"][CONF_ENERGIEVERSORGER] == "ekz"
+        assert out[1]["valid_from"] == "2026-04-01"
+        assert out[1]["config"][CONF_ENERGIEVERSORGER] == "age_sa"
+
+    def test_appends_without_sentinel_when_history_has_records(self):
+        existing = [
+            {"valid_from": "1970-01-01", "valid_to": None,
+             "config": _cfg(utility="ekz")},
+        ]
+        new_rec = {
+            "valid_from": "2026-04-01",
+            "valid_to": None,
+            "config": _cfg(utility="age_sa"),
+        }
+        out = _append_history_record(existing, new_rec, _cfg(utility="other"))
+        # Existing sentinel preserved as-is, no second one prepended.
+        assert len(out) == 2
+        assert out[0]["config"][CONF_ENERGIEVERSORGER] == "ekz"
+        assert out[1]["config"][CONF_ENERGIEVERSORGER] == "age_sa"
+
+    def test_input_history_not_mutated(self):
+        existing = [
+            {"valid_from": "1970-01-01", "valid_to": None, "config": _cfg()},
+        ]
+        _append_history_record(
+            existing,
+            {"valid_from": "2026-04-01", "valid_to": None, "config": _cfg()},
+            _cfg(),
+        )
+        assert len(existing) == 1
 
 
 class TestApplyConfigChange:

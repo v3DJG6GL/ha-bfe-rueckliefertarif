@@ -137,10 +137,12 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
     """Pick the full config dict active at ``at_date``.
 
     Reads ``OPT_CONFIG_HISTORY``; falls back to ``fallback_cfg`` (entry.data)
-    only if the history list is empty (shouldn't happen post-setup since
-    ``async_setup_entry`` synthesizes an initial sentinel record). When
-    ``at_date`` predates the first record, returns the first record's config
-    (best guess: that's what was used before any recorded change).
+    when the history list is empty (shouldn't happen post-setup since
+    ``async_setup_entry`` synthesizes an initial sentinel record) OR when
+    ``at_date`` predates every record's ``valid_from``. The latter signals
+    the 1970 sentinel went missing — refuse to extrapolate the *current*
+    open-ended tariff backward in time, fall back to ``entry.data``, and
+    log a warning so the degenerate state is observable.
     """
     history = options.get(OPT_CONFIG_HISTORY) or []
     if not history:
@@ -148,7 +150,13 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
     rec = find_active(history, at_date)
     if rec is not None:
         return rec["config"]
-    return history[0]["config"]
+    _LOGGER.warning(
+        "config-history: %s predates earliest record (%s); using entry.data "
+        "fallback. This usually means the 1970 sentinel is missing — check "
+        "OPT_CONFIG_HISTORY in the config entry options.",
+        at_date, history[0]["valid_from"],
+    )
+    return {k: fallback_cfg.get(k) for k in CONFIG_HISTORY_FIELDS}
 
 
 async def _reimport_quarter(

@@ -13,11 +13,14 @@ Plus an Options Flow that re-exposes the tariff step.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers import selector
+
+_LOGGER = logging.getLogger(__name__)
 
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
@@ -185,6 +188,28 @@ def _parse_valid_from(s: str) -> str:
         return date(q.year, q.start_month(), 1).isoformat()
     # Fall back to ISO date.
     return date.fromisoformat(s).isoformat()
+
+
+def _make_sentinel_record(entry_data: dict) -> dict:
+    """Synthesize the open-ended 1970 sentinel record from entry.data."""
+    return {
+        "valid_from": "1970-01-01",
+        "valid_to": None,
+        "config": {k: entry_data.get(k) for k in CONFIG_HISTORY_FIELDS},
+    }
+
+
+def _append_history_record(
+    history: list[dict], new_record: dict, entry_data: dict
+) -> list[dict]:
+    """Append a new record to history. If history is empty, prepend the 1970
+    sentinel first so per-quarter resolution has a fallback for any quarter
+    predating ``new_record["valid_from"]``."""
+    out = list(history)
+    if not out:
+        out.append(_make_sentinel_record(entry_data))
+    out.append(new_record)
+    return out
 
 
 def _normalize_history(records: list[dict]) -> list[dict]:
@@ -432,6 +457,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        _LOGGER.debug("manage_history: %d record(s) read from options", len(history))
         menu: dict[str, str] = {}
         for i, rec in enumerate(history):
             label = (
@@ -483,26 +509,35 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     ) -> "FlowResult":
         """Show the edit form for one history record. ``idx=None`` → add new."""
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        _LOGGER.debug(
+            "_edit_row entry: idx=%s, %d record(s) currently in OPT_CONFIG_HISTORY",
+            idx, len(history),
+        )
         is_edit = idx is not None and 0 <= idx < len(history)
         existing = history[idx] if is_edit else None
 
         errors: dict[str, str] = {}
         if user_input is not None:
-            # Delete branch (only when editing).
+            # Delete branch (only when editing). Refuse to delete the last
+            # record so the sentinel is always present — without it the
+            # per-quarter resolver loses its fallback for past dates.
             if is_edit and bool(user_input.get("delete")):
-                history.pop(idx)
-                normalized = _normalize_history(history)
-                new_options = {
-                    **dict(self.config_entry.options or {}),
-                    OPT_CONFIG_HISTORY: normalized,
-                }
-                new_data = _sync_entry_data_from_history(
-                    normalized, dict(self.config_entry.data)
-                )
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data, options=new_options
-                )
-                return await self.async_step_manage_history()
+                if len(history) <= 1:
+                    errors["base"] = "cannot_delete_last_record"
+                else:
+                    history.pop(idx)
+                    normalized = _normalize_history(history)
+                    new_options = {
+                        **dict(self.config_entry.options or {}),
+                        OPT_CONFIG_HISTORY: normalized,
+                    }
+                    new_data = _sync_entry_data_from_history(
+                        normalized, dict(self.config_entry.data)
+                    )
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry, data=new_data, options=new_options
+                    )
+                    return await self.async_step_manage_history()
 
             # Save / overwrite branch.
             try:
@@ -532,12 +567,20 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
                         "config": new_config,
                     }
                 else:
-                    history.append({
-                        "valid_from": valid_from,
-                        "valid_to": None,
-                        "config": new_config,
-                    })
+                    history = _append_history_record(
+                        history,
+                        {
+                            "valid_from": valid_from,
+                            "valid_to": None,
+                            "config": new_config,
+                        },
+                        dict(self.config_entry.data),
+                    )
                 normalized = _normalize_history(history)
+                _LOGGER.debug(
+                    "_edit_row save: writing %d record(s) to OPT_CONFIG_HISTORY",
+                    len(normalized),
+                )
                 new_options = {
                     **dict(self.config_entry.options or {}),
                     OPT_CONFIG_HISTORY: normalized,
