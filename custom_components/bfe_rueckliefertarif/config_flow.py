@@ -63,7 +63,7 @@ _OPENDATA_URLS: dict[str, str] = {
 }
 # Fedlex (Swiss federal law portal) — deep-linked to the relevant article:
 # - EnV SR 730.01 (ELI 2017/763), Art. 12 Abs. 1bis: Mindestvergütung floors.
-# - StromVV SR 734.71 (ELI 2008/226), Art. 4 Abs. 3 Bst. e: cap formula.
+# - StromVV SR 734.71 (ELI 2008/226), Art. 4 Abs. 3 Bst. e: cap mechanism.
 # Both in force 1.1.2026 via AS 2025 138 / AS 2025 139.
 _FEDLEX_ENV_URLS: dict[str, str] = {
     "de": "https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12",

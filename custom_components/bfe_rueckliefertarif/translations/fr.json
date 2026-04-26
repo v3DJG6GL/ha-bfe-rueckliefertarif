@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "BFE Rückliefertarif — Choisir le fournisseur",
-        "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. La *formule* du plafond provient de [OApEl art. 4 al. 3 let. e]({stromvv_url}), en vigueur depuis le 1.1.2026.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)"
+        "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. Le *mécanisme* du plafond découle de [OApEl art. 4 al. 3 let. e]({stromvv_url}); les valeurs numériques sont des dérivations publiées par les fournisseurs.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)"
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",

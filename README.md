@@ -13,7 +13,7 @@ Diese Integration schreibt diese Langzeitstatistik nach jeder BFE-Publikation **
 - Vollständige Umsetzung des ab 1.1.2026 gültigen gesetzlichen Tarifgefüges:
   - **Basisvergütung** = BFE Referenz-Marktpreis (EnG Art. 15, EnFV Art. 15)
   - **Mindestvergütung** nach Segment (EnV Art. 12 Abs. 1bis): 6.00 Rp/kWh bis 30 kW; degressive Formel `180 ÷ kW` bei 30–<150 kW mit Eigenverbrauch; 6.20 Rp/kWh ohne Eigenverbrauch; keine Mindestvergütung ab 150 kW
-  - **Anrechenbarkeitsgrenze** (StromVV Art. 4a 4-Tier-Tabelle): 10.96 / 8.20 / 7.20 / 5.40 Rp/kWh je nach Grösse × Eigenverbrauch
+  - **Anrechenbarkeitsgrenze** (in Anlehnung an StromVV Art. 4 Abs. 3 Bst. e): 10.96 / 8.20 / 7.20 / 5.40 Rp/kWh je nach Grösse × Eigenverbrauch
   - **HKN-Vergütung**: nutzerkonfigurierbar
 - **Zwei Basismodi**: BFE-RMP-Durchreichung (EKZ, BKW, CKW, Groupe E, Romande Energie, SAK, SGSW) und Fixpreis (ewz, IWB, SIG, AEW) — plus Custom.
 - **Zwei Abrechnungsmodi**: quartalsweise (Standard für die meisten Kleinverbraucher) und monatlich (mit M3-Korrektur gemäss EKZ-Logik) — beide erfüllen garantiert `Σ(Kompensation) = Q_kWh × Q_Rate` pro Quartal.

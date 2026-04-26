@@ -10,12 +10,10 @@ Legal references (all in force since 1.1.2026 via the Mantelerlass / Stromgesetz
     Basisvergütung = BFE Referenz-Marktpreis (quartalsweise publiziert).
 - EnG Art. 15 Abs. 1bis + EnV Art. 12 Abs. 1bis Bst. a/b/c/d (SR 730.01, AS 2025 138):
     Mindestvergütung floor — 6.00 / 6.20 / 180/kW / 12.00 Rp/kWh.
-- StromVV Art. 4 Abs. 3 Bst. e i.V.m. EnG Art. 15 Abs. 1 (SR 734.71, AS 2025 139):
-    Anrechenbarkeitsgrenze — cost-recovery ceiling on what utilities may charge
-    captive customers via Grundversorgungstarif. Whether a utility *enforces*
-    this ceiling as a payment cap on producers is a per-utility commercial
-    choice (only EKZ, Groupe E, Primeo do — IWB pays 12.95 Rp/kWh, well above
-    the 10.96 small-plant ceiling).
+- StromVV Art. 4 Abs. 3 Bst. e (SR 734.71): cap mechanism. The numerical
+    ceilings (10.96 / 8.20 / 7.20 / 5.40) are utility-published derivations —
+    only EKZ, Groupe E, Primeo enforce them as a payment cap on producers;
+    others pay above (e.g. IWB 12.95 Rp/kWh).
 """
 
 from __future__ import annotations
@@ -27,11 +25,10 @@ from .tariffs_db import evaluate_federal_floor, find_rule
 
 _ZURICH = ZoneInfo("Europe/Zurich")
 
-# Default cap_rules — StromVV Art. 4 Abs. 3 Bst. e cost-recovery ceiling per
-# EKZ's published derivation (the reference Gestehungskosten are nationally
-# uniform, so the cap-enforcing utilities — EKZ, Groupe E, Primeo — converge
-# on these numbers). Kept as a constant so tests and edge-case callers have a
-# canonical default to feed into anrechenbarkeitsgrenze_rp_kwh().
+# Default cap_rules — utility-published cost-recovery ceilings (EKZ, Groupe E,
+# Primeo converge on these 4 values). Cap mechanism per StromVV Art. 4 Abs. 3
+# Bst. e. Kept as a constant so tests and edge-case callers have a canonical
+# default to feed into anrechenbarkeitsgrenze_rp_kwh().
 DEFAULT_CAP_RULES: list[dict] = [
     {"kw_min": 0,   "kw_max": 100,  "self_consumption": True,  "cap_rp_kwh": 10.96},
     {"kw_min": 0,   "kw_max": 100,  "self_consumption": False, "cap_rp_kwh":  8.20},
@@ -57,13 +54,12 @@ def mindestverguetung_rp_kwh(
 def anrechenbarkeitsgrenze_rp_kwh(
     cap_rules: list[dict], kw: float, eigenverbrauch: bool
 ) -> float | None:
-    """Anrechenbarkeitsgrenze cost-recovery ceiling in Rp/kWh.
+    """Cost-recovery ceiling (Anrechenbarkeitsgrenze) in Rp/kWh.
 
-    Legal source: StromVV Art. 4 Abs. 3 Bst. e (SR 734.71, AS 2025 139,
-    in force since 1.1.2026). The article mandates the *formula* (max
-    chargeback = Gestehungskosten of a reference plant minus subsidies);
-    per-utility cap_rules carry the values that utility's published
-    derivation produces. Returns None when no cap rule covers (kw, ev).
+    Cap mechanism per StromVV Art. 4 Abs. 3 Bst. e (SR 734.71). The numerical
+    values come from utility-published derivations (EKZ, Groupe E, Primeo);
+    not all are codified in federal text. Returns None when no cap rule
+    covers (kw, ev).
     """
     rule = find_rule(cap_rules, kw, eigenverbrauch)
     return float(rule["cap_rp_kwh"]) if rule is not None else None
@@ -109,7 +105,7 @@ def effective_rp_kwh(
     ``anrechenbarkeitsgrenze_rp_kwh`` against the utility's cap_rules).
 
     The federal Mindestvergütung floor (EnV Art. 12 Abs. 1bis) is always
-    applied to the base. Whether the Anrechenbarkeitsgrenze (StromVV Art. 4
+    applied to the base. Whether the cost-recovery ceiling (per StromVV Art. 4
     Abs. 3 Bst. e) acts as a payment cap is a per-utility commercial choice —
     most Swiss utilities pay base + HKN additively without enforcing the cap;
     only EKZ, Groupe E, and Primeo apply it strictly per their published
