@@ -240,14 +240,21 @@ async def _reimport_quarter(
     _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg)
 
 
-def _aggregate_by_period(records, rhythm: str | None) -> list[dict]:
+def _aggregate_by_period(
+    records, rhythm: str | None, intended_hkn_rp_kwh: float | None = None
+) -> list[dict]:
     """Bucket per-hour records by Zurich-local period. Pure function.
 
     ``rhythm == "quartal"`` → bucket key ``YYYYQN`` (e.g. ``2026Q1``).
     Anything else (including ``"monat"`` and ``None``) → bucket key
     ``YYYY-MM``. Avg rates are kWh-weighted; ``None`` for zero-export
     periods. The Base/HKN columns decompose the total (``base + hkn = total``
-    within rounding) so the user can see what the HKN opt-in contributed.
+    within rounding).
+
+    ``intended_hkn_rp_kwh`` (when given) is stored per-period so the renderer
+    can detect cap-forfeiture by comparing applied (kWh-weighted avg) against
+    the intended utility-published rate that was active when the records were
+    computed.
     """
     from zoneinfo import ZoneInfo
 
@@ -288,6 +295,11 @@ def _aggregate_by_period(records, rhythm: str | None) -> list[dict]:
                 "rate_rp_kwh_avg": round(avg_rate, 4) if avg_rate is not None else None,
                 "base_rp_kwh_avg": round(avg_base, 4) if avg_base is not None else None,
                 "hkn_rp_kwh_avg": round(avg_hkn, 4) if avg_hkn is not None else None,
+                "intended_hkn_rp_kwh": (
+                    round(intended_hkn_rp_kwh, 4)
+                    if intended_hkn_rp_kwh is not None
+                    else None
+                ),
             }
         )
     return out
@@ -348,7 +360,10 @@ def _record_snapshot(
         "cap_applied": bool(cap_applied),
         "total_kwh": round(total_kwh, 3),
         "total_chf": round(total_chf, 4),
-        "periods": _aggregate_by_period(plan.records, billing),
+        "periods": _aggregate_by_period(
+            plan.records, billing,
+            intended_hkn_rp_kwh=tariff_cfg.hkn_rp_kwh_resolved,
+        ),
         "utility_key": rt.utility_key,
         "base_model": rt.base_model,
         "billing": billing,
@@ -578,6 +593,7 @@ class _RecomputeReportRow:
     rate_rp_kwh_avg: float | None
     base_rp_kwh_avg: float | None
     hkn_rp_kwh_avg: float | None
+    intended_hkn_rp_kwh: float | None
     total_kwh: float | None
     total_chf: float | None
 
@@ -619,6 +635,7 @@ def _build_recompute_report(
         "floor_label": rt.federal_floor_label,
         "floor_rp_kwh": rt.federal_floor_rp_kwh,
         "cap_mode": rt.cap_mode,
+        "cap_rp_kwh": rt.cap_rp_kwh,
         "tariffs_version": rt.tariffs_json_version,
         "tariffs_source": rt.tariffs_json_source,
     }
@@ -639,6 +656,7 @@ def _build_recompute_report(
                         rate_rp_kwh_avg=p.get("rate_rp_kwh_avg"),
                         base_rp_kwh_avg=p.get("base_rp_kwh_avg"),
                         hkn_rp_kwh_avg=p.get("hkn_rp_kwh_avg"),
+                        intended_hkn_rp_kwh=p.get("intended_hkn_rp_kwh"),
                         total_kwh=p.get("kwh"),
                         total_chf=p.get("chf"),
                     )
@@ -655,11 +673,19 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     """Pure function: report → ``(title, markdown_body)``. Easy to unit-test."""
     n_periods = len(report.rows)
     n_q = report.quarters_recomputed
-    if n_q == 1:
+
+    def _plural(n: int, singular: str, plural: str) -> str:
+        return singular if n == 1 else plural
+
+    if n_q == 1 and n_periods == 1:
+        title = "Tariff recomputed — 1 period"
+    elif n_q == 1:
         title = f"Tariff recomputed — 1 quarter ({n_periods} periods)"
     else:
         title = (
-            f"Tariff history recomputed — {n_periods} periods across {n_q} quarters"
+            f"Tariff history recomputed — {n_periods} "
+            f"{_plural(n_periods, 'period', 'periods')} across {n_q} "
+            f"{_plural(n_q, 'quarter', 'quarters')}"
         )
 
     c = report.config
@@ -685,10 +711,16 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         lines.append(
             f"- **Federal floor (Mindestvergütung):** {c['floor_label']}{suffix}"
         )
-    lines.append(
-        "- **Cap mode (Anrechenbarkeitsgrenze):** "
-        + ("Active" if c["cap_mode"] else "Off")
-    )
+    if c["cap_mode"]:
+        cap_v = c.get("cap_rp_kwh")
+        cap_str = f"{cap_v:.2f} Rp/kWh" if cap_v is not None else "n/a"
+        ev_str = "Yes" if c["eigenverbrauch"] else "No"
+        lines.append(
+            f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — current cap "
+            f"{cap_str} ({c['kw']:.1f} kW, EV={ev_str})"
+        )
+    else:
+        lines.append("- **Cap mode (Anrechenbarkeitsgrenze):** Off")
     lines.append(
         f"- **Tariff data:** v{c['tariffs_version']} ({c['tariffs_source']})"
     )
@@ -703,28 +735,57 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     else:
         shown = report.rows
         elided = 0
-    lines.append(
-        "| Period | Base (Rp/kWh) | HKN (Rp/kWh) | Total (Rp/kWh) | "
-        "kWh exported | CHF |"
-    )
+
+    lines.append("_Rates in Rp/kWh; energy in kWh; CHF totals._")
+    lines.append("")
+    lines.append("| Period | Base | HKN | Total | kWh | CHF |")
     lines.append("|---|---|---|---|---|---|")
+
+    forfeit_rows: list[_RecomputeReportRow] = []
     for r in shown:
-        base = f"{r.base_rp_kwh_avg:.4f}" if r.base_rp_kwh_avg is not None else "—"
-        hkn = f"{r.hkn_rp_kwh_avg:.4f}" if r.hkn_rp_kwh_avg is not None else "—"
-        rate = f"{r.rate_rp_kwh_avg:.4f}" if r.rate_rp_kwh_avg is not None else "—"
+        base = f"{r.base_rp_kwh_avg:.3f}" if r.base_rp_kwh_avg is not None else "—"
+        # HKN cell: when applied < intended (cap forfeited), show
+        # ``applied / intended`` so the user sees what was published vs paid.
+        intended = r.intended_hkn_rp_kwh
+        applied = r.hkn_rp_kwh_avg
+        is_forfeit = (
+            intended is not None
+            and intended > 0
+            and applied is not None
+            and applied < intended - 1e-4
+        )
+        if applied is None:
+            hkn = "—"
+        elif is_forfeit:
+            hkn = f"{applied:.3f} / {intended:.2f}"
+            forfeit_rows.append(r)
+        else:
+            hkn = f"{applied:.3f}"
+        rate = f"{r.rate_rp_kwh_avg:.3f}" if r.rate_rp_kwh_avg is not None else "—"
         kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
         chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
         lines.append(f"| {r.period} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
     if elided:
         lines.append("")
         lines.append(f"_{elided} older period(s) not shown — see logs._")
+    if forfeit_rows:
+        n_f = len(forfeit_rows)
+        published = c.get("hkn_rp_kwh")
+        published_str = f"{published:.2f} Rp/kWh" if published is not None else "n/a"
+        lines.append("")
+        lines.append(
+            f"_ℹ️ HKN was reduced or forfeited in {n_f} "
+            f"{_plural(n_f, 'period', 'periods')} (cell shows "
+            "`applied / published`) because base + HKN exceeded the "
+            f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
+        )
     if n_q > 1:
         total_kwh = sum(r.total_kwh or 0 for r in report.rows)
         total_chf = sum(r.total_chf or 0 for r in report.rows)
         lines.append("")
         lines.append(
-            f"**Totals:** {n_periods} periods · {total_kwh:,.2f} kWh · "
-            f"{total_chf:,.2f} CHF."
+            f"**Totals:** {n_periods} {_plural(n_periods, 'period', 'periods')} · "
+            f"{total_kwh:,.2f} kWh · {total_chf:,.2f} CHF."
         )
     lines.append("")
     lines.append("_For per-hour inspection, see `tools/verify_quarters.sql`._")
