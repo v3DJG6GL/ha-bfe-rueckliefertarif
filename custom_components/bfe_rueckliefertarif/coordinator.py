@@ -201,11 +201,17 @@ class BfeCoordinator(DataUpdateCoordinator):
         }
 
     async def _auto_import_newly_published(self) -> None:
-        """Detect quarters in BFE data that aren't imported yet or were imported at a different price.
+        """Detect quarters needing reimport — BFE-price changes OR config drift.
+
+        v0.7: extended from "BFE-price-only" to also reimport when the
+        snapshot's resolved config (utility, kW, EV, HKN opt-in,
+        tariffs.json version) differs from what the integration would
+        resolve today. So a kW change in the options flow now triggers
+        retroactive recompute on the next coordinator refresh.
 
         ``_reimport_quarter`` updates ``self._imported[key]`` itself with the
-        full snapshot (Phase 4), so this just drives the loop and skips
-        quarters that are already imported at the current price.
+        full snapshot, so this just drives the loop and skips quarters whose
+        snapshot already matches the current resolved config.
 
         Quarters BFE has published but the bundled tariff database doesn't
         cover (e.g. pre-2026 dates while v0.5 ships only 2026 utility data)
@@ -213,17 +219,28 @@ class BfeCoordinator(DataUpdateCoordinator):
         of one warning per skipped quarter. Populating older years is a
         community-PR effort against the bfe-tariffs-data companion repo.
         Genuine errors still surface as warnings.
+
+        After the loop, any quarters that were actually reimported get
+        summarized in a single rich notification card (utility, model,
+        kW/EV/HKN/billing, plus a per-month results table).
         """
-        from .services import _reimport_quarter
+        from .services import (
+            _build_recompute_report,
+            _notify_recompute,
+            _reimport_quarter,
+        )
 
         no_data_skipped: list[str] = []
+        reimported: list[Quarter] = []
+
         for q, price in sorted(self.quarterly.items()):
             key = str(q)
             prior = self._imported.get(key)
-            if prior and prior.get("q_price_chf_mwh") == price.chf_per_mwh:
+            if prior and not self._snapshot_is_stale(prior, q, price):
                 continue
             try:
                 await _reimport_quarter(self.hass, q)
+                reimported.append(q)
             except LookupError as exc:
                 # No tariff data covering this date — expected for pre-2026
                 # quarters. Surface via a persistent notification below.
@@ -233,6 +250,50 @@ class BfeCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
 
         self._notify_skipped_quarters(no_data_skipped)
+        if reimported:
+            report = _build_recompute_report(self.hass, reimported)
+            _notify_recompute(self.hass, self.entry.entry_id, report)
+
+    def _snapshot_is_stale(
+        self, prior: dict, q: Quarter, price: BfePrice
+    ) -> bool:
+        """True when ``prior`` (a stored ``_imported[key]``) doesn't match the
+        current resolved config for quarter ``q`` or the current BFE price.
+
+        Honors per-customer history: ``_cfg_for_entry(for_quarter=q)`` resolves
+        the kW / EV / HKN-opt-in active at the start of ``q`` per
+        ``plant_history`` and ``hkn_optin_history``, NOT today's
+        ``entry.data``. So a 2026 kW change does not mark Q1 2025 stale.
+
+        ``tariffs_json_source`` (bundled vs remote) is intentionally ignored
+        — only ``tariffs_json_version`` bumps trigger a rewrite. Bundled→
+        remote on the same version is a transparent transition.
+        """
+        if prior.get("q_price_chf_mwh") != price.chf_per_mwh:
+            return True
+        snap = prior.get("snapshot") or {}
+        if not snap:
+            return True
+
+        from .services import _cfg_for_entry
+
+        try:
+            _cfg, tariff_cfg = _cfg_for_entry(self.hass, for_quarter=q)
+        except (RuntimeError, LookupError):
+            # Config not available yet — let the normal error path handle it.
+            return False
+        rt = tariff_cfg.resolved
+        if snap.get("utility_key") != rt.utility_key:
+            return True
+        if snap.get("kw") != tariff_cfg.installierte_leistung_kw:
+            return True
+        if snap.get("eigenverbrauch_aktiviert") != tariff_cfg.eigenverbrauch_aktiviert:
+            return True
+        if snap.get("hkn_optin") != tariff_cfg.hkn_aktiviert:
+            return True
+        if snap.get("tariffs_json_version") != rt.tariffs_json_version:
+            return True
+        return False
 
     def _notify_skipped_quarters(self, skipped: list[str]) -> None:
         """Summarize skipped quarters in a single persistent UI notification.

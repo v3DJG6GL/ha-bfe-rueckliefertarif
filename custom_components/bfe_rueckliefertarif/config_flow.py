@@ -400,13 +400,13 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     async def async_step_reimport_quarter(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
-        from homeassistant.components.persistent_notification import (
-            async_create as _notify,
-        )
-
         from .bfe import PriceNotYetPublished
         from .quarters import Quarter
-        from .services import _reimport_quarter
+        from .services import (
+            _build_recompute_report,
+            _notify_recompute,
+            _reimport_quarter,
+        )
 
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -424,12 +424,8 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
                 except Exception:  # noqa: BLE001
                     errors["base"] = "reimport_failed"
                 else:
-                    _notify(
-                        self.hass,
-                        f"Feed-in remuneration for {q} recomputed.",
-                        title="BFE Rückliefertarif",
-                        notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_reimport_specific",
-                    )
+                    report = _build_recompute_report(self.hass, [q])
+                    _notify_recompute(self.hass, self.config_entry.entry_id, report)
                     return self.async_create_entry(title="", data={})
 
         default = (

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import voluptuous as vol
@@ -239,6 +241,42 @@ async def _reimport_quarter(
     _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg)
 
 
+def _aggregate_monthly(records) -> list[dict]:
+    """Bucket per-hour records by Zurich-local YYYY-MM. Pure function.
+
+    Returns sorted list of ``{"month", "kwh", "chf", "rate_rp_kwh_avg"}``.
+    Avg rate is kWh-weighted (``month_chf × 100 / month_kwh``); ``None``
+    for zero-export months. Bucketing is in Zurich local time so the
+    user's calendar months match their utility invoice and tax year.
+    """
+    from zoneinfo import ZoneInfo
+
+    z = ZoneInfo("Europe/Zurich")
+    buckets: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"kwh": 0.0, "chf": 0.0}
+    )
+    for r in records:
+        ym = r.start.astimezone(z).strftime("%Y-%m")
+        buckets[ym]["kwh"] += r.kwh
+        buckets[ym]["chf"] += r.compensation_chf
+
+    out: list[dict] = []
+    for ym in sorted(buckets):
+        b = buckets[ym]
+        avg_rate = (b["chf"] * 100.0 / b["kwh"]) if b["kwh"] > 0 else None
+        out.append(
+            {
+                "month": ym,
+                "kwh": round(b["kwh"], 3),
+                "chf": round(b["chf"], 4),
+                "rate_rp_kwh_avg": round(avg_rate, 4)
+                if avg_rate is not None
+                else None,
+            }
+        )
+    return out
+
+
 def _record_snapshot(
     hass: "HomeAssistant",
     q: Quarter,
@@ -279,6 +317,9 @@ def _record_snapshot(
         and rate_rp_kwh >= rt.cap_rp_kwh - 1e-6
     )
 
+    total_kwh = sum(r.kwh for r in plan.records)
+    total_chf = plan.final_sum_chf - plan.anchor_sum_chf
+
     snapshot = {
         "rate_rp_kwh": round(rate_rp_kwh, 4),
         "kw": tariff_cfg.installierte_leistung_kw,
@@ -287,6 +328,11 @@ def _record_snapshot(
         "hkn_optin": tariff_cfg.hkn_aktiviert,
         "cap_mode": rt.cap_mode,
         "cap_applied": bool(cap_applied),
+        "total_kwh": round(total_kwh, 3),
+        "total_chf": round(total_chf, 4),
+        "monthly": _aggregate_monthly(plan.records),
+        "utility_key": rt.utility_key,
+        "base_model": rt.base_model,
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
     }
@@ -494,3 +540,175 @@ async def _handle_refresh_tariffs(call: "ServiceCall") -> None:
     if tdc is None:
         raise RuntimeError("BFE Rückliefertarif data coordinator not initialized")
     await tdc.async_refresh()
+
+
+# ----- Recompute report + notification (v0.7.0) ----------------------------
+
+
+@dataclass(frozen=True)
+class _RecomputeReportRow:
+    """One row per month in the recompute notification table.
+
+    Works uniformly across all base_models: rate is always the kWh-weighted
+    average for that month (``month_chf × 100 / month_kwh``).
+    """
+
+    month: str
+    rate_rp_kwh_avg: float | None
+    total_kwh: float | None
+    total_chf: float | None
+
+
+@dataclass(frozen=True)
+class _RecomputeReport:
+    rows: list[_RecomputeReportRow]   # newest-first
+    quarters_recomputed: int
+    config: dict
+
+
+def _build_recompute_report(
+    hass: "HomeAssistant", quarters: list[Quarter]
+) -> _RecomputeReport:
+    """Pull current config + per-quarter snapshots into a render-ready report.
+
+    Each quarter's snapshot carries a 3-element ``monthly`` list (added in
+    v0.7); we flatten across quarters and sort newest-first. Old snapshots
+    that pre-date the ``monthly`` field render as empty rows ("—" cells).
+    """
+    from .tariffs_db import load_tariffs
+
+    cfg, tariff_cfg = _cfg_for_entry(hass)
+    coordinator = _first_entry_data(hass).get("coordinator")
+    rt = tariff_cfg.resolved
+
+    db = load_tariffs()
+    utility_meta = db["utilities"].get(rt.utility_key, {})
+    header = {
+        "utility_key": rt.utility_key,
+        "utility_name": utility_meta.get("name_de", rt.utility_key),
+        "base_model": rt.base_model,
+        "settlement_period": rt.settlement_period,
+        "kw": tariff_cfg.installierte_leistung_kw,
+        "eigenverbrauch": tariff_cfg.eigenverbrauch_aktiviert,
+        "hkn_optin": tariff_cfg.hkn_aktiviert,
+        "hkn_rp_kwh": rt.hkn_rp_kwh,
+        "billing": cfg.get(CONF_ABRECHNUNGS_RHYTHMUS),
+        "floor_label": rt.federal_floor_label,
+        "floor_rp_kwh": rt.federal_floor_rp_kwh,
+        "cap_mode": rt.cap_mode,
+        "tariffs_version": rt.tariffs_json_version,
+        "tariffs_source": rt.tariffs_json_source,
+    }
+
+    rows: list[_RecomputeReportRow] = []
+    if coordinator is not None:
+        for q in sorted(quarters):
+            snap = (coordinator._imported.get(str(q)) or {}).get("snapshot") or {}
+            monthly = snap.get("monthly") or []
+            for m in monthly:
+                rows.append(
+                    _RecomputeReportRow(
+                        month=m["month"],
+                        rate_rp_kwh_avg=m.get("rate_rp_kwh_avg"),
+                        total_kwh=m.get("kwh"),
+                        total_chf=m.get("chf"),
+                    )
+                )
+    rows.sort(key=lambda r: r.month, reverse=True)
+    return _RecomputeReport(
+        rows=rows,
+        quarters_recomputed=len(quarters),
+        config=header,
+    )
+
+
+def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
+    """Pure function: report → ``(title, markdown_body)``. Easy to unit-test."""
+    n_months = len(report.rows)
+    n_q = report.quarters_recomputed
+    if n_q == 1:
+        title = f"Tariff recomputed — 1 quarter ({n_months} months)"
+    else:
+        title = (
+            f"Tariff history recomputed — {n_months} months across {n_q} quarters"
+        )
+
+    c = report.config
+    lines = [
+        "## Current configuration",
+        f"- **Utility:** {c['utility_key']} — {c['utility_name']}",
+        f"- **Tariff model:** {c['base_model']} (settlement: {c['settlement_period']})",
+        f"- **Installed power:** {c['kw']:.1f} kW",
+        f"- **Eigenverbrauch (self-consumption):** "
+        + ("Yes" if c["eigenverbrauch"] else "No"),
+    ]
+    if c["hkn_optin"]:
+        lines.append(
+            f"- **HKN opt-in:** Yes ({c['hkn_rp_kwh']:.2f} Rp/kWh additive)"
+        )
+    else:
+        lines.append("- **HKN opt-in:** No")
+    lines.append(f"- **Billing period:** {c['billing']}")
+
+    if c["floor_label"]:
+        floor = c["floor_rp_kwh"]
+        suffix = f" ({floor:.2f} Rp/kWh)" if floor is not None else " (none)"
+        lines.append(
+            f"- **Federal floor (Mindestvergütung):** {c['floor_label']}{suffix}"
+        )
+    lines.append(
+        "- **Cap mode (Anrechenbarkeitsgrenze):** "
+        + ("Active" if c["cap_mode"] else "Off")
+    )
+    lines.append(
+        f"- **Tariff data:** v{c['tariffs_version']} ({c['tariffs_source']})"
+    )
+
+    lines.append("")
+    lines.append("## Per-month results")
+    lines.append("")
+    LIMIT = 24
+    if n_months > LIMIT:
+        shown = report.rows[:LIMIT]
+        elided = n_months - LIMIT
+    else:
+        shown = report.rows
+        elided = 0
+    lines.append("| Month | Avg rate (Rp/kWh) | kWh exported | CHF |")
+    lines.append("|---|---|---|---|")
+    for r in shown:
+        rate = f"{r.rate_rp_kwh_avg:.4f}" if r.rate_rp_kwh_avg is not None else "—"
+        kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
+        chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
+        lines.append(f"| {r.month} | {rate} | {kwh} | {chf} |")
+    if elided:
+        lines.append("")
+        lines.append(f"_{elided} older month(s) not shown — see logs._")
+    if n_q > 1:
+        total_kwh = sum(r.total_kwh or 0 for r in report.rows)
+        total_chf = sum(r.total_chf or 0 for r in report.rows)
+        lines.append("")
+        lines.append(
+            f"**Totals:** {n_months} months · {total_kwh:,.2f} kWh · "
+            f"{total_chf:,.2f} CHF."
+        )
+    lines.append("")
+    lines.append("_For per-hour inspection, see `tools/verify_quarters.sql`._")
+    return title, "\n".join(lines)
+
+
+def _notify_recompute(
+    hass: "HomeAssistant", entry_id: str, report: _RecomputeReport
+) -> None:
+    """Emit (or replace) the recompute summary notification for an entry."""
+    from homeassistant.components.persistent_notification import async_create
+
+    if not report.rows and report.quarters_recomputed == 0:
+        return
+    title, body = _format_recompute_notification(report)
+    async_create(
+        hass,
+        body,
+        title=title,
+        notification_id=f"{DOMAIN}_{entry_id}_recompute_summary",
+    )

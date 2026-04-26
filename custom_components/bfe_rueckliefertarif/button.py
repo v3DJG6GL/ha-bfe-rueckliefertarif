@@ -127,7 +127,11 @@ class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
         )
 
     async def async_press(self) -> None:
-        from .services import _reimport_quarter
+        from .services import (
+            _build_recompute_report,
+            _notify_recompute,
+            _reimport_quarter,
+        )
 
         coordinator = self.hass.data[DOMAIN][self._entry.entry_id].get("coordinator")
         if coordinator is None or not coordinator.quarterly:
@@ -142,16 +146,18 @@ class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
         q = max(coordinator.quarterly.keys())
         try:
             await _reimport_quarter(self.hass, q)
-            msg = f"Feed-in remuneration for {q} recomputed."
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Recompute %s failed", q)
-            msg = f"Recompute of {q} failed: {exc}"
-        notify(
-            self.hass,
-            msg,
-            title="BFE Rückliefertarif",
-            notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_quarter",
-        )
+            notify(
+                self.hass,
+                f"Recompute of {q} failed: {exc}",
+                title="BFE Rückliefertarif",
+                notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_quarter",
+            )
+            return
+
+        report = _build_recompute_report(self.hass, [q])
+        _notify_recompute(self.hass, self._entry.entry_id, report)
 
 
 class RecomputeAktuellesQuartalEstimateButton(_BaseButton):
@@ -216,7 +222,11 @@ class RecomputeHistorieButton(_BaseButton):
         )
 
     async def async_press(self) -> None:
-        from .services import _reimport_all_history
+        from .services import (
+            _build_recompute_report,
+            _notify_recompute,
+            _reimport_all_history,
+        )
 
         try:
             result = await _reimport_all_history(self.hass)
@@ -231,18 +241,26 @@ class RecomputeHistorieButton(_BaseButton):
             return
 
         imported = result["imported"]
-        skipped = result["skipped"]
-        failed = result["failed"]
-        lines = [f"{len(imported)} quarters recomputed"]
         if imported:
-            lines[0] += f": {_format_quarters(imported)}"
-        if skipped:
-            lines.append(f"{len(skipped)} skipped (not yet published by BFE): {_format_quarters(skipped)}")
-        if failed:
-            lines.append(f"{len(failed)} errors — see logs: {_format_quarters(failed)}")
-        notify(
-            self.hass,
-            "\n".join(lines),
-            title="BFE Rückliefertarif",
-            notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_history",
-        )
+            report = _build_recompute_report(self.hass, imported)
+            _notify_recompute(self.hass, self._entry.entry_id, report)
+        else:
+            # Nothing reimported (everything was skipped) — short status card.
+            skipped = result.get("skipped") or []
+            failed = result.get("failed") or []
+            lines = ["0 quarters recomputed."]
+            if skipped:
+                lines.append(
+                    f"{len(skipped)} skipped (not yet published by BFE): "
+                    f"{_format_quarters(skipped)}"
+                )
+            if failed:
+                lines.append(
+                    f"{len(failed)} errors — see logs: {_format_quarters(failed)}"
+                )
+            notify(
+                self.hass,
+                "\n".join(lines),
+                title="BFE Rückliefertarif",
+                notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_history",
+            )
