@@ -278,7 +278,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         from .services import _cfg_for_entry
 
         try:
-            _cfg, tariff_cfg = _cfg_for_entry(self.hass, for_quarter=q)
+            cfg, tariff_cfg = _cfg_for_entry(self.hass, for_quarter=q)
         except (RuntimeError, LookupError):
             # Config not available yet — let the normal error path handle it.
             return False
@@ -290,6 +290,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         if snap.get("eigenverbrauch_aktiviert") != tariff_cfg.eigenverbrauch_aktiviert:
             return True
         if snap.get("hkn_optin") != tariff_cfg.hkn_aktiviert:
+            return True
+        if snap.get("billing") != cfg.get(CONF_ABRECHNUNGS_RHYTHMUS):
             return True
         if snap.get("tariffs_json_version") != rt.tariffs_json_version:
             return True

@@ -300,6 +300,9 @@ def _record_snapshot(
         return
 
     rt = tariff_cfg.resolved
+    cfg = entry_data.get("config") or {}
+    billing = cfg.get(CONF_ABRECHNUNGS_RHYTHMUS)
+
     # Flat per-quarter rate: the rate every hour got, in Rp/kWh. For
     # ABRECHNUNGS_RHYTHMUS_QUARTAL this is exact; for monthly, it's
     # Q_total_CHF / Q_kWh, which equals the quarterly effective rate.
@@ -317,7 +320,6 @@ def _record_snapshot(
         and rate_rp_kwh >= rt.cap_rp_kwh - 1e-6
     )
 
-    total_kwh = sum(r.kwh for r in plan.records)
     total_chf = plan.final_sum_chf - plan.anchor_sum_chf
 
     snapshot = {
@@ -333,6 +335,7 @@ def _record_snapshot(
         "monthly": _aggregate_monthly(plan.records),
         "utility_key": rt.utility_key,
         "base_model": rt.base_model,
+        "billing": billing,
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
     }
