@@ -63,6 +63,12 @@ class ResolvedTariff:
     tariffs_json_version: str
     tariffs_json_source: str        # "remote" | "bundled" — Phase 6 fills "remote"
 
+    # HT/NT day-of-week + hour windows for fixed_ht_nt utilities. Shape:
+    # {"mofr": [start_h, end_h] | None, "sa": ..., "su": ...}. None for any
+    # day type means all-NT for that day. None on the field means "no HT/NT
+    # structure" (any base_model other than fixed_ht_nt).
+    ht_window: dict | None = None
+
 
 # ----- Loader ---------------------------------------------------------------
 
@@ -279,6 +285,7 @@ def resolve_tariff_at(
         price_floor_rp_kwh=rate.get("price_floor_rp_kwh"),
         tariffs_json_version=str(db["schema_version"]),
         tariffs_json_source=source if source is not None else get_source(),
+        ht_window=tier.get("ht_window"),
     )
 
 

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from custom_components.bfe_rueckliefertarif.tariff import (
     DEFAULT_CAP_RULES,
     anrechenbarkeitsgrenze_rp_kwh,
     chf_per_mwh_to_rp_per_kwh,
+    classify_ht,
     effective_rp_kwh,
     mindestverguetung_rp_kwh,
 )
@@ -215,6 +219,105 @@ class TestEffectiveMitObergrenze:
             cap_rp_kwh=_cap(10, True), cap_mode=True,
         )
         assert rp == pytest.approx(9.0)
+
+
+def _utc_for_zurich(year: int, month: int, day: int, hour: int) -> datetime:
+    """Build a UTC timestamp matching the given Zurich local wall-clock hour.
+
+    Zurich is UTC+1 in winter (CET) and UTC+2 in summer (CEST). Tests pass
+    in local-clock terms and convert here so the assertions read naturally.
+    """
+    local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
+    return local.astimezone(timezone.utc)
+
+
+class TestClassifyHT:
+    """Per-hour HT/NT classification for fixed_ht_nt utilities."""
+
+    # EKZ producer-side (verified against ekz-rueckliefertarife-2025.pdf):
+    # weekdays 07:00–20:00 = HT; Sa/Su all NT.
+    EKZ_WINDOW = {"mofr": [7, 20], "sa": None, "su": None}
+
+    # Hypothetical consumer-side window (Sat morning HT). Used to confirm
+    # the function correctly walks the sa entry when present.
+    SAT_WINDOW = {"mofr": [7, 20], "sa": [7, 13], "su": None}
+
+    def test_weekday_inside_ht_window(self):
+        # Wed 14:00 Zurich → HT
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 14), self.EKZ_WINDOW) is True
+
+    def test_weekday_before_ht_window(self):
+        # Wed 06:00 Zurich → NT (before HT start)
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 6), self.EKZ_WINDOW) is False
+
+    def test_weekday_at_ht_start_inclusive(self):
+        # Wed 07:00 Zurich → HT (start inclusive)
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 7), self.EKZ_WINDOW) is True
+
+    def test_weekday_at_ht_end_exclusive(self):
+        # Wed 20:00 Zurich → NT (end exclusive — half-open window)
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 20), self.EKZ_WINDOW) is False
+
+    def test_weekday_after_ht(self):
+        # Wed 22:00 Zurich → NT
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 22), self.EKZ_WINDOW) is False
+
+    def test_friday_still_uses_mofr_window(self):
+        # Fri 14:00 Zurich → HT (Mo-Fr covers Friday)
+        assert classify_ht(_utc_for_zurich(2025, 1, 17, 14), self.EKZ_WINDOW) is True
+
+    def test_saturday_all_nt_when_sa_is_none(self):
+        # Sat 12:00 Zurich → NT (sa=None)
+        assert classify_ht(_utc_for_zurich(2025, 1, 18, 12), self.EKZ_WINDOW) is False
+
+    def test_saturday_morning_ht_when_sa_window_present(self):
+        # Sat 10:00 Zurich → HT (sa=[7,13])
+        assert classify_ht(_utc_for_zurich(2025, 1, 18, 10), self.SAT_WINDOW) is True
+
+    def test_saturday_afternoon_nt_when_sa_window_ends_at_13(self):
+        # Sat 14:00 Zurich → NT (after sa end)
+        assert classify_ht(_utc_for_zurich(2025, 1, 18, 14), self.SAT_WINDOW) is False
+
+    def test_sunday_always_nt(self):
+        assert classify_ht(_utc_for_zurich(2025, 1, 19, 12), self.EKZ_WINDOW) is False
+
+    def test_dst_spring_forward_local_hour_correct(self):
+        # CH DST transitions land on Sundays (last Sun of Mar / Oct), so
+        # the EKZ producer window (Sun all-NT) can't be used to probe DST
+        # classification. Use a window that's HT on Sundays too — we're
+        # testing the timezone math, not the day-of-week mapping.
+        sun_ht = {"mofr": [7, 20], "sa": [7, 20], "su": [7, 20]}
+        # 2025-03-30 CEST starts; 02:00 local skipped to 03:00. 14:00
+        # local on the transition Sunday must still be HT.
+        assert classify_ht(_utc_for_zurich(2025, 3, 30, 14), sun_ht) is True
+        # And the Monday after (2025-03-31, weekday) using the EKZ window:
+        assert classify_ht(_utc_for_zurich(2025, 3, 31, 14), self.EKZ_WINDOW) is True
+
+    def test_dst_fall_back_local_hour_correct(self):
+        sun_ht = {"mofr": [7, 20], "sa": [7, 20], "su": [7, 20]}
+        # 2025-10-26 CET resumes; 03:00 local rolls back to 02:00. 14:00
+        # local on the transition Sunday must still be HT.
+        assert classify_ht(_utc_for_zurich(2025, 10, 26, 14), sun_ht) is True
+        # And the Monday after (2025-10-27, weekday) using the EKZ window:
+        assert classify_ht(_utc_for_zurich(2025, 10, 27, 14), self.EKZ_WINDOW) is True
+
+    def test_winter_vs_summer_same_local_hour_same_classification(self):
+        # 14:00 Zurich in January (UTC+1) and July (UTC+2) both HT —
+        # confirms the function isn't accidentally using UTC hour.
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 14), self.EKZ_WINDOW) is True
+        assert classify_ht(_utc_for_zurich(2025, 7, 15, 14), self.EKZ_WINDOW) is True
+
+    def test_ht_window_none_returns_false(self):
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 14), None) is False
+
+    def test_ht_window_empty_dict_returns_false(self):
+        assert classify_ht(_utc_for_zurich(2025, 1, 15, 14), {}) is False
+
+    def test_missing_day_key_treated_as_all_nt(self):
+        # Window only specifies mofr; sa/su keys absent → those days NT.
+        partial = {"mofr": [7, 20]}
+        assert classify_ht(_utc_for_zurich(2025, 1, 18, 12), partial) is False  # Sat
+        assert classify_ht(_utc_for_zurich(2025, 1, 19, 12), partial) is False  # Sun
 
 
 class TestUnitConversion:

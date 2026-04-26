@@ -68,6 +68,18 @@ class QuarterPlan:
     post_quarter_delta_chf: float
 
 
+def _apply_floor_cap_hkn(base_rp_kwh: float, cfg: TariffConfig) -> float:
+    """Apply federal floor + HKN + Anrechenbarkeitsgrenze cap to a base rate."""
+    rt = cfg.resolved
+    return effective_rp_kwh(
+        base_rp_kwh,
+        cfg.hkn_rp_kwh_resolved,
+        federal_floor_rp_kwh=rt.federal_floor_rp_kwh,
+        cap_rp_kwh=rt.cap_rp_kwh,
+        cap_mode=rt.cap_mode,
+    )
+
+
 def _effective_rate(
     cfg: TariffConfig, reference_rp_kwh: float
 ) -> float:
@@ -76,9 +88,9 @@ def _effective_rate(
     Selects the right base depending on the utility's published `base_model`:
     - rmp_quartal/rmp_monat → use the BFE reference price the caller supplied
     - fixed_flat → use the JSON's `fixed_rp_kwh`
-    - fixed_ht_nt → fall back to `fixed_annualized_rp_kwh` (HT/NT-window
-      evaluation arrives in v0.6); if that's not set, use the HT rate as a
-      conservative default.
+    - fixed_ht_nt → conservative HT-rate fallback for callers without hour
+      context. Hour-aware callers should route through ``_effective_rate_at_hour``
+      to pick HT or NT per the utility's ``ht_window``.
     """
     rt = cfg.resolved
     if rt.base_model in ("rmp_quartal", "rmp_monat"):
@@ -88,17 +100,38 @@ def _effective_rate(
             raise ValueError(f"{rt.utility_key}: fixed_flat requires fixed_rp_kwh")
         base = rt.fixed_rp_kwh
     elif rt.base_model == "fixed_ht_nt":
-        # v0.6 will switch on hour; v0.5 uses the production-weighted annual.
         base = rt.fixed_ht_rp_kwh if rt.fixed_ht_rp_kwh is not None else 0.0
     else:
         raise ValueError(f"Unknown base_model {rt.base_model!r}")
-    return effective_rp_kwh(
-        base,
-        cfg.hkn_rp_kwh_resolved,
-        federal_floor_rp_kwh=rt.federal_floor_rp_kwh,
-        cap_rp_kwh=rt.cap_rp_kwh,
-        cap_mode=rt.cap_mode,
-    )
+    return _apply_floor_cap_hkn(base, cfg)
+
+
+def _effective_rate_at_hour(
+    cfg: TariffConfig, reference_rp_kwh: float, hour_utc: datetime
+) -> float:
+    """Hour-aware effective rate.
+
+    For ``fixed_ht_nt`` utilities, classifies ``hour_utc`` via the
+    utility's ``ht_window`` and applies HT or NT. For all other base
+    models, delegates to ``_effective_rate`` (hour ignored).
+
+    Forward-compatible: the future hourly Day-Ahead spot work (gated on
+    Bundesrat adoption of the EnV Art. 12 revision) slots in as a single
+    additional ``elif`` branch — no other changes needed.
+    """
+    from .tariff import classify_ht  # local import: avoid cycle
+
+    rt = cfg.resolved
+    if rt.base_model == "fixed_ht_nt":
+        is_ht = classify_ht(hour_utc, rt.ht_window)
+        base = rt.fixed_ht_rp_kwh if is_ht else rt.fixed_nt_rp_kwh
+        if base is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_ht_nt requires both "
+                f"fixed_ht_rp_kwh and fixed_nt_rp_kwh"
+            )
+        return _apply_floor_cap_hkn(base, cfg)
+    return _effective_rate(cfg, reference_rp_kwh)
 
 
 def _rate_rp_kwh_at_hour(
@@ -118,12 +151,13 @@ def _rate_rp_kwh_at_hour(
     """
     q_rp = chf_per_mwh_to_rp_per_kwh(quarterly_price.chf_per_mwh)
 
-    # Fixed-rate utilities don't track BFE monthly prices — every hour uses the
-    # same rate regardless of billing rhythm. Only RMP-based base_models need
-    # the M1/M2/M3 monthly-price decomposition.
+    # Fixed-rate utilities don't track BFE monthly prices — they're either
+    # truly flat (fixed_flat) or per-hour HT/NT (fixed_ht_nt, switched on
+    # local time inside _effective_rate_at_hour). Only RMP-based base_models
+    # need the M1/M2/M3 monthly-price decomposition.
     is_fixed_base = cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt")
     if is_fixed_base or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
-        return _effective_rate(cfg, q_rp)
+        return _effective_rate_at_hour(cfg, q_rp, hour_utc)
 
     assert monthly_prices is not None
     assert kwh_per_month is not None

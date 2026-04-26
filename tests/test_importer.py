@@ -7,7 +7,8 @@ and that the transition-spike delta is computed correctly.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -18,6 +19,7 @@ from custom_components.bfe_rueckliefertarif.const import (
 )
 from custom_components.bfe_rueckliefertarif.importer import (
     TariffConfig,
+    _effective_rate_at_hour,
     compute_quarter_plan,
     cumulative_sums,
 )
@@ -30,6 +32,7 @@ from custom_components.bfe_rueckliefertarif.quarters import (
 )
 from custom_components.bfe_rueckliefertarif.tariff import (
     chf_per_mwh_to_rp_per_kwh,
+    classify_ht,
     effective_rp_kwh,
     rp_per_kwh_to_chf_per_kwh,
 )
@@ -40,6 +43,9 @@ def _make_resolved(
     *,
     base_model: str = "rmp_quartal",
     fixed_rp_kwh: float | None = None,
+    fixed_ht_rp_kwh: float | None = None,
+    fixed_nt_rp_kwh: float | None = None,
+    ht_window: dict | None = None,
     hkn_rp_kwh: float = 0.0,
     cap_mode: bool = False,
     cap_rp_kwh: float | None = None,
@@ -52,8 +58,8 @@ def _make_resolved(
         settlement_period="quartal",
         base_model=base_model,
         fixed_rp_kwh=fixed_rp_kwh,
-        fixed_ht_rp_kwh=None,
-        fixed_nt_rp_kwh=None,
+        fixed_ht_rp_kwh=fixed_ht_rp_kwh,
+        fixed_nt_rp_kwh=fixed_nt_rp_kwh,
         hkn_rp_kwh=hkn_rp_kwh,
         hkn_structure="additive_optin" if hkn_rp_kwh > 0 else "none",
         cap_mode=cap_mode,
@@ -64,6 +70,7 @@ def _make_resolved(
         price_floor_rp_kwh=None,
         tariffs_json_version="1.0.0",
         tariffs_json_source="bundled",
+        ht_window=ht_window,
     )
 
 
@@ -306,6 +313,142 @@ class TestFixedMode:
         )
         rates = {r.rate_rp_kwh for r in plan.records}
         assert rates == {10.96}  # capped (HKN reduced from 5.0 to 3.96)
+
+
+class TestFixedHtNtMode:
+    """Per-hour HT/NT switching for fixed_ht_nt utilities (e.g. EKZ pre-2026)."""
+
+    # EKZ producer-side window (verified against ekz-rueckliefertarife-2025.pdf):
+    # weekdays 07:00–20:00 = HT; Sa/Su all NT.
+    EKZ_HT_WINDOW = {"mofr": [7, 20], "sa": None, "su": None}
+
+    # Real EKZ 2025 producer rates (Rp/kWh).
+    EKZ_HT_RP = 12.60
+    EKZ_NT_RP = 11.60
+    EKZ_HKN_RP = 3.00
+
+    def _make_ekz_2025_cfg(self, *, hkn_opted_in: bool) -> TariffConfig:
+        return TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=10.0,
+            hkn_aktiviert=hkn_opted_in,
+            hkn_rp_kwh_resolved=self.EKZ_HKN_RP if hkn_opted_in else 0.0,
+            resolved=_make_resolved(
+                base_model="fixed_ht_nt",
+                fixed_ht_rp_kwh=self.EKZ_HT_RP,
+                fixed_nt_rp_kwh=self.EKZ_NT_RP,
+                ht_window=self.EKZ_HT_WINDOW,
+                hkn_rp_kwh=self.EKZ_HKN_RP,
+                cap_mode=False,
+                cap_rp_kwh=None,
+                # Pre-2026: no federal floor existed. Test against the
+                # math-only signal, not the AS 2025 138 reform.
+                federal_floor_rp_kwh=None,
+            ),
+        )
+
+    def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
+        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
+        return local.astimezone(timezone.utc)
+
+    def test_weekday_midday_uses_ht_rate_with_hkn(self):
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
+        # Wed 14:00 Zurich → HT 12.60 + HKN 3.00 = 15.60
+        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14))
+        assert rate == pytest.approx(15.60)
+
+    def test_weekday_night_uses_nt_rate_with_hkn(self):
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
+        # Wed 22:00 Zurich → NT 11.60 + HKN 3.00 = 14.60
+        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 22))
+        assert rate == pytest.approx(14.60)
+
+    def test_saturday_midday_uses_nt_rate(self):
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
+        # Sat 14:00 Zurich → Sat is all-NT for EKZ producer; 11.60 + 3.00 = 14.60
+        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 18, 14))
+        assert rate == pytest.approx(14.60)
+
+    def test_sunday_uses_nt_rate(self):
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
+        # Sun 12:00 Zurich → NT
+        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 19, 12))
+        assert rate == pytest.approx(14.60)
+
+    def test_no_hkn_drops_only_hkn_addend(self):
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=False)
+        # Wed 14:00 → HT 12.60 only
+        assert _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14)) == pytest.approx(12.60)
+        # Wed 22:00 → NT 11.60 only
+        assert _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 22)) == pytest.approx(11.60)
+
+    def test_quarter_total_matches_hand_computed_sum(self):
+        """compute_quarter_plan output equals Σ(kwh_h × rate_h) computed
+        independently via classify_ht — invoice-grade invariant."""
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
+
+        # Use a Q1 2025 quarter (matches the EKZ-2025 rate window).
+        q = Quarter(2025, 1)
+        kwh = uniform_hourly(q, kwh_per_hour=1.0)
+        # BFE quarterly price is unused for fixed_ht_nt, but the function
+        # signature requires one. Pass a sentinel.
+        unused_price = BfePrice(chf_per_mwh=0.0, days=90, volume_mwh=1.0)
+        plan = compute_quarter_plan(
+            q, kwh, unused_price, None, cfg, ABRECHNUNGS_RHYTHMUS_QUARTAL,
+            anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
+        )
+
+        # Hand-compute the expected total: HT hours × (12.60+3.00) + NT hours × (11.60+3.00)
+        ht_kwh = sum(
+            kwh[h] for h in kwh if classify_ht(h, self.EKZ_HT_WINDOW)
+        )
+        nt_kwh = sum(
+            kwh[h] for h in kwh if not classify_ht(h, self.EKZ_HT_WINDOW)
+        )
+        expected_chf = (
+            ht_kwh * (self.EKZ_HT_RP + self.EKZ_HKN_RP) / 100.0
+            + nt_kwh * (self.EKZ_NT_RP + self.EKZ_HKN_RP) / 100.0
+        )
+        assert plan.final_sum_chf == pytest.approx(expected_chf, rel=1e-9)
+
+        # Sanity: at least some HT and some NT hours present (would catch
+        # a regression where classify_ht is always-True or always-False).
+        assert ht_kwh > 0
+        assert nt_kwh > 0
+
+    def test_per_hour_records_carry_correct_rate_per_hour(self):
+        """Each HourRecord's rate_rp_kwh reflects the hour's HT/NT classification."""
+        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
+        q = Quarter(2025, 1)
+        kwh = uniform_hourly(q, kwh_per_hour=1.0)
+        unused_price = BfePrice(chf_per_mwh=0.0, days=90, volume_mwh=1.0)
+        plan = compute_quarter_plan(
+            q, kwh, unused_price, None, cfg, ABRECHNUNGS_RHYTHMUS_QUARTAL,
+            anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
+        )
+        rates_seen = sorted({round(r.rate_rp_kwh, 6) for r in plan.records})
+        # Exactly two distinct rates: NT+HKN (14.60) and HT+HKN (15.60)
+        assert rates_seen == [pytest.approx(14.60), pytest.approx(15.60)]
+
+    def test_missing_nt_rate_raises(self):
+        """fixed_ht_nt requires both HT and NT rates — a record missing
+        fixed_nt_rp_kwh should fail loudly when an NT hour is hit."""
+        cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=10.0,
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(
+                base_model="fixed_ht_nt",
+                fixed_ht_rp_kwh=12.60,
+                fixed_nt_rp_kwh=None,  # broken record
+                ht_window=self.EKZ_HT_WINDOW,
+                federal_floor_rp_kwh=None,
+            ),
+        )
+        # Wed 22:00 → NT hour; NT rate is None → raise
+        with pytest.raises(ValueError, match="fixed_ht_nt requires both"):
+            _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 22))
 
 
 class TestHourCoverage:

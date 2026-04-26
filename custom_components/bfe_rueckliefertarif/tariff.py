@@ -20,7 +20,12 @@ Legal references (all in force since 1.1.2026 via the Mantelerlass / Stromgesetz
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from .tariffs_db import evaluate_federal_floor, find_rule
+
+_ZURICH = ZoneInfo("Europe/Zurich")
 
 # Default cap_rules — StromVV Art. 4 Abs. 3 Bst. e cost-recovery ceiling per
 # EKZ's published derivation (the reference Gestehungskosten are nationally
@@ -97,6 +102,40 @@ def effective_rp_kwh(
     if base >= cap_rp_kwh:
         return base
     return min(base + hkn_rp_kwh, cap_rp_kwh)
+
+
+def classify_ht(hour_utc: datetime, ht_window: dict | None) -> bool:
+    """True iff ``hour_utc`` falls inside the utility's HT (Hochtarif) window.
+
+    ``ht_window`` shape (per power_tier in tariffs.json):
+
+        {"mofr": [start_h, end_h] | None,
+         "sa":   [start_h, end_h] | None,
+         "su":   [start_h, end_h] | None}
+
+    None for any day type means all-NT for that day. Hour windows are
+    half-open: ``start_h <= local_hour < end_h``. Day-of-week and hour are
+    determined in Zurich local time (DST-safe via zoneinfo) so a window of
+    07:00–20:00 means 07:00–20:00 wall-clock all year, regardless of UTC
+    offset.
+
+    ``ht_window=None`` (or empty) returns False — the caller should not be
+    invoking ``classify_ht`` for a utility without an HT/NT structure.
+    """
+    if not ht_window:
+        return False
+    local = hour_utc.astimezone(_ZURICH)
+    weekday = local.weekday()  # 0=Mon, 6=Sun
+    if weekday < 5:
+        window = ht_window.get("mofr")
+    elif weekday == 5:
+        window = ht_window.get("sa")
+    else:
+        window = ht_window.get("su")
+    if not window:
+        return False
+    start_h, end_h = window
+    return start_h <= local.hour < end_h
 
 
 def chf_per_mwh_to_rp_per_kwh(chf_per_mwh: float) -> float:
