@@ -27,8 +27,19 @@ CONF_NAMENSPRAEFIX = "namenspraefix"
 ABRECHNUNGS_RHYTHMUS_QUARTAL = "quartal"
 ABRECHNUNGS_RHYTHMUS_MONAT = "monat"
 
-# entry.options keys for per-customer history (Phase 4). Both are lists of
-# half-open `[valid_from, valid_to)` records — same shape as tariffs.json's
-# date-versioned records, looked up via `tariffs_db.find_active`.
-OPT_PLANT_HISTORY = "plant_history"
-OPT_HKN_OPTIN_HISTORY = "hkn_optin_history"
+# entry.options key for the unified per-entry config timeline (v0.8.0).
+# A list of half-open `[valid_from, valid_to)` records, each carrying a full
+# snapshot of the rate-affecting inputs. Looked up via `tariffs_db.find_active`.
+# Replaces the v0.7-era separate OPT_PLANT_HISTORY / OPT_HKN_OPTIN_HISTORY
+# lists (clean break — no migration of legacy data).
+OPT_CONFIG_HISTORY = "config_history"
+
+# Single source of truth for which config keys are time-versioned. Anything
+# in this tuple is stored in each history record's "config" sub-dict.
+CONFIG_HISTORY_FIELDS = (
+    CONF_ENERGIEVERSORGER,
+    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_EIGENVERBRAUCH_AKTIVIERT,
+    CONF_HKN_AKTIVIERT,
+    CONF_ABRECHNUNGS_RHYTHMUS,
+)

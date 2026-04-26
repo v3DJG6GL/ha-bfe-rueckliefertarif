@@ -20,9 +20,9 @@ from .const import (
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONFIG_HISTORY_FIELDS,
     DOMAIN,
-    OPT_HKN_OPTIN_HISTORY,
-    OPT_PLANT_HISTORY,
+    OPT_CONFIG_HISTORY,
 )
 from .ha_recorder import (
     build_compensation_stats,
@@ -95,10 +95,11 @@ def _cfg_for_entry(
 ) -> tuple[dict, TariffConfig]:
     """Build the TariffConfig for a config entry, optionally as-of a quarter.
 
-    When `for_quarter` is given, plant_history and hkn_optin_history (in
-    `entry.options`) are consulted at the quarter's start date, so past
-    quarters get the kW / EV / HKN-opt-in values that were active back
-    then. When omitted, today's `entry.data` is used.
+    When ``for_quarter`` is given, the per-entry config history (in
+    ``entry.options[OPT_CONFIG_HISTORY]``) is consulted at the quarter's
+    start date, so past quarters get the utility / kW / EV / HKN /
+    billing-rhythm values that were active back then. When omitted,
+    today's date is used.
     """
     from datetime import date
 
@@ -106,15 +107,16 @@ def _cfg_for_entry(
     cfg = entry_data["config"]
     options = entry_data.get("options") or {}
 
-    utility_key = cfg.get(CONF_ENERGIEVERSORGER)
-
     if for_quarter is not None:
         at_date = date(for_quarter.year, ((for_quarter.q - 1) * 3) + 1, 1)
     else:
         at_date = date.today()
 
-    kw, eigenverbrauch = _resolve_plant(cfg, options, at_date)
-    hkn_aktiviert = _resolve_hkn_optin(cfg, options, at_date)
+    resolved_cfg = _resolve_config_at(options, at_date, cfg)
+    utility_key = resolved_cfg.get(CONF_ENERGIEVERSORGER)
+    kw = float(resolved_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
+    eigenverbrauch = bool(resolved_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT))
+    hkn_aktiviert = bool(resolved_cfg.get(CONF_HKN_AKTIVIERT))
 
     resolved = resolve_tariff_at(
         utility_key, at_date, kw=kw, eigenverbrauch=eigenverbrauch
@@ -131,26 +133,22 @@ def _cfg_for_entry(
     return cfg, tariff_cfg
 
 
-def _resolve_plant(cfg: dict, options: dict, at_date) -> tuple[float, bool]:
-    """Pick (kW, eigenverbrauch) active at `at_date` from plant_history or fall
-    back to current entry.data."""
-    history = options.get(OPT_PLANT_HISTORY) or []
-    rec = find_active(history, at_date) if history else None
-    if rec is not None:
-        return float(rec["installierte_leistung_kw"]), bool(rec["eigenverbrauch_aktiviert"])
-    return (
-        float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
-        bool(cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
-    )
+def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
+    """Pick the full config dict active at ``at_date``.
 
-
-def _resolve_hkn_optin(cfg: dict, options: dict, at_date) -> bool:
-    """Pick HKN opt-in state active at `at_date` from hkn_optin_history."""
-    history = options.get(OPT_HKN_OPTIN_HISTORY) or []
-    rec = find_active(history, at_date) if history else None
+    Reads ``OPT_CONFIG_HISTORY``; falls back to ``fallback_cfg`` (entry.data)
+    only if the history list is empty (shouldn't happen post-setup since
+    ``async_setup_entry`` synthesizes an initial sentinel record). When
+    ``at_date`` predates the first record, returns the first record's config
+    (best guess: that's what was used before any recorded change).
+    """
+    history = options.get(OPT_CONFIG_HISTORY) or []
+    if not history:
+        return {k: fallback_cfg.get(k) for k in CONFIG_HISTORY_FIELDS}
+    rec = find_active(history, at_date)
     if rec is not None:
-        return bool(rec["opted_in"])
-    return bool(cfg.get(CONF_HKN_AKTIVIERT, False))
+        return rec["config"]
+    return history[0]["config"]
 
 
 async def _reimport_quarter(

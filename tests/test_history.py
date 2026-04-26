@@ -1,233 +1,258 @@
-"""Tests for Phase 4: per-customer history + import snapshots.
+"""Tests for v0.8.0: unified config-history timeline.
 
 Covers:
-- ``_record_history_changes`` correctly closes prior records and appends new ones
-  when the user edits kW / Eigenverbrauch / HKN-opt-in.
-- ``_resolve_plant`` / ``_resolve_hkn_optin`` honor half-open boundaries:
-  the change date itself belongs to the new record.
+- ``_resolve_config_at`` picks the correct full-config dict per ``at_date``,
+  honoring half-open ``[valid_from, valid_to)`` semantics.
+- ``_apply_config_change`` appends new records and overwrites same-date ones.
+- ``_normalize_history`` sorts by valid_from and chains valid_to.
+- ``_sync_entry_data_from_history`` pulls the open-ended record into entry.data.
+- ``_parse_valid_from`` accepts both ISO-date and YYYYQN inputs.
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-from custom_components.bfe_rueckliefertarif.config_flow import _record_history_changes
+from custom_components.bfe_rueckliefertarif.config_flow import (
+    _apply_config_change,
+    _format_config_summary,
+    _normalize_history,
+    _parse_valid_from,
+    _sync_entry_data_from_history,
+)
 from custom_components.bfe_rueckliefertarif.const import (
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    ABRECHNUNGS_RHYTHMUS_QUARTAL,
+    CONF_ABRECHNUNGS_RHYTHMUS,
     CONF_EIGENVERBRAUCH_AKTIVIERT,
+    CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KW,
-    OPT_HKN_OPTIN_HISTORY,
-    OPT_PLANT_HISTORY,
+    OPT_CONFIG_HISTORY,
 )
-from custom_components.bfe_rueckliefertarif.services import (
-    _resolve_hkn_optin,
-    _resolve_plant,
-)
+from custom_components.bfe_rueckliefertarif.services import _resolve_config_at
 
 
-class TestRecordHistoryChanges:
-    def test_no_change_yields_empty_history(self):
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: True,
-        }
-        new_data = dict(old_data)
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options={}
-        )
-        # No changes → history dicts not seeded (we don't backfill on no-op saves).
-        assert OPT_PLANT_HISTORY not in opts
-        assert OPT_HKN_OPTIN_HISTORY not in opts
-
-    def test_kw_change_appends_new_record(self):
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: False,
-        }
-        new_data = {**old_data, CONF_INSTALLIERTE_LEISTUNG_KW: 35.0}
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options={}
-        )
-        history = opts[OPT_PLANT_HISTORY]
-        assert len(history) == 1
-        assert history[0]["installierte_leistung_kw"] == 35.0
-        assert history[0]["eigenverbrauch_aktiviert"] is True
-        assert history[0]["valid_to"] is None
-        assert history[0]["valid_from"] == date.today().isoformat()
-
-    def test_kw_change_closes_prior_record(self):
-        today = date.today().isoformat()
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: False,
-        }
-        new_data = {**old_data, CONF_INSTALLIERTE_LEISTUNG_KW: 35.0}
-        prior = {
-            OPT_PLANT_HISTORY: [
-                {
-                    "valid_from": "2024-03-15",
-                    "valid_to": None,
-                    "installierte_leistung_kw": 25.0,
-                    "eigenverbrauch_aktiviert": True,
-                }
-            ]
-        }
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options=prior
-        )
-        history = opts[OPT_PLANT_HISTORY]
-        assert len(history) == 2
-        assert history[0]["valid_to"] == today  # closed
-        assert history[1]["valid_from"] == today
-        assert history[1]["valid_to"] is None
-        assert history[1]["installierte_leistung_kw"] == 35.0
-
-    def test_eigenverbrauch_change_records_plant_history(self):
-        # EV is part of plant_history, not a separate list.
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: False,
-        }
-        new_data = {**old_data, CONF_EIGENVERBRAUCH_AKTIVIERT: False}
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options={}
-        )
-        history = opts[OPT_PLANT_HISTORY]
-        assert len(history) == 1
-        assert history[0]["eigenverbrauch_aktiviert"] is False
-
-    def test_hkn_optin_change_appends_new_record(self):
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: False,
-        }
-        new_data = {**old_data, CONF_HKN_AKTIVIERT: True}
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options={}
-        )
-        history = opts[OPT_HKN_OPTIN_HISTORY]
-        assert len(history) == 1
-        assert history[0]["opted_in"] is True
-        assert history[0]["valid_to"] is None
-
-    def test_hkn_change_closes_prior_record(self):
-        today = date.today().isoformat()
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: False,
-        }
-        new_data = {**old_data, CONF_HKN_AKTIVIERT: True}
-        prior = {
-            OPT_HKN_OPTIN_HISTORY: [
-                {
-                    "valid_from": "2025-01-01",
-                    "valid_to": None,
-                    "opted_in": False,
-                }
-            ]
-        }
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options=prior
-        )
-        history = opts[OPT_HKN_OPTIN_HISTORY]
-        assert len(history) == 2
-        assert history[0]["valid_to"] == today
-        assert history[1]["opted_in"] is True
-
-    def test_simultaneous_kw_and_hkn_change(self):
-        old_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: False,
-        }
-        new_data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 50.0,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-            CONF_HKN_AKTIVIERT: True,
-        }
-        opts = _record_history_changes(
-            old_data=old_data, new_data=new_data, old_options={}
-        )
-        assert len(opts[OPT_PLANT_HISTORY]) == 1
-        assert len(opts[OPT_HKN_OPTIN_HISTORY]) == 1
+def _cfg(
+    utility="ekz",
+    kw=8.0,
+    ev=True,
+    hkn=False,
+    billing=ABRECHNUNGS_RHYTHMUS_QUARTAL,
+):
+    return {
+        CONF_ENERGIEVERSORGER: utility,
+        CONF_INSTALLIERTE_LEISTUNG_KW: kw,
+        CONF_EIGENVERBRAUCH_AKTIVIERT: ev,
+        CONF_HKN_AKTIVIERT: hkn,
+        CONF_ABRECHNUNGS_RHYTHMUS: billing,
+    }
 
 
-class TestResolvePlant:
-    def _cfg(self, kw=25.0, ev=True):
-        return {
-            CONF_INSTALLIERTE_LEISTUNG_KW: kw,
-            CONF_EIGENVERBRAUCH_AKTIVIERT: ev,
-        }
+class TestResolveConfigAt:
+    def test_no_history_falls_back_to_entry_data(self):
+        out = _resolve_config_at({}, date(2024, 6, 1), _cfg(utility="bkw", kw=15.0))
+        assert out[CONF_ENERGIEVERSORGER] == "bkw"
+        assert out[CONF_INSTALLIERTE_LEISTUNG_KW] == 15.0
 
-    def test_no_history_returns_current(self):
-        kw, ev = _resolve_plant(self._cfg(kw=25.0, ev=True), {}, date(2026, 4, 1))
-        assert (kw, ev) == (25.0, True)
-
-    def test_history_active_record_used(self):
+    def test_picks_active_record_at_date(self):
         opts = {
-            OPT_PLANT_HISTORY: [
-                {
-                    "valid_from": "2024-01-01",
-                    "valid_to": "2026-06-01",
-                    "installierte_leistung_kw": 25.0,
-                    "eigenverbrauch_aktiviert": True,
-                },
-                {
-                    "valid_from": "2026-06-01",
-                    "valid_to": None,
-                    "installierte_leistung_kw": 35.0,
-                    "eigenverbrauch_aktiviert": True,
-                },
+            OPT_CONFIG_HISTORY: [
+                {"valid_from": "1970-01-01", "valid_to": "2024-07-01",
+                 "config": _cfg(utility="ekz", hkn=False)},
+                {"valid_from": "2024-07-01", "valid_to": "2025-04-01",
+                 "config": _cfg(utility="ekz", hkn=True)},
+                {"valid_from": "2025-04-01", "valid_to": None,
+                 "config": _cfg(utility="ewz", hkn=True, kw=35.0,
+                                billing=ABRECHNUNGS_RHYTHMUS_MONAT)},
             ]
         }
-        kw, ev = _resolve_plant(self._cfg(kw=99.0), opts, date(2026, 3, 1))
-        assert (kw, ev) == (25.0, True)
-        kw, ev = _resolve_plant(self._cfg(kw=99.0), opts, date(2026, 7, 1))
-        assert (kw, ev) == (35.0, True)
+        # Pre-HKN window
+        r = _resolve_config_at(opts, date(2024, 1, 1), _cfg())
+        assert r[CONF_ENERGIEVERSORGER] == "ekz"
+        assert r[CONF_HKN_AKTIVIERT] is False
+        # Post-HKN, pre-utility-switch window
+        r = _resolve_config_at(opts, date(2024, 8, 1), _cfg())
+        assert r[CONF_HKN_AKTIVIERT] is True
+        assert r[CONF_ENERGIEVERSORGER] == "ekz"
+        # Post utility switch
+        r = _resolve_config_at(opts, date(2025, 6, 1), _cfg())
+        assert r[CONF_ENERGIEVERSORGER] == "ewz"
+        assert r[CONF_INSTALLIERTE_LEISTUNG_KW] == 35.0
+        assert r[CONF_ABRECHNUNGS_RHYTHMUS] == ABRECHNUNGS_RHYTHMUS_MONAT
 
-    def test_history_boundary_belongs_to_new_record(self):
+    def test_predating_first_record_returns_first_record(self):
         opts = {
-            OPT_PLANT_HISTORY: [
-                {
-                    "valid_from": "2024-01-01",
-                    "valid_to": "2026-06-01",
-                    "installierte_leistung_kw": 25.0,
-                    "eigenverbrauch_aktiviert": True,
-                },
-                {
-                    "valid_from": "2026-06-01",
-                    "valid_to": None,
-                    "installierte_leistung_kw": 35.0,
-                    "eigenverbrauch_aktiviert": False,
-                },
+            OPT_CONFIG_HISTORY: [
+                {"valid_from": "2025-04-01", "valid_to": None,
+                 "config": _cfg(utility="ewz", hkn=True)},
             ]
         }
-        kw, ev = _resolve_plant(self._cfg(), opts, date(2026, 6, 1))
-        assert (kw, ev) == (35.0, False)
+        r = _resolve_config_at(opts, date(2024, 1, 1), _cfg(utility="other"))
+        # First record covers everything before its valid_from too — best guess.
+        assert r[CONF_ENERGIEVERSORGER] == "ewz"
+        assert r[CONF_HKN_AKTIVIERT] is True
 
-
-class TestResolveHknOptin:
-    def _cfg(self, hkn=True):
-        return {CONF_HKN_AKTIVIERT: hkn}
-
-    def test_no_history_returns_current(self):
-        assert _resolve_hkn_optin(self._cfg(hkn=True), {}, date(2026, 4, 1)) is True
-        assert _resolve_hkn_optin(self._cfg(hkn=False), {}, date(2026, 4, 1)) is False
-
-    def test_history_active_record_used(self):
+    def test_boundary_valid_from_belongs_to_new_record(self):
         opts = {
-            OPT_HKN_OPTIN_HISTORY: [
-                {"valid_from": "2025-01-01", "valid_to": "2026-01-01", "opted_in": False},
-                {"valid_from": "2026-01-01", "valid_to": None, "opted_in": True},
+            OPT_CONFIG_HISTORY: [
+                {"valid_from": "1970-01-01", "valid_to": "2025-04-01",
+                 "config": _cfg(utility="ekz")},
+                {"valid_from": "2025-04-01", "valid_to": None,
+                 "config": _cfg(utility="ewz")},
             ]
         }
-        # Pre-2026 → opted_in=False
-        assert _resolve_hkn_optin(self._cfg(), opts, date(2025, 6, 1)) is False
-        # 2026+ → opted_in=True
-        assert _resolve_hkn_optin(self._cfg(), opts, date(2026, 4, 1)) is True
+        # Half-open: 2025-04-01 is the first day of the new record.
+        assert _resolve_config_at(opts, date(2025, 4, 1), _cfg())[
+            CONF_ENERGIEVERSORGER] == "ewz"
+        assert _resolve_config_at(opts, date(2025, 3, 31), _cfg())[
+            CONF_ENERGIEVERSORGER] == "ekz"
+
+
+class TestApplyConfigChange:
+    def test_append_new_record(self):
+        old_opts = {
+            OPT_CONFIG_HISTORY: [
+                {"valid_from": "1970-01-01", "valid_to": None,
+                 "config": _cfg(utility="ekz", hkn=False)},
+            ]
+        }
+        new_opts = _apply_config_change(
+            new_config=_cfg(utility="ekz", hkn=True),
+            valid_from_date="2024-07-01",
+            old_options=old_opts,
+        )
+        hist = new_opts[OPT_CONFIG_HISTORY]
+        assert len(hist) == 2
+        assert hist[0]["valid_from"] == "1970-01-01"
+        assert hist[0]["valid_to"] == "2024-07-01"  # auto-chained
+        assert hist[1]["valid_from"] == "2024-07-01"
+        assert hist[1]["valid_to"] is None
+        assert hist[1]["config"][CONF_HKN_AKTIVIERT] is True
+
+    def test_overwrites_same_valid_from(self):
+        old_opts = {
+            OPT_CONFIG_HISTORY: [
+                {"valid_from": "2024-07-01", "valid_to": None,
+                 "config": _cfg(hkn=True)},
+            ]
+        }
+        new_opts = _apply_config_change(
+            new_config=_cfg(hkn=False, kw=99.0),
+            valid_from_date="2024-07-01",
+            old_options=old_opts,
+        )
+        hist = new_opts[OPT_CONFIG_HISTORY]
+        assert len(hist) == 1
+        assert hist[0]["config"][CONF_HKN_AKTIVIERT] is False
+        assert hist[0]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 99.0
+
+    def test_handles_empty_history(self):
+        new_opts = _apply_config_change(
+            new_config=_cfg(),
+            valid_from_date="2024-01-01",
+            old_options={},
+        )
+        assert len(new_opts[OPT_CONFIG_HISTORY]) == 1
+
+
+class TestNormalizeHistory:
+    def test_sorts_by_valid_from(self):
+        records = [
+            {"valid_from": "2025-04-01", "config": _cfg(utility="ewz")},
+            {"valid_from": "1970-01-01", "config": _cfg(utility="ekz")},
+            {"valid_from": "2024-07-01", "config": _cfg(utility="bkw")},
+        ]
+        out = _normalize_history(records)
+        assert [r["valid_from"] for r in out] == [
+            "1970-01-01", "2024-07-01", "2025-04-01"
+        ]
+
+    def test_chains_valid_to(self):
+        records = [
+            {"valid_from": "2024-01-01", "config": _cfg()},
+            {"valid_from": "2024-07-01", "config": _cfg()},
+            {"valid_from": "2025-01-01", "config": _cfg()},
+        ]
+        out = _normalize_history(records)
+        assert out[0]["valid_to"] == "2024-07-01"
+        assert out[1]["valid_to"] == "2025-01-01"
+        assert out[2]["valid_to"] is None
+
+    def test_dedupes_same_valid_from_last_wins(self):
+        records = [
+            {"valid_from": "2024-01-01", "config": _cfg(utility="ekz")},
+            {"valid_from": "2024-01-01", "config": _cfg(utility="bkw")},
+        ]
+        out = _normalize_history(records)
+        assert len(out) == 1
+        assert out[0]["config"][CONF_ENERGIEVERSORGER] == "bkw"
+
+
+class TestSyncEntryData:
+    def test_pulls_open_ended_record(self):
+        history = [
+            {"valid_from": "1970-01-01", "valid_to": "2025-04-01",
+             "config": _cfg(utility="ekz", kw=8.0)},
+            {"valid_from": "2025-04-01", "valid_to": None,
+             "config": _cfg(utility="ewz", kw=35.0)},
+        ]
+        new_data = _sync_entry_data_from_history(
+            history, {"stromnetzeinspeisung_kwh": "sensor.foo"}
+        )
+        assert new_data[CONF_ENERGIEVERSORGER] == "ewz"
+        assert new_data[CONF_INSTALLIERTE_LEISTUNG_KW] == 35.0
+        # Non-versioned field preserved.
+        assert new_data["stromnetzeinspeisung_kwh"] == "sensor.foo"
+
+    def test_falls_back_to_max_valid_from_when_all_closed(self):
+        history = [
+            {"valid_from": "2024-01-01", "valid_to": "2024-07-01",
+             "config": _cfg(utility="ekz")},
+            {"valid_from": "2024-07-01", "valid_to": "2025-01-01",
+             "config": _cfg(utility="bkw")},
+        ]
+        new_data = _sync_entry_data_from_history(history, {})
+        assert new_data[CONF_ENERGIEVERSORGER] == "bkw"
+
+    def test_empty_history_returns_current_data_unchanged(self):
+        original = {"stromnetzeinspeisung_kwh": "sensor.foo"}
+        out = _sync_entry_data_from_history([], original)
+        assert out == original
+
+
+class TestParseValidFrom:
+    def test_iso_date(self):
+        assert _parse_valid_from("2024-08-15") == "2024-08-15"
+
+    def test_quarter(self):
+        assert _parse_valid_from("2024Q3") == "2024-07-01"
+        assert _parse_valid_from("2026Q1") == "2026-01-01"
+        assert _parse_valid_from("2025Q4") == "2025-10-01"
+
+    def test_rejects_garbage(self):
+        import pytest
+        with pytest.raises(ValueError):
+            _parse_valid_from("foobar")
+        with pytest.raises(ValueError):
+            _parse_valid_from("")
+        with pytest.raises(ValueError):
+            _parse_valid_from("2024Q5")  # invalid quarter number
+
+
+class TestFormatConfigSummary:
+    def test_includes_all_fields(self):
+        s = _format_config_summary(_cfg(
+            utility="ekz", kw=8.5, ev=True, hkn=True,
+            billing=ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        ))
+        assert "ekz" in s
+        assert "8.5 kW" in s
+        assert "EV" in s and "no-EV" not in s
+        assert "HKN" in s and "no-HKN" not in s
+        assert "quartal" in s
+
+    def test_negated_flags_render_no_prefix(self):
+        s = _format_config_summary(_cfg(ev=False, hkn=False))
+        assert "no-EV" in s
+        assert "no-HKN" in s

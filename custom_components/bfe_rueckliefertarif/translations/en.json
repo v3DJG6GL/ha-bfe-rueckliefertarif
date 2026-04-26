@@ -47,8 +47,38 @@
         "description": "What would you like to do?",
         "menu_options": {
           "tariff": "Adjust tariff settings",
+          "manage_history": "Manage configuration history",
           "reimport_quarter": "Re-import a specific quarter",
           "entities": "Re-wire Home Assistant entities"
+        }
+      },
+      "manage_history": {
+        "title": "Manage configuration history",
+        "description": "Click a row to edit, choose **Add new transition** to record a switch (e.g. utility change, PV expansion, HKN certificate), or **Done** to finish. Past quarter recompute uses the values that were active back then."
+      },
+      "add_new_row": {
+        "title": "Add transition",
+        "description": "Record a config change effective from a specific date or quarter.",
+        "data": {
+          "valid_from": "Active since (YYYY-MM-DD or YYYYQN)",
+          "energieversorger": "Utility",
+          "installierte_leistung_kw": "Installed power (kW)",
+          "eigenverbrauch_aktiviert": "Self-consumption",
+          "hkn_aktiviert": "HKN opt-in",
+          "abrechnungs_rhythmus": "Billing period"
+        }
+      },
+      "edit_row": {
+        "title": "Edit transition",
+        "description": "Update or delete this config transition. Tick **Delete this record** to remove it.",
+        "data": {
+          "valid_from": "Active since (YYYY-MM-DD or YYYYQN)",
+          "energieversorger": "Utility",
+          "installierte_leistung_kw": "Installed power (kW)",
+          "eigenverbrauch_aktiviert": "Self-consumption",
+          "hkn_aktiviert": "HKN opt-in",
+          "abrechnungs_rhythmus": "Billing period",
+          "delete": "Delete this record"
         }
       },
       "tariff": {
@@ -95,6 +125,7 @@
     "error": {
       "kw_required": "Installed power (kW) must be greater than 0.",
       "invalid_quarter": "Invalid format. Expected YYYYQN (e.g. 2026Q1).",
+      "invalid_valid_from": "Invalid date or quarter — expected YYYY-MM-DD (e.g. 2024-08-15) or YYYYQN (e.g. 2024Q3).",
       "price_not_yet_published": "SFOE has not yet published this quarter. Try again about 2 weeks after quarter end.",
       "reimport_failed": "Re-import failed unexpectedly. Check Settings → System → Logs."
     }

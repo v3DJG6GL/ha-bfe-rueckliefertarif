@@ -47,8 +47,38 @@
         "description": "Que souhaitez-vous faire ?",
         "menu_options": {
           "tariff": "Modifier les paramètres tarifaires",
+          "manage_history": "Gérer l'historique de configuration",
           "reimport_quarter": "Réimporter un trimestre spécifique",
           "entities": "Reconfigurer les entités Home Assistant"
+        }
+      },
+      "manage_history": {
+        "title": "Gérer l'historique de configuration",
+        "description": "Cliquez sur une ligne pour modifier, **Ajouter une transition** pour enregistrer un changement (changement de fournisseur, extension PV, certificat GO), ou **Terminer** pour sortir. Le recalcul des trimestres passés utilise les valeurs actives à l'époque."
+      },
+      "add_new_row": {
+        "title": "Ajouter une transition",
+        "description": "Enregistrer un changement de configuration à partir d'une date ou d'un trimestre.",
+        "data": {
+          "valid_from": "Actif depuis (AAAA-MM-JJ ou AAAATN)",
+          "energieversorger": "Fournisseur",
+          "installierte_leistung_kw": "Puissance installée (kW)",
+          "eigenverbrauch_aktiviert": "Autoconsommation",
+          "hkn_aktiviert": "Opt-in GO",
+          "abrechnungs_rhythmus": "Fréquence de facturation"
+        }
+      },
+      "edit_row": {
+        "title": "Modifier la transition",
+        "description": "Mettre à jour ou supprimer cette transition. Cochez **Supprimer cet enregistrement** pour le retirer.",
+        "data": {
+          "valid_from": "Actif depuis (AAAA-MM-JJ ou AAAATN)",
+          "energieversorger": "Fournisseur",
+          "installierte_leistung_kw": "Puissance installée (kW)",
+          "eigenverbrauch_aktiviert": "Autoconsommation",
+          "hkn_aktiviert": "Opt-in GO",
+          "abrechnungs_rhythmus": "Fréquence de facturation",
+          "delete": "Supprimer cet enregistrement"
         }
       },
       "tariff": {
@@ -95,6 +125,7 @@
     "error": {
       "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
       "invalid_quarter": "Format invalide. Attendu : AAAATN (ex. 2026Q1).",
+      "invalid_valid_from": "Date ou trimestre invalide — attendu AAAA-MM-JJ (ex. 2024-08-15) ou AAAATN (ex. 2024Q3).",
       "price_not_yet_published": "L'OFEN n'a pas encore publié ce trimestre. Réessayez environ 2 semaines après la fin du trimestre.",
       "reimport_failed": "Échec inattendu du ré-import. Consultez Paramètres → Système → Journaux."
     }

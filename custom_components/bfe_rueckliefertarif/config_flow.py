@@ -31,8 +31,8 @@ from .const import (
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
     DOMAIN,
-    OPT_HKN_OPTIN_HISTORY,
-    OPT_PLANT_HISTORY,
+    CONFIG_HISTORY_FIELDS,
+    OPT_CONFIG_HISTORY,
 )
 from .tariffs_db import list_utility_keys, load_tariffs
 
@@ -158,63 +158,104 @@ def _validate_tariff(user_input: dict[str, Any]) -> dict[str, str]:
     return errors
 
 
-def _record_history_changes(
-    *, old_data: dict, new_data: dict, old_options: dict
-) -> dict:
-    """Auto-append to plant_history / hkn_optin_history when the user changes
-    kW / Eigenverbrauch / HKN-opt-in in the options flow.
-
-    The prior open-ended record's ``valid_to`` is closed to "today"; a new
-    open-ended record is appended carrying the new values. If the history
-    list was empty (first ever options edit), a single record is appended
-    with ``valid_from = today``. Manual backfill (editing past records) is
-    a v0.6 polish — for now any mid-year change the user remembers can be
-    fixed by editing entry.options directly via developer tools.
-    """
+def _quarter_start_today() -> str:
+    """ISO date of the first day of the current quarter (Zurich-local year/month)."""
     from datetime import date
 
-    today = date.today().isoformat()
+    today = date.today()
+    q_start_month = ((today.month - 1) // 3) * 3 + 1
+    return date(today.year, q_start_month, 1).isoformat()
+
+
+def _parse_valid_from(s: str) -> str:
+    """Accept YYYY-MM-DD or YYYYQN; return ISO date string. Raises ValueError."""
+    from datetime import date
+
+    from .quarters import Quarter
+
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("empty valid_from")
+    # Quarter form first (it doesn't match a date regex).
+    try:
+        q = Quarter.parse(s)
+    except ValueError:
+        pass
+    else:
+        return date(q.year, q.start_month(), 1).isoformat()
+    # Fall back to ISO date.
+    return date.fromisoformat(s).isoformat()
+
+
+def _normalize_history(records: list[dict]) -> list[dict]:
+    """Sort records by valid_from, derive each valid_to from the next record's
+    valid_from, and set the last record's valid_to = None. Also de-duplicates
+    records sharing a valid_from (last write wins)."""
+    by_from: dict[str, dict] = {}
+    for r in records:
+        by_from[r["valid_from"]] = {
+            "valid_from": r["valid_from"],
+            "valid_to": None,
+            "config": dict(r["config"]),
+        }
+    sorted_recs = sorted(by_from.values(), key=lambda r: r["valid_from"])
+    for i, rec in enumerate(sorted_recs):
+        rec["valid_to"] = sorted_recs[i + 1]["valid_from"] if i + 1 < len(sorted_recs) else None
+    return sorted_recs
+
+
+def _sync_entry_data_from_history(history: list[dict], current_data: dict) -> dict:
+    """Return a new entry.data dict where versioned fields reflect the
+    open-ended history record. Non-versioned fields (entity wiring, prefix)
+    are preserved as-is.
+    """
+    if not history:
+        return dict(current_data)
+    open_recs = [r for r in history if r.get("valid_to") is None]
+    if open_recs:
+        winning = open_recs[0]
+    else:
+        winning = max(history, key=lambda r: r["valid_from"])
+    new_data = dict(current_data)
+    for k in CONFIG_HISTORY_FIELDS:
+        if k in winning["config"]:
+            new_data[k] = winning["config"][k]
+    return new_data
+
+
+def _apply_config_change(
+    *, new_config: dict, valid_from_date: str, old_options: dict
+) -> dict:
+    """Add or overwrite a record in OPT_CONFIG_HISTORY and return new options.
+
+    If a record with the same valid_from already exists, its config is
+    overwritten (treats re-saving the same date as an edit). Otherwise the
+    record is appended. ``_normalize_history`` re-chains valid_to.
+    """
     new_options = {**old_options}
-
-    plant_changed = (
-        old_data.get(CONF_INSTALLIERTE_LEISTUNG_KW)
-        != new_data.get(CONF_INSTALLIERTE_LEISTUNG_KW)
-        or old_data.get(CONF_EIGENVERBRAUCH_AKTIVIERT)
-        != new_data.get(CONF_EIGENVERBRAUCH_AKTIVIERT)
+    history = list(new_options.get(OPT_CONFIG_HISTORY) or [])
+    # Strip any existing record with the same valid_from so the new one wins.
+    history = [r for r in history if r.get("valid_from") != valid_from_date]
+    history.append(
+        {
+            "valid_from": valid_from_date,
+            "valid_to": None,
+            "config": {k: new_config.get(k) for k in CONFIG_HISTORY_FIELDS},
+        }
     )
-    if plant_changed:
-        history = list(new_options.get(OPT_PLANT_HISTORY) or [])
-        if history and history[-1].get("valid_to") is None:
-            history[-1] = {**history[-1], "valid_to": today}
-        history.append(
-            {
-                "valid_from": today,
-                "valid_to": None,
-                "installierte_leistung_kw": float(
-                    new_data[CONF_INSTALLIERTE_LEISTUNG_KW]
-                ),
-                "eigenverbrauch_aktiviert": bool(
-                    new_data[CONF_EIGENVERBRAUCH_AKTIVIERT]
-                ),
-            }
-        )
-        new_options[OPT_PLANT_HISTORY] = history
-
-    hkn_changed = old_data.get(CONF_HKN_AKTIVIERT) != new_data.get(CONF_HKN_AKTIVIERT)
-    if hkn_changed:
-        history = list(new_options.get(OPT_HKN_OPTIN_HISTORY) or [])
-        if history and history[-1].get("valid_to") is None:
-            history[-1] = {**history[-1], "valid_to": today}
-        history.append(
-            {
-                "valid_from": today,
-                "valid_to": None,
-                "opted_in": bool(new_data[CONF_HKN_AKTIVIERT]),
-            }
-        )
-        new_options[OPT_HKN_OPTIN_HISTORY] = history
-
+    new_options[OPT_CONFIG_HISTORY] = _normalize_history(history)
     return new_options
+
+
+def _format_config_summary(config: dict) -> str:
+    """Compact one-line summary used for menu labels."""
+    utility = config.get(CONF_ENERGIEVERSORGER) or "—"
+    kw = config.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+    kw_s = f"{float(kw):.1f} kW" if kw is not None else "—"
+    ev = "EV" if config.get(CONF_EIGENVERBRAUCH_AKTIVIERT) else "no-EV"
+    hkn = "HKN" if config.get(CONF_HKN_AKTIVIERT) else "no-HKN"
+    billing = config.get(CONF_ABRECHNUNGS_RHYTHMUS) or "—"
+    return f"{utility} · {kw_s} · {ev} · {hkn} · {billing}"
 
 
 class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -339,7 +380,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     ) -> "FlowResult":
         return self.async_show_menu(
             step_id="init",
-            menu_options=["tariff", "reimport_quarter", "entities"],
+            menu_options=["tariff", "manage_history", "reimport_quarter", "entities"],
         )
 
     # ----- Sub-step: edit tariff settings ------------------------------------
@@ -351,11 +392,23 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             errors = _validate_tariff(user_input)
             if not errors:
-                new_data = {**self.config_entry.data, **user_input}
-                new_options = _record_history_changes(
-                    old_data=dict(self.config_entry.data),
-                    new_data=new_data,
+                # Compose the new full config from current entry.data + form input.
+                new_full = {**self.config_entry.data, **user_input}
+                new_config = {k: new_full.get(k) for k in CONFIG_HISTORY_FIELDS}
+
+                # Skip recording a no-op (no field actually changed).
+                history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+                open_rec = next((r for r in history if r.get("valid_to") is None), None)
+                if open_rec and open_rec["config"] == new_config:
+                    return self.async_create_entry(title="", data={})
+
+                new_options = _apply_config_change(
+                    new_config=new_config,
+                    valid_from_date=_quarter_start_today(),
                     old_options=dict(self.config_entry.options or {}),
+                )
+                new_data = _sync_entry_data_from_history(
+                    new_options[OPT_CONFIG_HISTORY], dict(self.config_entry.data)
                 )
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=new_data, options=new_options
@@ -371,6 +424,211 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
             data_schema=_tariff_schema(defaults),
             errors=errors,
             description_placeholders=_source_links(self.hass),
+        )
+
+    # ----- Sub-step: manage configuration history ----------------------------
+
+    async def async_step_manage_history(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        menu: dict[str, str] = {}
+        for i, rec in enumerate(history):
+            label = (
+                f"{rec['valid_from']} → {rec.get('valid_to') or 'now'}: "
+                f"{_format_config_summary(rec['config'])}"
+            )
+            menu[f"edit_row_{i}"] = label
+        menu["add_new_row"] = "+ Add new transition"
+        menu["done_history"] = "Done"
+        return self.async_show_menu(step_id="manage_history", menu_options=menu)
+
+    async def async_step_done_history(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        self.hass.async_create_task(
+            self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        )
+        return self.async_create_entry(title="", data={})
+
+    async def async_step_add_new_row(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        return await self._edit_row(idx=None, user_input=user_input)
+
+    async def async_step_edit_row(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        # Form-resubmit lands here. ``self._editing_idx`` was set by
+        # ``__getattr__`` when the menu item was first clicked.
+        return await self._edit_row(getattr(self, "_editing_idx", None), user_input)
+
+    def __getattr__(self, name: str):
+        # Dynamic dispatch for "edit_row_<N>" menu options. We stash the row
+        # index on self and delegate to async_step_edit_row, which uses a
+        # static step_id so translations resolve.
+        if name.startswith("async_step_edit_row_"):
+            try:
+                idx = int(name.removeprefix("async_step_edit_row_"))
+            except ValueError:
+                raise AttributeError(name) from None
+            async def _step(user_input=None, _idx=idx):
+                self._editing_idx = _idx
+                return await self.async_step_edit_row(user_input)
+            return _step
+        raise AttributeError(name)
+
+    async def _edit_row(
+        self, idx: int | None, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        """Show the edit form for one history record. ``idx=None`` → add new."""
+        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        is_edit = idx is not None and 0 <= idx < len(history)
+        existing = history[idx] if is_edit else None
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            # Delete branch (only when editing).
+            if is_edit and bool(user_input.get("delete")):
+                history.pop(idx)
+                normalized = _normalize_history(history)
+                new_options = {
+                    **dict(self.config_entry.options or {}),
+                    OPT_CONFIG_HISTORY: normalized,
+                }
+                new_data = _sync_entry_data_from_history(
+                    normalized, dict(self.config_entry.data)
+                )
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=new_data, options=new_options
+                )
+                return await self.async_step_manage_history()
+
+            # Save / overwrite branch.
+            try:
+                valid_from = _parse_valid_from(user_input.get("valid_from", ""))
+            except ValueError:
+                errors["valid_from"] = "invalid_valid_from"
+
+            if not errors:
+                new_config = {
+                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
+                    CONF_INSTALLIERTE_LEISTUNG_KW: float(
+                        user_input[CONF_INSTALLIERTE_LEISTUNG_KW]
+                    ),
+                    CONF_EIGENVERBRAUCH_AKTIVIERT: bool(
+                        user_input[CONF_EIGENVERBRAUCH_AKTIVIERT]
+                    ),
+                    CONF_HKN_AKTIVIERT: bool(user_input[CONF_HKN_AKTIVIERT]),
+                    CONF_ABRECHNUNGS_RHYTHMUS: user_input[CONF_ABRECHNUNGS_RHYTHMUS],
+                }
+                # Replace at idx (edit) or append (add). The normalize step
+                # de-duplicates by valid_from, so editing an existing row's
+                # valid_from to clash with another row will collapse them.
+                if is_edit:
+                    history[idx] = {
+                        "valid_from": valid_from,
+                        "valid_to": None,
+                        "config": new_config,
+                    }
+                else:
+                    history.append({
+                        "valid_from": valid_from,
+                        "valid_to": None,
+                        "config": new_config,
+                    })
+                normalized = _normalize_history(history)
+                new_options = {
+                    **dict(self.config_entry.options or {}),
+                    OPT_CONFIG_HISTORY: normalized,
+                }
+                new_data = _sync_entry_data_from_history(
+                    normalized, dict(self.config_entry.data)
+                )
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=new_data, options=new_options
+                )
+                return await self.async_step_manage_history()
+
+        # Build form defaults: prior submission > existing record > open record.
+        if user_input is not None:
+            defaults_cfg = {k: user_input.get(k) for k in CONFIG_HISTORY_FIELDS}
+            default_valid_from = user_input.get("valid_from", "")
+        elif existing is not None:
+            defaults_cfg = dict(existing["config"])
+            default_valid_from = existing["valid_from"]
+        else:
+            # Add-new mode: prefill from the open record (most recent state).
+            open_rec = next(
+                (r for r in history if r.get("valid_to") is None), None
+            )
+            defaults_cfg = (
+                dict(open_rec["config"]) if open_rec
+                else {k: self.config_entry.data.get(k) for k in CONFIG_HISTORY_FIELDS}
+            )
+            default_valid_from = _quarter_start_today()
+
+        utility_keys = list_utility_keys()
+        schema_dict: dict[Any, Any] = {
+            vol.Required(
+                "valid_from", default=default_valid_from
+            ): str,
+            vol.Required(
+                CONF_ENERGIEVERSORGER,
+                default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(
+                            value=k, label=_utility_display_name(k)
+                        )
+                        for k in utility_keys
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_INSTALLIERTE_LEISTUNG_KW,
+                default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=10000, step=0.1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kW",
+                )
+            ),
+            vol.Required(
+                CONF_EIGENVERBRAUCH_AKTIVIERT,
+                default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
+            ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_HKN_AKTIVIERT,
+                default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
+            ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_ABRECHNUNGS_RHYTHMUS,
+                default=defaults_cfg.get(CONF_ABRECHNUNGS_RHYTHMUS, ABRECHNUNGS_RHYTHMUS_QUARTAL),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                        ABRECHNUNGS_RHYTHMUS_MONAT,
+                    ],
+                    translation_key=CONF_ABRECHNUNGS_RHYTHMUS,
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            ),
+        }
+        if is_edit:
+            schema_dict[vol.Optional("delete", default=False)] = selector.BooleanSelector()
+
+        # Use static step_ids so translations resolve. For edit, we still need
+        # a static id "edit_row" — the row index is held in self._editing_idx.
+        step_id = "edit_row" if is_edit else "add_new_row"
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=vol.Schema(schema_dict),
+            errors=errors,
         )
 
     # ----- Sub-step: re-import a specific past quarter -----------------------

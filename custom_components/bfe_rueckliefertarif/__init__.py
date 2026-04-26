@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import DOMAIN
+from .const import CONFIG_HISTORY_FIELDS, DOMAIN, OPT_CONFIG_HISTORY
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -29,6 +29,22 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool
         tdc = TariffsDataCoordinator(hass)
         await tdc.async_load()
         hass.data[DOMAIN]["_tariffs_data"] = tdc
+
+    # v0.8.0: synthesize an initial sentinel record on first setup so the
+    # per-quarter config resolver always finds a covering entry. Also drops
+    # legacy v0.7-era history keys (clean break, no migration).
+    if OPT_CONFIG_HISTORY not in (entry.options or {}):
+        new_options = {**(entry.options or {})}
+        new_options.pop("plant_history", None)
+        new_options.pop("hkn_optin_history", None)
+        new_options[OPT_CONFIG_HISTORY] = [
+            {
+                "valid_from": "1970-01-01",
+                "valid_to": None,
+                "config": {k: entry.data.get(k) for k in CONFIG_HISTORY_FIELDS},
+            }
+        ]
+        hass.config_entries.async_update_entry(entry, options=new_options)
 
     hass.data[DOMAIN][entry.entry_id] = {
         "config": dict(entry.data),

@@ -47,8 +47,38 @@
         "description": "Was möchtest du tun?",
         "menu_options": {
           "tariff": "Tarif-Einstellungen anpassen",
+          "manage_history": "Konfigurationsverlauf verwalten",
           "reimport_quarter": "Spezifisches Quartal neu importieren",
           "entities": "Home-Assistant-Entitäten neu verbinden"
+        }
+      },
+      "manage_history": {
+        "title": "Konfigurationsverlauf verwalten",
+        "description": "Klick auf eine Zeile zum Bearbeiten, **Neuer Übergang** für eine Änderung (z. B. Versorgerwechsel, PV-Erweiterung, HKN-Zertifikat) oder **Fertig** zum Beenden. Vergangene Quartale werden mit den damals gültigen Werten neu berechnet."
+      },
+      "add_new_row": {
+        "title": "Übergang hinzufügen",
+        "description": "Eine Konfigurationsänderung ab einem bestimmten Datum oder Quartal erfassen.",
+        "data": {
+          "valid_from": "Aktiv ab (JJJJ-MM-TT oder JJJJQN)",
+          "energieversorger": "Energieversorger",
+          "installierte_leistung_kw": "Installierte Leistung (kW)",
+          "eigenverbrauch_aktiviert": "Eigenverbrauch",
+          "hkn_aktiviert": "HKN-Opt-in",
+          "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
+        }
+      },
+      "edit_row": {
+        "title": "Übergang bearbeiten",
+        "description": "Aktualisiere oder lösche diesen Konfigurationsübergang. **Diesen Eintrag löschen** ankreuzen, um zu entfernen.",
+        "data": {
+          "valid_from": "Aktiv ab (JJJJ-MM-TT oder JJJJQN)",
+          "energieversorger": "Energieversorger",
+          "installierte_leistung_kw": "Installierte Leistung (kW)",
+          "eigenverbrauch_aktiviert": "Eigenverbrauch",
+          "hkn_aktiviert": "HKN-Opt-in",
+          "abrechnungs_rhythmus": "Abrechnungs-Rhythmus",
+          "delete": "Diesen Eintrag löschen"
         }
       },
       "tariff": {
@@ -95,6 +125,7 @@
     "error": {
       "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein.",
       "invalid_quarter": "Ungültiges Format. Erwartet: JJJJQN (z. B. 2026Q1).",
+      "invalid_valid_from": "Ungültiges Datum oder Quartal — erwartet JJJJ-MM-TT (z. B. 2024-08-15) oder JJJJQN (z. B. 2024Q3).",
       "price_not_yet_published": "BFE hat dieses Quartal noch nicht publiziert. Versuch's ca. 2 Wochen nach Quartalsende erneut.",
       "reimport_failed": "Re-Import unerwartet fehlgeschlagen. Prüfe Einstellungen → System → Logs."
     }
