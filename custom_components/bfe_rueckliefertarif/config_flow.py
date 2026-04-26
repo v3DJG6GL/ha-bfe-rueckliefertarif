@@ -389,13 +389,19 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="entities", data_schema=schema)
 
 
-class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
+class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     """Options flow: menu with tariff edit, specific-quarter re-import, and entity wiring.
 
     HA 2024.12+ exposes ``config_entry`` as a read-only property on
     OptionsFlow, sourced from ``self.handler`` (the entry_id). Don't override
     ``__init__`` or assign ``self.config_entry`` — that raises AttributeError
     on current HA.
+
+    Inherits from ``OptionsFlowWithReload`` (HA 2024.11+) so HA reloads the
+    entry automatically *after* options are committed — eliminates the
+    earlier wipe race where a manual ``async_create_task(async_reload(...))``
+    plus ``async_create_entry(data={})`` overwrote ``entry.options`` with
+    ``{}`` before the reload picked up our writes.
     """
 
     # ----- Menu --------------------------------------------------------------
@@ -425,7 +431,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
                 history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
                 open_rec = next((r for r in history if r.get("valid_to") is None), None)
                 if open_rec and open_rec["config"] == new_config:
-                    return self.async_create_entry(title="", data={})
+                    return self.async_create_entry(
+                        title="", data=dict(self.config_entry.options or {})
+                    )
 
                 new_options = _apply_config_change(
                     new_config=new_config,
@@ -435,13 +443,14 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
                 new_data = _sync_entry_data_from_history(
                     new_options[OPT_CONFIG_HISTORY], dict(self.config_entry.data)
                 )
+                # Update entry.data only — options is committed by HA via the
+                # ``async_create_entry(data=new_options)`` return below. Mixing
+                # both writes (here AND via the flow result) used to wipe
+                # options when the flow result carried ``data={}``.
                 self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data, options=new_options
+                    self.config_entry, data=new_data
                 )
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
-                )
-                return self.async_create_entry(title="", data={})
+                return self.async_create_entry(title="", data=new_options)
 
         defaults = user_input if user_input is not None else dict(self.config_entry.data)
         return self.async_show_form(
@@ -472,10 +481,11 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
     async def async_step_done_history(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
-        self.hass.async_create_task(
-            self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        # Pass current options through so HA's commit doesn't wipe them.
+        # Reload happens automatically via OptionsFlowWithReload.
+        return self.async_create_entry(
+            title="", data=dict(self.config_entry.options or {})
         )
-        return self.async_create_entry(title="", data={})
 
     async def async_step_add_new_row(
         self, user_input: dict[str, Any] | None = None
@@ -705,7 +715,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
                 else:
                     report = _build_recompute_report(self.hass, [q])
                     _notify_recompute(self.hass, self.config_entry.entry_id, report)
-                    return self.async_create_entry(title="", data={})
+                    return self.async_create_entry(
+                        title="", data=dict(self.config_entry.options or {})
+                    )
 
         default = (
             user_input.get("quarter", "")
@@ -729,10 +741,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlow):
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=new_data
             )
-            self.hass.async_create_task(
-                self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            # Reload happens automatically via OptionsFlowWithReload.
+            return self.async_create_entry(
+                title="", data=dict(self.config_entry.options or {})
             )
-            return self.async_create_entry(title="", data={})
 
         current = dict(self.config_entry.data)
         schema = vol.Schema(

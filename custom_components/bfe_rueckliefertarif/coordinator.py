@@ -49,6 +49,11 @@ class BfeCoordinator(DataUpdateCoordinator):
         self._imported: dict[str, dict[str, Any]] = {}
         self.quarterly: dict[Quarter, BfePrice] = {}
         self.monthly: dict[Month, BfePrice] = {}
+        # Cached earliest hour the user's grid-export sensor has any LTS data
+        # for. Used to filter the "skipped quarter(s)" notification so we
+        # don't claim HA has records when it doesn't. Lazily computed; reset
+        # on coordinator restart only.
+        self._earliest_export_hour: datetime | None = None
 
     def _make_store(self):
         from homeassistant.helpers.storage import Store
@@ -249,7 +254,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
 
-        self._notify_skipped_quarters(no_data_skipped)
+        await self._notify_skipped_quarters(no_data_skipped)
         if reimported:
             report = _build_recompute_report(self.hass, reimported)
             _notify_recompute(self.hass, self.entry.entry_id, report)
@@ -297,8 +302,13 @@ class BfeCoordinator(DataUpdateCoordinator):
             return True
         return False
 
-    def _notify_skipped_quarters(self, skipped: list[str]) -> None:
+    async def _notify_skipped_quarters(self, skipped: list[str]) -> None:
         """Summarize skipped quarters in a single persistent UI notification.
+
+        Filters the input list to quarters where the user's grid-export
+        sensor actually has recorded data — without that gate the message
+        used to falsely claim HA had records for quarters back to 2017 just
+        because BFE published prices for them.
 
         Mechanism-agnostic wording: the message is about *what we don't have
         in tariffs.json yet for this user's utility*, NOT about whether
@@ -315,6 +325,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         from .tariffs_db import load_tariffs
 
         nid = f"{DOMAIN}_{self.entry.entry_id}_skipped_quarters"
+        if skipped:
+            skipped = await self._filter_skipped_to_quarters_with_export(skipped)
         if not skipped:
             # Nothing to report — clear any prior card.
             _dismiss(self.hass, nid)
@@ -336,8 +348,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         skipped_text = ", ".join(skipped)
         msg = (
             f"The bundled tariff database for utility **`{utility_key}`** "
-            f"{window_text}, but Home Assistant has grid-export records for "
-            f"**{len(skipped)} earlier quarter(s)** that couldn't be imported "
+            f"{window_text}, but **{len(skipped)} earlier quarter(s) where "
+            f"you have export data couldn't be imported** "
             f"(no remuneration was written for them):\n\n"
             f"{skipped_text}\n\n"
             f"To make older quarters importable, the `rates[]` list for "
@@ -356,6 +368,57 @@ class BfeCoordinator(DataUpdateCoordinator):
             title="Older quarters skipped — your utility's tariff records start later than your export data",
             notification_id=nid,
         )
+
+    async def _filter_skipped_to_quarters_with_export(
+        self, skipped: list[str]
+    ) -> list[str]:
+        """Drop quarters that end before the user's first hour of export data.
+
+        Lazily resolves and caches ``self._earliest_export_hour``: the
+        earliest hour where the user's grid-export sensor has a non-zero
+        LTS row. Surfaces only quarters whose end is at or after that hour.
+        On any recorder error, returns ``skipped`` unchanged (don't suppress
+        a real notification just because LTS lookup hiccuped).
+        """
+        from .const import CONF_STROMNETZEINSPEISUNG_KWH
+        from .ha_recorder import read_hourly_export
+
+        statistic_id = self._config.get(CONF_STROMNETZEINSPEISUNG_KWH)
+        if not statistic_id:
+            return skipped
+
+        if self._earliest_export_hour is None:
+            try:
+                rows = await read_hourly_export(
+                    self.hass,
+                    statistic_id,
+                    datetime(1970, 1, 1, tzinfo=timezone.utc),
+                    datetime.now(timezone.utc),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("read_hourly_export failed: %s", exc)
+                return skipped
+            non_zero_hours = [h for h, v in rows.items() if v > 0]
+            if not non_zero_hours:
+                # User's sensor has no recorded export at all — suppress
+                # the entire notification.
+                return []
+            self._earliest_export_hour = min(non_zero_hours)
+
+        from .quarters import Quarter, quarter_end_zurich
+
+        threshold = self._earliest_export_hour
+        kept: list[str] = []
+        for s in skipped:
+            try:
+                q = Quarter.parse(s)
+            except ValueError:
+                kept.append(s)
+                continue
+            q_end_utc = quarter_end_zurich(q).astimezone(timezone.utc)
+            if q_end_utc >= threshold:
+                kept.append(s)
+        return kept
 
 def _next_publication_estimate(now: datetime) -> datetime:
     """Rough estimate: 2 weeks after each quarter end. For the diagnostic sensor."""

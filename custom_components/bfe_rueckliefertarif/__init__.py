@@ -30,25 +30,36 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool
         await tdc.async_load()
         hass.data[DOMAIN]["_tariffs_data"] = tdc
 
-    # v0.8.0: synthesize an initial sentinel record on first setup so the
-    # per-quarter config resolver always finds a covering entry. Also drops
-    # legacy v0.7-era history keys (clean break, no migration).
-    # Falsy guard (not just `not in`): also re-seeds the sentinel when
-    # OPT_CONFIG_HISTORY exists but is an empty list — that state could
-    # otherwise leak in via a deleted-last-record scenario and silently
-    # break per-quarter resolution.
-    if not (entry.options or {}).get(OPT_CONFIG_HISTORY):
-        new_options = {**(entry.options or {})}
-        new_options.pop("plant_history", None)
-        new_options.pop("hkn_optin_history", None)
-        new_options[OPT_CONFIG_HISTORY] = [
+    # v0.8.2: split first-setup vs pathological-empty-history. The earlier
+    # falsy guard re-seeded the sentinel from entry.data even when
+    # OPT_CONFIG_HISTORY went empty mid-life — and entry.data may already
+    # carry the *latest* utility (mutated by _sync_entry_data_from_history
+    # in the options flow). After the OptionsFlow wipe race was fixed, an
+    # empty history can no longer happen via normal flows; if it does, log
+    # loudly and refuse to silently encode the wrong utility.
+    options = dict(entry.options or {})
+    options.pop("plant_history", None)
+    options.pop("hkn_optin_history", None)
+
+    history = options.get(OPT_CONFIG_HISTORY)
+    if history is None:
+        # First setup — synthesize sentinel from the just-collected entry.data.
+        options[OPT_CONFIG_HISTORY] = [
             {
                 "valid_from": "1970-01-01",
                 "valid_to": None,
                 "config": {k: entry.data.get(k) for k in CONFIG_HISTORY_FIELDS},
             }
         ]
-        hass.config_entries.async_update_entry(entry, options=new_options)
+        hass.config_entries.async_update_entry(entry, options=options)
+    elif not history:
+        _LOGGER.error(
+            "OPT_CONFIG_HISTORY is empty for entry %s — refusing to silently "
+            "re-seed (would likely encode the wrong utility from mutated "
+            "entry.data). Open Settings → Manage configuration history and "
+            "add a transition, or restore a snapshot.",
+            entry.entry_id,
+        )
 
     hass.data[DOMAIN][entry.entry_id] = {
         "config": dict(entry.data),
