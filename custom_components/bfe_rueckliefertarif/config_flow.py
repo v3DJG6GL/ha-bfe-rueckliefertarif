@@ -237,9 +237,12 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
         await _async_warm_cache(self.hass)
+        keys = list_utility_keys()
         return self.async_show_menu(
             step_id="user",
-            menu_options=[f"preset_{k}" for k in list_utility_keys()],
+            menu_options={
+                f"preset_{k}": _utility_display_name(k) for k in keys
+            },
             description_placeholders=_source_links(self.hass),
         )
 
@@ -247,47 +250,22 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._data[CONF_ENERGIEVERSORGER] = key
         return await self.async_step_tariff()
 
-    # 13 menu-option wrappers — one per utility entry in tariffs.json.
-    # AEW splits into aew_fixpreis + aew_rmp; future multi-product utilities
-    # (e.g. Primeo SolarAktiv) follow the same pattern.
-    async def async_step_preset_ekz(self, user_input=None):
-        return await self._apply_preset("ekz")
-
-    async def async_step_preset_bkw(self, user_input=None):
-        return await self._apply_preset("bkw")
-
-    async def async_step_preset_ckw(self, user_input=None):
-        return await self._apply_preset("ckw")
-
-    async def async_step_preset_groupe_e(self, user_input=None):
-        return await self._apply_preset("groupe_e")
-
-    async def async_step_preset_primeo(self, user_input=None):
-        return await self._apply_preset("primeo")
-
-    async def async_step_preset_romande_energie(self, user_input=None):
-        return await self._apply_preset("romande_energie")
-
-    async def async_step_preset_sak(self, user_input=None):
-        return await self._apply_preset("sak")
-
-    async def async_step_preset_sgsw(self, user_input=None):
-        return await self._apply_preset("sgsw")
-
-    async def async_step_preset_ewz(self, user_input=None):
-        return await self._apply_preset("ewz")
-
-    async def async_step_preset_iwb(self, user_input=None):
-        return await self._apply_preset("iwb")
-
-    async def async_step_preset_sig(self, user_input=None):
-        return await self._apply_preset("sig")
-
-    async def async_step_preset_aew_fixpreis(self, user_input=None):
-        return await self._apply_preset("aew_fixpreis")
-
-    async def async_step_preset_aew_rmp(self, user_input=None):
-        return await self._apply_preset("aew_rmp")
+    def __getattr__(self, name: str):
+        # Dynamic dispatch for menu options: HA looks up
+        # ``async_step_preset_<key>`` from menu_options. Accept any key
+        # present in tariffs.json; everything else raises AttributeError so
+        # genuine typos still surface.
+        if name.startswith("async_step_preset_"):
+            key = name.removeprefix("async_step_preset_")
+            try:
+                valid = set(list_utility_keys())
+            except Exception:  # noqa: BLE001
+                valid = set()
+            if key in valid:
+                async def _step(user_input=None, _key=key):
+                    return await self._apply_preset(_key)
+                return _step
+        raise AttributeError(name)
 
     # ----- Step 2: tariff configuration -----------------------------------------
 

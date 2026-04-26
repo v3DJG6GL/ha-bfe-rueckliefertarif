@@ -109,11 +109,16 @@ class TestStringsAndTranslations:
         for d in (en_strings, de_translations):
             assert step in d["config"]["step"], f"missing config.step.{step}"
 
-    def test_user_step_has_menu_options(self, en_strings, de_translations):
-        for d in (en_strings, de_translations):
-            menu = d["config"]["step"]["user"]["menu_options"]
-            for key in list_utility_keys():
-                assert f"preset_{key}" in menu, f"missing menu_options.preset_{key}"
+    def test_every_utility_has_display_name(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _utility_display_name,
+        )
+
+        for key in list_utility_keys():
+            name = _utility_display_name(key)
+            assert name and name != key, (
+                f"{key} missing name_de/name_fr in tariffs.json"
+            )
 
     @pytest.mark.parametrize(
         "field",

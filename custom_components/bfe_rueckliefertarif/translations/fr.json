@@ -3,22 +3,7 @@
     "step": {
       "user": {
         "title": "BFE Rückliefertarif — Choisir le fournisseur",
-        "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. La *formule* du plafond provient de [OApEl art. 4 al. 3 let. e]({stromvv_url}), en vigueur depuis le 1.1.2026.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)",
-        "menu_options": {
-          "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
-          "preset_bkw": "BKW — Berner Kraftwerke",
-          "preset_ckw": "CKW — Centralschweizerische Kraftwerke",
-          "preset_groupe_e": "Groupe E",
-          "preset_primeo": "Primeo Energie",
-          "preset_romande_energie": "Romande Energie",
-          "preset_sak": "SAK — St. Galler Stadtwerke",
-          "preset_sgsw": "SGSW — Sankt Gallen Stadt",
-          "preset_ewz": "ewz — Elektrizitätswerk der Stadt Zürich",
-          "preset_iwb": "IWB — Industrielle Werke Basel",
-          "preset_sig": "SIG — Services Industriels Genève",
-          "preset_aew_fixpreis": "AEW Energie — Reprise Tarif fixe (≤30 kW, naturemade-star)",
-          "preset_aew_rmp": "AEW Energie — Reprise Prix de référence du marché"
-        }
+        "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. La *formule* du plafond provient de [OApEl art. 4 al. 3 let. e]({stromvv_url}), en vigueur depuis le 1.1.2026.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)"
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",

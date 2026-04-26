@@ -3,22 +3,7 @@
     "step": {
       "user": {
         "title": "BFE Rückliefertarif — Energieversorger wählen",
-        "description": "## Übersicht der Rückliefertarife 2026\n\n| Energieversorger | Basisvergütung | HKN-Vergütung (Opt-in) | Cap aktiv | Hinweise |\n|---|---|---|---|---|\n| EKZ | Referenz-Marktpreis | bis 3.00 Rp/kWh | **Ja** | Cap kürzt HKN bei Basis+HKN > Grenze |\n| BKW | Referenz-Marktpreis | bis 2.00 Rp/kWh | Nein | naturemade-star für HKN nötig |\n| CKW | Referenz-Marktpreis | bis 3.00 Rp/kWh | Nein | |\n| Groupe E | Referenz-Marktpreis | bis 4.00 Rp/kWh | **Ja** | |\n| Primeo Energie | Referenz-Marktpreis | bis 2.00 Rp/kWh | **Ja** | |\n| Romande Energie | Referenz-Marktpreis | 1.50 Rp/kWh | Nein | |\n| SAK | Referenz-Marktpreis | bis 1.50 Rp/kWh | Nein | |\n| SGSW | Referenz-Marktpreis | bis 4.60 Rp/kWh | Nein | |\n| ewz | Fixpreis 7.91 Rp/kWh | bis 5.00 Rp/kWh (additiv) | Nein | |\n| IWB | Fixpreis 12.95 Rp/kWh | in Basis enthalten | Nein | 12-Jahres-Vertrag |\n| SIG | Fixpreis 8.16 Rp/kWh | bis 2.80 Rp/kWh (additiv) | Nein | |\n| AEW Fixpreis | Fixpreis 8.20 Rp/kWh (≤30 kW) | in Basis enthalten | Nein | naturemade-star nötig |\n| AEW RMP | Referenz-Marktpreis | keine | Nein | Alle Grössen |\n\n**Cap aktiv** = ob der Versorger die Gesamtvergütung an der Anrechenbarkeitsobergrenze deckelt. Nur EKZ, Groupe E und Primeo wenden den Cap an; alle anderen zahlen Basis + HKN voll additiv aus. Die Cap-*Formel* stammt aus [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}), seit 1.1.2026 in Kraft — die konkreten Werte sind versorgereigene Herleitungen.\n\n---\n\n**Quellen:** [BFE Einspeisevergütung]({agency_url}) · [opendata.swiss Referenz-Marktpreis-Dataset]({opendata_url})",
-        "menu_options": {
-          "preset_ekz": "EKZ — Elektrizitätswerke des Kantons Zürich",
-          "preset_bkw": "BKW — Berner Kraftwerke",
-          "preset_ckw": "CKW — Centralschweizerische Kraftwerke",
-          "preset_groupe_e": "Groupe E",
-          "preset_primeo": "Primeo Energie",
-          "preset_romande_energie": "Romande Energie",
-          "preset_sak": "SAK — St. Galler Stadtwerke",
-          "preset_sgsw": "SGSW — Sankt Gallen Stadt",
-          "preset_ewz": "ewz — Elektrizitätswerk der Stadt Zürich",
-          "preset_iwb": "IWB — Industrielle Werke Basel",
-          "preset_sig": "SIG — Services Industriels Genève",
-          "preset_aew_fixpreis": "AEW Energie — Rücklieferung Fixpreis (≤30 kW, naturemade-star)",
-          "preset_aew_rmp": "AEW Energie — Rücklieferung Referenzmarktpreis"
-        }
+        "description": "## Übersicht der Rückliefertarife 2026\n\n| Energieversorger | Basisvergütung | HKN-Vergütung (Opt-in) | Cap aktiv | Hinweise |\n|---|---|---|---|---|\n| EKZ | Referenz-Marktpreis | bis 3.00 Rp/kWh | **Ja** | Cap kürzt HKN bei Basis+HKN > Grenze |\n| BKW | Referenz-Marktpreis | bis 2.00 Rp/kWh | Nein | naturemade-star für HKN nötig |\n| CKW | Referenz-Marktpreis | bis 3.00 Rp/kWh | Nein | |\n| Groupe E | Referenz-Marktpreis | bis 4.00 Rp/kWh | **Ja** | |\n| Primeo Energie | Referenz-Marktpreis | bis 2.00 Rp/kWh | **Ja** | |\n| Romande Energie | Referenz-Marktpreis | 1.50 Rp/kWh | Nein | |\n| SAK | Referenz-Marktpreis | bis 1.50 Rp/kWh | Nein | |\n| SGSW | Referenz-Marktpreis | bis 4.60 Rp/kWh | Nein | |\n| ewz | Fixpreis 7.91 Rp/kWh | bis 5.00 Rp/kWh (additiv) | Nein | |\n| IWB | Fixpreis 12.95 Rp/kWh | in Basis enthalten | Nein | 12-Jahres-Vertrag |\n| SIG | Fixpreis 8.16 Rp/kWh | bis 2.80 Rp/kWh (additiv) | Nein | |\n| AEW Fixpreis | Fixpreis 8.20 Rp/kWh (≤30 kW) | in Basis enthalten | Nein | naturemade-star nötig |\n| AEW RMP | Referenz-Marktpreis | keine | Nein | Alle Grössen |\n\n**Cap aktiv** = ob der Versorger die Gesamtvergütung an der Anrechenbarkeitsobergrenze deckelt. Nur EKZ, Groupe E und Primeo wenden den Cap an; alle anderen zahlen Basis + HKN voll additiv aus. Die Cap-*Formel* stammt aus [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}), seit 1.1.2026 in Kraft — die konkreten Werte sind versorgereigene Herleitungen.\n\n---\n\n**Quellen:** [BFE Einspeisevergütung]({agency_url}) · [opendata.swiss Referenz-Marktpreis-Dataset]({opendata_url})"
       },
       "tariff": {
         "title": "Tarif konfigurieren ({utility_name})",
