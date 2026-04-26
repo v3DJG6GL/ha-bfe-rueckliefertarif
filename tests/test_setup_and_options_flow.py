@@ -207,6 +207,95 @@ class TestOptionsFlowPreservesOptions:
         # there's nothing there.
         assert result["data"] == {}
 
+    @pytest.mark.asyncio
+    async def test_done_history_schedules_explicit_reload(self):
+        # Fix C verification: OptionsFlowWithReload's auto-reload silently
+        # skips when _edit_row pre-writes options (its diff check sees no
+        # change), so we trigger the reload explicitly. Required so the
+        # coordinator's tariff-breakdown sensor rebuilds with fresh entry
+        # state.
+        flow, entry = self._make_flow({OPT_CONFIG_HISTORY: []})
+        await flow.async_step_done_history()
+        # async_create_task(async_reload(entry_id)) must have been scheduled.
+        assert flow.hass.async_create_task.called, (
+            "async_step_done_history must schedule a reload"
+        )
+
+
+class TestFirstEntryDataLiveReads:
+    """Fix A verification — _first_entry_data refreshes config/options
+    from the live ConfigEntry on every call, not from the one-time
+    snapshot written at async_setup_entry time."""
+
+    def _setup_hass_with_entry(self, entry_data, entry_options):
+        """Build a hass mock + a stored entry slot + a live ConfigEntry."""
+        from custom_components.bfe_rueckliefertarif.const import DOMAIN
+
+        hass = MagicMock()
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=entry_data,
+            options=entry_options,
+        )
+        # Stale snapshot written at startup:
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": {"energieversorger": "stale_old"},
+                    "options": {OPT_CONFIG_HISTORY: []},
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+        return hass, live_entry
+
+    def test_returns_live_entry_data_after_mutation(self):
+        from custom_components.bfe_rueckliefertarif.services import _first_entry_data
+
+        hass, entry = self._setup_hass_with_entry(
+            entry_data=_entry_data(utility="ekz"),
+            entry_options={OPT_CONFIG_HISTORY: []},
+        )
+        # Mutate live entry.data after setup.
+        entry.data = _entry_data(utility="age_sa")
+        result = _first_entry_data(hass)
+        assert result["config"][CONF_ENERGIEVERSORGER] == "age_sa"
+
+    def test_returns_live_entry_options_after_mutation(self):
+        from custom_components.bfe_rueckliefertarif.services import _first_entry_data
+
+        new_history = [
+            {"valid_from": "1970-01-01", "valid_to": "2026-01-01",
+             "config": _entry_data(utility="ekz")},
+            {"valid_from": "2026-01-01", "valid_to": None,
+             "config": _entry_data(utility="age_sa")},
+        ]
+        hass, entry = self._setup_hass_with_entry(
+            entry_data=_entry_data(),
+            entry_options={OPT_CONFIG_HISTORY: []},
+        )
+        # Mutate live entry.options after setup (simulating an OptionsFlow
+        # that wrote options inline via async_update_entry).
+        entry.options = {OPT_CONFIG_HISTORY: new_history}
+        result = _first_entry_data(hass)
+        assert result["options"][OPT_CONFIG_HISTORY] == new_history
+
+
+class TestCoordinatorConfigLiveReads:
+    """Fix B verification — BfeCoordinator._config is a property that
+    reads self.entry.data live, not a cached dict from __init__."""
+
+    def test_config_property_reflects_live_entry_data(self):
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(data=_entry_data(utility="ekz"))
+        assert coord._config[CONF_ENERGIEVERSORGER] == "ekz"
+
+        # Mutate live entry.data after coordinator was built.
+        coord.entry.data = _entry_data(utility="age_sa")
+        assert coord._config[CONF_ENERGIEVERSORGER] == "age_sa"
+
 
 async def _async_noop(*args, **kwargs):
     """Async stub that does nothing — for replacing service/setup calls."""

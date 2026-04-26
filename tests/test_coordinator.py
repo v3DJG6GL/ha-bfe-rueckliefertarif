@@ -20,14 +20,15 @@ def _make_coordinator(statistic_id: str | None = "sensor.power_meter_exported"):
     """Build a coordinator with just enough state for the filter helper.
 
     Skips DataUpdateCoordinator.__init__ (needs a real hass) — the helper
-    only touches ``self.hass``, ``self._config``, ``self._earliest_export_hour``,
-    so a partially-initialised instance is fine here.
+    only touches ``self.hass``, ``self._config`` (now a property reading
+    ``self.entry.data``), and ``self._earliest_export_hour``, so a partially-
+    initialised instance is fine here.
     """
     coord = BfeCoordinator.__new__(BfeCoordinator)
     coord.hass = MagicMock()
-    coord._config = {"stromnetzeinspeisung_kwh": statistic_id} if statistic_id else {}
     coord._earliest_export_hour = None
-    coord.entry = SimpleNamespace(entry_id="test_entry")
+    entry_data = {"stromnetzeinspeisung_kwh": statistic_id} if statistic_id else {}
+    coord.entry = SimpleNamespace(entry_id="test_entry", data=entry_data)
     return coord
 
 

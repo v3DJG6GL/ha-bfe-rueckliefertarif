@@ -44,7 +44,6 @@ class BfeCoordinator(DataUpdateCoordinator):
             update_interval=_UPDATE_INTERVAL,
         )
         self.entry = entry
-        self._config = dict(entry.data)
         self._store = self._make_store()
         self._imported: dict[str, dict[str, Any]] = {}
         self.quarterly: dict[Quarter, BfePrice] = {}
@@ -54,6 +53,20 @@ class BfeCoordinator(DataUpdateCoordinator):
         # don't claim HA has records when it doesn't. Lazily computed; reset
         # on coordinator restart only.
         self._earliest_export_hour: datetime | None = None
+
+    @property
+    def _config(self) -> dict:
+        """Live read of ``entry.data``.
+
+        v0.8.5: was a cached ``dict(entry.data)`` set in __init__ and never
+        refreshed, so the tariff-breakdown sensor + skipped-quarter
+        notification rendered stale utility/kw/EV/HKN values after any
+        OptionsFlow change that didn't trigger an entry reload (and
+        OptionsFlowWithReload silently skips the reload when _edit_row
+        pre-writes options). Reading live trades a tiny dict() each access
+        for never showing stale state.
+        """
+        return dict(self.entry.data)
 
     def _make_store(self):
         from homeassistant.helpers.storage import Store

@@ -482,7 +482,17 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
         # Pass current options through so HA's commit doesn't wipe them.
-        # Reload happens automatically via OptionsFlowWithReload.
+        # OptionsFlowWithReload's auto-reload silently skips when _edit_row
+        # has pre-written options inline (its diff check sees no change),
+        # so trigger the reload explicitly. Required so coordinator and
+        # hass.data caches see the fresh history (also reflected by the
+        # services-level live read of _first_entry_data, but the
+        # coordinator's BFE breakdown sensor needs a rebuild to refresh).
+        # Safe (no wipe race): the flow result carries the current options
+        # dict, not data={}.
+        self.hass.async_create_task(
+            self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        )
         return self.async_create_entry(
             title="", data=dict(self.config_entry.options or {})
         )

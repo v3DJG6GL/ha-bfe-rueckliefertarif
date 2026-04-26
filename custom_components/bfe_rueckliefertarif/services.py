@@ -76,16 +76,28 @@ async def async_register_services(hass: "HomeAssistant") -> None:
 
 
 def _first_entry_data(hass: "HomeAssistant") -> dict:
-    """Return the first config entry's storage dict.
+    """Return the first config entry's storage dict, with live config/options.
 
     ``hass.data[DOMAIN]`` carries one slot per config entry (keyed by
     ``entry_id``) plus a shared ``_tariffs_data`` slot (the
     TariffsDataCoordinator from Phase 6). Skip underscore-prefixed keys
     so we always get an actual config entry.
+
+    v0.8.5: ``config`` and ``options`` keys are re-pulled from the live
+    ``ConfigEntry`` on every call. Earlier versions cached them at
+    ``async_setup_entry`` time and never refreshed, so any change made via
+    the OptionsFlow stayed invisible to recompute paths until the entry
+    was reloaded — and OptionsFlowWithReload silently skips the auto-
+    reload when ``_edit_row`` has pre-written options inline (its diff
+    check sees no change). Live reads make this class of bug structural.
     """
     entries = hass.data.get(DOMAIN, {})
     for key, value in entries.items():
         if not key.startswith("_") and isinstance(value, dict):
+            entry = hass.config_entries.async_get_entry(key)
+            if entry is not None:
+                value["config"] = dict(entry.data)
+                value["options"] = dict(entry.options or {})
             return value
     raise RuntimeError("BFE Rückliefertarif not configured")
 
