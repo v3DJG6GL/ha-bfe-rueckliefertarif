@@ -1,7 +1,9 @@
 """Admin buttons for BFE Rückliefertarif.
 
-Three one-shot actions exposed on the integration's device page:
-- Reload Referenz-Marktpreise (calls the ``refresh`` service).
+One-shot actions exposed on the integration's device page:
+- Reload data: refetch tariffs.json from the companion repo *and* re-poll BFE
+  reference market prices (auto-imports newly published / staleness-flagged
+  quarters in one go).
 - Recompute the most recently *published* quarter (BFE publishes ~10 working
   days after each quarter end, so the running quarter usually has no price
   yet — picking the latest published quarter is what users actually want).
@@ -39,7 +41,7 @@ async def async_setup_entry(
 
     async_add_entities(
         [
-            ReloadReferenzmarktpreiseButton(entry, prefix),
+            ReloadDatenButton(entry, prefix),
             RecomputeLetztesPubliziertesQuartalButton(entry, prefix),
             RecomputeAktuellesQuartalEstimateButton(entry, prefix),
             RecomputeHistorieButton(entry, prefix),
@@ -68,45 +70,66 @@ def _format_quarters(qs) -> str:
     return ", ".join(str(q) for q in qs)
 
 
-class ReloadReferenzmarktpreiseButton(_BaseButton):
+class ReloadDatenButton(_BaseButton):
+    """Refetch tariffs.json from the companion repo and re-poll BFE prices.
+
+    Order: tariffs first so when ``_refresh_coordinator`` triggers
+    ``_auto_import_newly_published`` next, it resolves rates against the
+    freshly fetched tariff file. A tariff-fetch failure is non-fatal and
+    must not block the BFE refresh.
+    """
+
     def __init__(self, entry: "ConfigEntry", prefix: str) -> None:
         super().__init__(
             entry,
             prefix,
-            "reload_referenzmarktpreise",
-            "reload_referenzmarktpreise",
+            "reload_daten",
+            "reload_daten",
         )
 
     async def async_press(self) -> None:
         from .services import _refresh_coordinator
 
+        tariff_line = await self._refresh_tariffs()
+
         try:
             result = await _refresh_coordinator(self.hass)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.exception("Refresh failed")
-            notify(
-                self.hass,
-                f"Refresh failed: {exc}",
-                title="BFE Rückliefertarif",
-                notification_id=f"{DOMAIN}_{self._entry.entry_id}_refresh",
-            )
-            return
-
-        avail = result["available"]
-        new = result["newly_imported"]
-        lines = [f"{len(avail)} quarters available"]
-        if avail:
-            lines[0] += f" (latest: {max(avail)})"
-        if new:
-            lines.append(f"Newly imported: {_format_quarters(new)}")
+            _LOGGER.exception("BFE refresh failed")
+            rmp_line = f"Referenz-Marktpreise: Fehler — {exc}"
         else:
-            lines.append("No new quarters since the last import.")
+            avail = result["available"]
+            new = result["newly_imported"]
+            line = f"Referenz-Marktpreise: {len(avail)} Quartale verfügbar"
+            if avail:
+                line += f" (neuestes: {max(avail)})"
+            if new:
+                line += f"; neu importiert: {_format_quarters(new)}"
+            else:
+                line += "; keine neuen Quartale seit letztem Import."
+            rmp_line = line
+
         notify(
             self.hass,
-            "\n".join(lines),
+            f"{tariff_line}\n{rmp_line}",
             title="BFE Rückliefertarif",
-            notification_id=f"{DOMAIN}_{self._entry.entry_id}_refresh",
+            notification_id=f"{DOMAIN}_{self._entry.entry_id}_reload",
         )
+
+    async def _refresh_tariffs(self) -> str:
+        tdc = self.hass.data.get(DOMAIN, {}).get("_tariffs_data")
+        if tdc is None:
+            return "Tarifdaten: Coordinator nicht initialisiert — übersprungen."
+        try:
+            ok = await tdc.async_refresh()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Tariffs refresh raised")
+            return f"Tarifdaten: Fehler — {exc}; bundled Fallback aktiv."
+        if not ok:
+            err = tdc.last_error or "unbekannt"
+            return f"Tarifdaten: Fehler — {err}; bundled Fallback aktiv."
+        ts = tdc.last_remote_update.strftime("%Y-%m-%d %H:%M UTC") if tdc.last_remote_update else "unbekannt"
+        return f"Tarifdaten: aktualisiert ({ts})."
 
 
 class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
@@ -137,7 +160,7 @@ class RecomputeLetztesPubliziertesQuartalButton(_BaseButton):
         if coordinator is None or not coordinator.quarterly:
             notify(
                 self.hass,
-                "No reference market prices available — run 'Reload reference market prices' first.",
+                "No reference market prices available — run 'Reload data' first.",
                 title="BFE Rückliefertarif",
                 notification_id=f"{DOMAIN}_{self._entry.entry_id}_recompute_quarter",
             )

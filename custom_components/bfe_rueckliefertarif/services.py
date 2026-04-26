@@ -439,7 +439,7 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     coordinator = entry_data.get("coordinator")
     if coordinator is None or not coordinator.data:
         raise RuntimeError(
-            "Coordinator not ready — run 'Reload reference market prices' first"
+            "Coordinator not ready — run 'Reload data' first"
         )
     breakdown = coordinator.data.get("tariff_breakdown")
     if not breakdown:

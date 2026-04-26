@@ -147,8 +147,8 @@
       }
     },
     "button": {
-      "reload_referenzmarktpreise": {
-        "name": "Recharger les prix de référence"
+      "reload_daten": {
+        "name": "Recharger les données"
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Recalculer le dernier trimestre publié"

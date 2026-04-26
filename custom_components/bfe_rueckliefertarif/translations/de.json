@@ -147,8 +147,8 @@
       }
     },
     "button": {
-      "reload_referenzmarktpreise": {
-        "name": "Referenz-Marktpreise neu laden"
+      "reload_daten": {
+        "name": "Daten neu laden"
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Letztes publiziertes Quartal neu berechnen"

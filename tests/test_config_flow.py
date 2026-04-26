@@ -174,7 +174,7 @@ class TestStringsAndTranslations:
     @pytest.mark.parametrize(
         "key",
         [
-            "reload_referenzmarktpreise",
+            "reload_daten",
             "recompute_letztes_publiziertes_quartal",
             "recompute_aktuelles_quartal_estimate",
             "recompute_historie",

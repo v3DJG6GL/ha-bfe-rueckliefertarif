@@ -147,8 +147,8 @@
       }
     },
     "button": {
-      "reload_referenzmarktpreise": {
-        "name": "Reload reference market prices"
+      "reload_daten": {
+        "name": "Reload data"
       },
       "recompute_letztes_publiziertes_quartal": {
         "name": "Recompute most recent published quarter"
