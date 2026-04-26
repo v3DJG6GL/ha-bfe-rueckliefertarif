@@ -12,6 +12,7 @@ import voluptuous as vol
 from .bfe import PriceNotYetPublished, fetch_monthly, fetch_quarterly
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
+    ABRECHNUNGS_RHYTHMUS_QUARTAL,
     CONF_ABRECHNUNGS_RHYTHMUS,
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_ENERGIEVERSORGER,
@@ -241,37 +242,54 @@ async def _reimport_quarter(
     _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg)
 
 
-def _aggregate_monthly(records) -> list[dict]:
-    """Bucket per-hour records by Zurich-local YYYY-MM. Pure function.
+def _aggregate_by_period(records, rhythm: str | None) -> list[dict]:
+    """Bucket per-hour records by Zurich-local period. Pure function.
 
-    Returns sorted list of ``{"month", "kwh", "chf", "rate_rp_kwh_avg"}``.
-    Avg rate is kWh-weighted (``month_chf × 100 / month_kwh``); ``None``
-    for zero-export months. Bucketing is in Zurich local time so the
-    user's calendar months match their utility invoice and tax year.
+    ``rhythm == "quartal"`` → bucket key ``YYYYQN`` (e.g. ``2026Q1``).
+    Anything else (including ``"monat"`` and ``None``) → bucket key
+    ``YYYY-MM``. Avg rates are kWh-weighted; ``None`` for zero-export
+    periods. The Base/HKN columns decompose the total (``base + hkn = total``
+    within rounding) so the user can see what the HKN opt-in contributed.
     """
     from zoneinfo import ZoneInfo
 
     z = ZoneInfo("Europe/Zurich")
+    quarterly = rhythm == ABRECHNUNGS_RHYTHMUS_QUARTAL
     buckets: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"kwh": 0.0, "chf": 0.0}
+        lambda: {"kwh": 0.0, "chf": 0.0, "base_chf": 0.0, "hkn_chf": 0.0}
     )
     for r in records:
-        ym = r.start.astimezone(z).strftime("%Y-%m")
-        buckets[ym]["kwh"] += r.kwh
-        buckets[ym]["chf"] += r.compensation_chf
+        local = r.start.astimezone(z)
+        if quarterly:
+            key = f"{local.year}Q{(local.month - 1) // 3 + 1}"
+        else:
+            key = local.strftime("%Y-%m")
+        b = buckets[key]
+        b["kwh"] += r.kwh
+        b["chf"] += r.compensation_chf
+        # Component CHF accumulators (only present when HourRecord carries
+        # the breakdown; pre-v0.7.5 records would lack these attrs).
+        base_rp = getattr(r, "base_rp_kwh", None)
+        hkn_rp = getattr(r, "hkn_rp_kwh", None)
+        if base_rp is not None and hkn_rp is not None:
+            b["base_chf"] += r.kwh * base_rp / 100.0
+            b["hkn_chf"] += r.kwh * hkn_rp / 100.0
 
     out: list[dict] = []
-    for ym in sorted(buckets):
-        b = buckets[ym]
-        avg_rate = (b["chf"] * 100.0 / b["kwh"]) if b["kwh"] > 0 else None
+    for key in sorted(buckets):
+        b = buckets[key]
+        kwh = b["kwh"]
+        avg_rate = (b["chf"] * 100.0 / kwh) if kwh > 0 else None
+        avg_base = (b["base_chf"] * 100.0 / kwh) if kwh > 0 else None
+        avg_hkn = (b["hkn_chf"] * 100.0 / kwh) if kwh > 0 else None
         out.append(
             {
-                "month": ym,
-                "kwh": round(b["kwh"], 3),
+                "period": key,
+                "kwh": round(kwh, 3),
                 "chf": round(b["chf"], 4),
-                "rate_rp_kwh_avg": round(avg_rate, 4)
-                if avg_rate is not None
-                else None,
+                "rate_rp_kwh_avg": round(avg_rate, 4) if avg_rate is not None else None,
+                "base_rp_kwh_avg": round(avg_base, 4) if avg_base is not None else None,
+                "hkn_rp_kwh_avg": round(avg_hkn, 4) if avg_hkn is not None else None,
             }
         )
     return out
@@ -332,7 +350,7 @@ def _record_snapshot(
         "cap_applied": bool(cap_applied),
         "total_kwh": round(total_kwh, 3),
         "total_chf": round(total_chf, 4),
-        "monthly": _aggregate_monthly(plan.records),
+        "periods": _aggregate_by_period(plan.records, billing),
         "utility_key": rt.utility_key,
         "base_model": rt.base_model,
         "billing": billing,
@@ -550,14 +568,18 @@ async def _handle_refresh_tariffs(call: "ServiceCall") -> None:
 
 @dataclass(frozen=True)
 class _RecomputeReportRow:
-    """One row per month in the recompute notification table.
+    """One row per billing period in the recompute notification table.
 
-    Works uniformly across all base_models: rate is always the kWh-weighted
-    average for that month (``month_chf × 100 / month_kwh``).
+    ``period`` is ``YYYY-MM`` for monthly billing, ``YYYYQN`` for quarterly.
+    Rate columns are kWh-weighted averages over the period; ``base + hkn``
+    sums to ``rate_rp_kwh_avg`` within rounding (HKN may be 0 if the user
+    didn't opt in or the cap forfeited it).
     """
 
-    month: str
+    period: str
     rate_rp_kwh_avg: float | None
+    base_rp_kwh_avg: float | None
+    hkn_rp_kwh_avg: float | None
     total_kwh: float | None
     total_chf: float | None
 
@@ -607,17 +629,23 @@ def _build_recompute_report(
     if coordinator is not None:
         for q in sorted(quarters):
             snap = (coordinator._imported.get(str(q)) or {}).get("snapshot") or {}
-            monthly = snap.get("monthly") or []
-            for m in monthly:
+            # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
+            # snapshots from older imports still render (Base/HKN cells = —).
+            periods = snap.get("periods") or [
+                {**m, "period": m.get("month")} for m in (snap.get("monthly") or [])
+            ]
+            for p in periods:
                 rows.append(
                     _RecomputeReportRow(
-                        month=m["month"],
-                        rate_rp_kwh_avg=m.get("rate_rp_kwh_avg"),
-                        total_kwh=m.get("kwh"),
-                        total_chf=m.get("chf"),
+                        period=p.get("period") or p.get("month"),
+                        rate_rp_kwh_avg=p.get("rate_rp_kwh_avg"),
+                        base_rp_kwh_avg=p.get("base_rp_kwh_avg"),
+                        hkn_rp_kwh_avg=p.get("hkn_rp_kwh_avg"),
+                        total_kwh=p.get("kwh"),
+                        total_chf=p.get("chf"),
                     )
                 )
-    rows.sort(key=lambda r: r.month, reverse=True)
+    rows.sort(key=lambda r: r.period, reverse=True)
     return _RecomputeReport(
         rows=rows,
         quarters_recomputed=len(quarters),
@@ -627,13 +655,13 @@ def _build_recompute_report(
 
 def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     """Pure function: report → ``(title, markdown_body)``. Easy to unit-test."""
-    n_months = len(report.rows)
+    n_periods = len(report.rows)
     n_q = report.quarters_recomputed
     if n_q == 1:
-        title = f"Tariff recomputed — 1 quarter ({n_months} months)"
+        title = f"Tariff recomputed — 1 quarter ({n_periods} periods)"
     else:
         title = (
-            f"Tariff history recomputed — {n_months} months across {n_q} quarters"
+            f"Tariff history recomputed — {n_periods} periods across {n_q} quarters"
         )
 
     c = report.config
@@ -668,31 +696,36 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     )
 
     lines.append("")
-    lines.append("## Per-month results")
+    lines.append("## Per-period results")
     lines.append("")
     LIMIT = 24
-    if n_months > LIMIT:
+    if n_periods > LIMIT:
         shown = report.rows[:LIMIT]
-        elided = n_months - LIMIT
+        elided = n_periods - LIMIT
     else:
         shown = report.rows
         elided = 0
-    lines.append("| Month | Avg rate (Rp/kWh) | kWh exported | CHF |")
-    lines.append("|---|---|---|---|")
+    lines.append(
+        "| Period | Base (Rp/kWh) | HKN (Rp/kWh) | Total (Rp/kWh) | "
+        "kWh exported | CHF |"
+    )
+    lines.append("|---|---|---|---|---|---|")
     for r in shown:
+        base = f"{r.base_rp_kwh_avg:.4f}" if r.base_rp_kwh_avg is not None else "—"
+        hkn = f"{r.hkn_rp_kwh_avg:.4f}" if r.hkn_rp_kwh_avg is not None else "—"
         rate = f"{r.rate_rp_kwh_avg:.4f}" if r.rate_rp_kwh_avg is not None else "—"
         kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
         chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
-        lines.append(f"| {r.month} | {rate} | {kwh} | {chf} |")
+        lines.append(f"| {r.period} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
     if elided:
         lines.append("")
-        lines.append(f"_{elided} older month(s) not shown — see logs._")
+        lines.append(f"_{elided} older period(s) not shown — see logs._")
     if n_q > 1:
         total_kwh = sum(r.total_kwh or 0 for r in report.rows)
         total_chf = sum(r.total_chf or 0 for r in report.rows)
         lines.append("")
         lines.append(
-            f"**Totals:** {n_months} months · {total_kwh:,.2f} kWh · "
+            f"**Totals:** {n_periods} periods · {total_kwh:,.2f} kWh · "
             f"{total_chf:,.2f} CHF."
         )
     lines.append("")

@@ -69,6 +69,31 @@ def anrechenbarkeitsgrenze_rp_kwh(
     return float(rule["cap_rp_kwh"]) if rule is not None else None
 
 
+def effective_rp_kwh_breakdown(
+    base_input_rp_kwh: float,
+    hkn_rp_kwh: float = 0.0,
+    *,
+    federal_floor_rp_kwh: float | None,
+    cap_rp_kwh: float | None,
+    cap_mode: bool = False,
+) -> tuple[float, float, float]:
+    """Decomposed effective rate: ``(rate, base_after_floor, applied_hkn)``.
+
+    Same math as ``effective_rp_kwh`` but exposes the components so callers
+    can show the user where the total came from. Invariant:
+    ``rate == base_after_floor + applied_hkn``.
+    """
+    floor = federal_floor_rp_kwh or 0.0
+    base = max(base_input_rp_kwh, floor)
+
+    if not cap_mode or cap_rp_kwh is None:
+        return base + hkn_rp_kwh, base, hkn_rp_kwh
+    if base >= cap_rp_kwh:
+        return base, base, 0.0
+    applied_hkn = min(hkn_rp_kwh, cap_rp_kwh - base)
+    return base + applied_hkn, base, applied_hkn
+
+
 def effective_rp_kwh(
     base_input_rp_kwh: float,
     hkn_rp_kwh: float = 0.0,
@@ -94,14 +119,14 @@ def effective_rp_kwh(
     - If base alone already meets/exceeds the cap → HKN forfeited entirely.
     - Otherwise → HKN reduced just enough to keep base + HKN ≤ cap.
     """
-    floor = federal_floor_rp_kwh or 0.0
-    base = max(base_input_rp_kwh, floor)
-
-    if not cap_mode or cap_rp_kwh is None:
-        return base + hkn_rp_kwh
-    if base >= cap_rp_kwh:
-        return base
-    return min(base + hkn_rp_kwh, cap_rp_kwh)
+    rate, _, _ = effective_rp_kwh_breakdown(
+        base_input_rp_kwh,
+        hkn_rp_kwh,
+        federal_floor_rp_kwh=federal_floor_rp_kwh,
+        cap_rp_kwh=cap_rp_kwh,
+        cap_mode=cap_mode,
+    )
+    return rate
 
 
 def classify_ht(hour_utc: datetime, ht_window: dict | None) -> bool:

@@ -1,8 +1,8 @@
 """Tests for v0.7.0 recompute report machinery — pure functions only.
 
-Covers ``_aggregate_monthly`` and ``_format_recompute_notification`` from
-``services.py``, plus the snapshot's new ``monthly`` / ``total_*`` fields
-asserted via ``compute_quarter_plan`` + ``_aggregate_monthly`` directly.
+Covers ``_aggregate_by_period`` and ``_format_recompute_notification`` from
+``services.py``, plus the snapshot's per-period rows asserted via
+``compute_quarter_plan`` + ``_aggregate_by_period`` directly.
 
 Coordinator-level staleness detection is exercised live during the
 verification step (kW-change in options flow → notification appears);
@@ -18,7 +18,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-from custom_components.bfe_rueckliefertarif.const import ABRECHNUNGS_RHYTHMUS_QUARTAL
+from custom_components.bfe_rueckliefertarif.const import (
+    ABRECHNUNGS_RHYTHMUS_MONAT,
+    ABRECHNUNGS_RHYTHMUS_QUARTAL,
+)
 from custom_components.bfe_rueckliefertarif.importer import (
     HourRecord,
     TariffConfig,
@@ -32,14 +35,14 @@ from custom_components.bfe_rueckliefertarif.quarters import (
 from custom_components.bfe_rueckliefertarif.services import (
     _RecomputeReport,
     _RecomputeReportRow,
-    _aggregate_monthly,
+    _aggregate_by_period,
     _format_recompute_notification,
 )
 from custom_components.bfe_rueckliefertarif.tariff import classify_ht
 from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
 
-# ----- _aggregate_monthly ----------------------------------------------------
+# ----- _aggregate_by_period --------------------------------------------------
 
 
 def _hour(year: int, month: int, day: int, hour: int) -> datetime:
@@ -49,48 +52,78 @@ def _hour(year: int, month: int, day: int, hour: int) -> datetime:
     ).astimezone(timezone.utc)
 
 
-def _hr(start: datetime, kwh: float, rate_rp_kwh: float = 10.0) -> HourRecord:
-    """Build a synthetic HourRecord with computed compensation."""
+def _hr(
+    start: datetime,
+    kwh: float,
+    rate_rp_kwh: float = 10.0,
+    base_rp_kwh: float | None = None,
+    hkn_rp_kwh: float = 0.0,
+) -> HourRecord:
+    """Build a synthetic HourRecord with computed compensation.
+
+    Defaults base_rp_kwh to (rate - hkn) so the breakdown invariant holds.
+    """
+    if base_rp_kwh is None:
+        base_rp_kwh = rate_rp_kwh - hkn_rp_kwh
     return HourRecord(
         start=start,
         kwh=kwh,
         rate_rp_kwh=rate_rp_kwh,
         compensation_chf=kwh * rate_rp_kwh / 100.0,
+        base_rp_kwh=base_rp_kwh,
+        hkn_rp_kwh=hkn_rp_kwh,
     )
 
 
-class TestAggregateMonthly:
-    def test_full_quarter_produces_three_buckets(self):
+class TestAggregateByPeriod:
+    def test_monthly_full_quarter_produces_three_buckets(self):
         # Synthetic Q1 2026 with 1 kWh/hour at flat 10 Rp/kWh.
         q = Quarter(2026, 1)
         s, e = quarter_bounds_utc(q)
         records = [_hr(h, kwh=1.0, rate_rp_kwh=10.0) for h in hours_in_range(s, e)]
-        out = _aggregate_monthly(records)
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
         # Three Zurich-local months: 2026-01, 2026-02, 2026-03
-        months = [b["month"] for b in out]
-        assert months == ["2026-01", "2026-02", "2026-03"]
+        periods = [b["period"] for b in out]
+        assert periods == ["2026-01", "2026-02", "2026-03"]
         # Avg rate is flat 10.0 Rp/kWh in every bucket
         for b in out:
             assert b["rate_rp_kwh_avg"] == pytest.approx(10.0)
+
+    def test_quarterly_full_quarter_produces_one_bucket(self):
+        # Same data as above but quarterly aggregation collapses to one row.
+        q = Quarter(2026, 1)
+        s, e = quarter_bounds_utc(q)
+        records = [_hr(h, kwh=1.0, rate_rp_kwh=10.0) for h in hours_in_range(s, e)]
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_QUARTAL)
+        assert len(out) == 1
+        assert out[0]["period"] == "2026Q1"
+        # Q1 2026 = 2159 hours (DST spring-forward in March eats one local hour)
+        assert out[0]["kwh"] == pytest.approx(2159.0)
+        assert out[0]["rate_rp_kwh_avg"] == pytest.approx(10.0)
 
     def test_january_kwh_chf_match_hand_computed(self):
         q = Quarter(2026, 1)
         s, e = quarter_bounds_utc(q)
         records = [_hr(h, kwh=1.0, rate_rp_kwh=10.0) for h in hours_in_range(s, e)]
-        out = _aggregate_monthly(records)
-        jan = next(b for b in out if b["month"] == "2026-01")
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
+        jan = next(b for b in out if b["period"] == "2026-01")
         # January 2026 has 31 days × 24 hours = 744 hours, all in CET (no DST).
         assert jan["kwh"] == pytest.approx(744.0)
         assert jan["chf"] == pytest.approx(74.40)
 
-    def test_zero_export_month_returns_none_rate(self):
+    def test_zero_export_period_returns_none_rate(self):
         # One zero-export hour in February.
         feb_hour = _hour(2026, 2, 15, 12)
         records = [_hr(feb_hour, kwh=0.0, rate_rp_kwh=10.0)]
-        out = _aggregate_monthly(records)
-        assert out == [
-            {"month": "2026-02", "kwh": 0.0, "chf": 0.0, "rate_rp_kwh_avg": None}
-        ]
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
+        assert len(out) == 1
+        row = out[0]
+        assert row["period"] == "2026-02"
+        assert row["kwh"] == 0.0
+        assert row["chf"] == 0.0
+        assert row["rate_rp_kwh_avg"] is None
+        assert row["base_rp_kwh_avg"] is None
+        assert row["hkn_rp_kwh_avg"] is None
 
     def test_dst_spring_forward_buckets_to_zurich_local_month(self):
         # 2025-03-30 02:00 → 03:00 Zurich (CEST starts) — Sunday, last of March.
@@ -101,8 +134,8 @@ class TestAggregateMonthly:
         q = Quarter(2025, 1)
         s, e = quarter_bounds_utc(q)
         records = [_hr(h, kwh=1.0, rate_rp_kwh=10.0) for h in hours_in_range(s, e)]
-        out = _aggregate_monthly(records)
-        buckets = {b["month"]: b for b in out}
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
+        buckets = {b["period"]: b for b in out}
         assert buckets["2025-01"]["kwh"] == pytest.approx(744.0)
         assert buckets["2025-02"]["kwh"] == pytest.approx(672.0)
         assert buckets["2025-03"]["kwh"] == pytest.approx(743.0)
@@ -122,13 +155,37 @@ class TestAggregateMonthly:
             is_ht = classify_ht(h, ekz_window)
             rate = 12.60 if is_ht else 11.60
             records.append(_hr(h, kwh=1.0, rate_rp_kwh=rate))
-        out = _aggregate_monthly(records)
-        jan = next(b for b in out if b["month"] == "2025-01")
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
+        jan = next(b for b in out if b["period"] == "2025-01")
         # Hand-compute expected weighted avg:
         ht_count = sum(1 for h in hours_in_range(jan_s, jan_e) if classify_ht(h, ekz_window))
         nt_count = sum(1 for h in hours_in_range(jan_s, jan_e) if not classify_ht(h, ekz_window))
         expected = (ht_count * 12.60 + nt_count * 11.60) / (ht_count + nt_count)
         assert jan["rate_rp_kwh_avg"] == pytest.approx(expected, rel=1e-4)
+
+    def test_breakdown_invariant_base_plus_hkn_equals_total(self):
+        # 12.45 base + 0.82 HKN = 13.27 total, every hour.
+        feb_hour = _hour(2026, 2, 15, 12)
+        records = [
+            _hr(feb_hour, kwh=10.0, rate_rp_kwh=13.27, base_rp_kwh=12.45, hkn_rp_kwh=0.82)
+        ]
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
+        row = out[0]
+        assert row["base_rp_kwh_avg"] == pytest.approx(12.45)
+        assert row["hkn_rp_kwh_avg"] == pytest.approx(0.82)
+        assert row["base_rp_kwh_avg"] + row["hkn_rp_kwh_avg"] == pytest.approx(
+            row["rate_rp_kwh_avg"], abs=1e-4
+        )
+
+    def test_breakdown_hkn_zero_when_optout(self):
+        feb_hour = _hour(2026, 2, 15, 12)
+        records = [
+            _hr(feb_hour, kwh=10.0, rate_rp_kwh=12.45, base_rp_kwh=12.45, hkn_rp_kwh=0.0)
+        ]
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_MONAT)
+        row = out[0]
+        assert row["hkn_rp_kwh_avg"] == pytest.approx(0.0)
+        assert row["base_rp_kwh_avg"] == pytest.approx(row["rate_rp_kwh_avg"])
 
 
 # ----- snapshot end-to-end via compute_quarter_plan -------------------------
@@ -156,10 +213,11 @@ def _make_resolved() -> ResolvedTariff:
     )
 
 
-class TestMonthlyAggregationViaPlan:
+class TestPeriodAggregationViaPlan:
     """Snapshot-shape check: feeding compute_quarter_plan output into
-    _aggregate_monthly produces 3 buckets per quarter that sum to the
-    plan's totals."""
+    _aggregate_by_period produces sensible buckets that sum to the plan's
+    totals, with base + hkn invariant preserved.
+    """
 
     def test_plan_records_aggregate_to_three_months(self):
         q = Quarter(2026, 1)
@@ -177,7 +235,7 @@ class TestMonthlyAggregationViaPlan:
             None, cfg, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
-        out = _aggregate_monthly(plan.records)
+        out = _aggregate_by_period(plan.records, ABRECHNUNGS_RHYTHMUS_MONAT)
         assert len(out) == 3
         assert sum(b["kwh"] for b in out) == pytest.approx(
             sum(r.kwh for r in plan.records)
@@ -185,6 +243,54 @@ class TestMonthlyAggregationViaPlan:
         assert sum(b["chf"] for b in out) == pytest.approx(
             sum(r.compensation_chf for r in plan.records)
         )
+
+    def test_quarterly_aggregation_collapses_plan_to_one_row(self):
+        q = Quarter(2026, 1)
+        s, e = quarter_bounds_utc(q)
+        kwh = {h: 1.0 for h in hours_in_range(s, e)}
+        cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=10.0,
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(),
+        )
+        plan = compute_quarter_plan(
+            q, kwh, BfePrice(chf_per_mwh=100.0, days=90, volume_mwh=1.0),
+            None, cfg, ABRECHNUNGS_RHYTHMUS_QUARTAL,
+            anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
+        )
+        out = _aggregate_by_period(plan.records, ABRECHNUNGS_RHYTHMUS_QUARTAL)
+        assert len(out) == 1
+        assert out[0]["period"] == "2026Q1"
+        assert out[0]["kwh"] == pytest.approx(sum(r.kwh for r in plan.records))
+
+    def test_plan_records_carry_base_hkn_breakdown(self):
+        # rmp_quartal with HKN opt-in active, no cap → base + hkn = rate per hour.
+        rt = _make_resolved()
+        # Override hkn_rp_kwh on a copy via dataclasses.replace would be cleaner;
+        # since ResolvedTariff is frozen, build a fresh one with HKN.
+        from dataclasses import replace
+        rt_with_hkn = replace(rt, hkn_rp_kwh=2.50, hkn_structure="additive_optin")
+        q = Quarter(2026, 1)
+        s, e = quarter_bounds_utc(q)
+        kwh = {h: 1.0 for h in hours_in_range(s, e)}
+        cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=10.0,
+            hkn_aktiviert=True,
+            hkn_rp_kwh_resolved=2.50,
+            resolved=rt_with_hkn,
+        )
+        plan = compute_quarter_plan(
+            q, kwh, BfePrice(chf_per_mwh=100.0, days=90, volume_mwh=1.0),
+            None, cfg, ABRECHNUNGS_RHYTHMUS_QUARTAL,
+            anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
+        )
+        # Every hour: base_rp + hkn_rp == rate_rp; hkn_rp == 2.50 (no cap).
+        for r in plan.records:
+            assert r.base_rp_kwh + r.hkn_rp_kwh == pytest.approx(r.rate_rp_kwh, abs=1e-9)
+            assert r.hkn_rp_kwh == pytest.approx(2.50)
 
 
 # ----- _format_recompute_notification ---------------------------------------
@@ -211,10 +317,23 @@ def _config_dict(**overrides) -> dict:
     return base
 
 
-def _row(month: str, rate: float, kwh: float, chf: float) -> _RecomputeReportRow:
+def _row(
+    period: str,
+    rate: float | None,
+    kwh: float | None,
+    chf: float | None,
+    base: float | None = None,
+    hkn: float | None = None,
+) -> _RecomputeReportRow:
+    """Construct a row; defaults base/hkn so base+hkn=rate when both given."""
+    if rate is not None and base is None and hkn is None:
+        # No HKN by default → put everything in base.
+        base, hkn = rate, 0.0
     return _RecomputeReportRow(
-        month=month,
+        period=period,
         rate_rp_kwh_avg=rate,
+        base_rp_kwh_avg=base,
+        hkn_rp_kwh_avg=hkn,
         total_kwh=kwh,
         total_chf=chf,
     )
@@ -223,13 +342,13 @@ def _row(month: str, rate: float, kwh: float, chf: float) -> _RecomputeReportRow
 class TestFormatRecomputeNotification:
     def test_multi_quarter_title_and_totals(self):
         rows = [
-            _row("2026-03", 13.27, 411.13, 54.55),
-            _row("2026-02", 13.27, 412.04, 54.67),
-            _row("2026-01", 13.27, 411.39, 54.61),
+            _row("2026-03", 13.27, 411.13, 54.55, base=10.27, hkn=3.00),
+            _row("2026-02", 13.27, 412.04, 54.67, base=10.27, hkn=3.00),
+            _row("2026-01", 13.27, 411.39, 54.61, base=10.27, hkn=3.00),
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=2, config=_config_dict())
         title, body = _format_recompute_notification(report)
-        assert "3 months across 2 quarters" in title
+        assert "3 periods across 2 quarters" in title
         # Header section
         assert "**Utility:** ekz — Elektrizitätswerke des Kantons Zürich (EKZ)" in body
         assert "**Tariff model:** rmp_quartal (settlement: quartal)" in body
@@ -238,33 +357,44 @@ class TestFormatRecomputeNotification:
         assert "**HKN opt-in:** Yes (3.00 Rp/kWh additive)" in body
         assert "**Federal floor (Mindestvergütung):** <30 kW (6.00 Rp/kWh)" in body
         assert "**Cap mode (Anrechenbarkeitsgrenze):** Active" in body
-        # Per-month table
-        assert "| Month | Avg rate (Rp/kWh) | kWh exported | CHF |" in body
-        assert "| 2026-03 | 13.2700 | 411.13 | 54.55 |" in body
+        # Per-period table — 6 columns now
+        assert (
+            "| Period | Base (Rp/kWh) | HKN (Rp/kWh) | Total (Rp/kWh) | "
+            "kWh exported | CHF |"
+        ) in body
+        assert "| 2026-03 | 10.2700 | 3.0000 | 13.2700 | 411.13 | 54.55 |" in body
         # Totals (only when n_q > 1)
         assert "Totals:" in body
-        assert "3 months" in body
+        assert "3 periods" in body
 
     def test_single_quarter_title_no_totals(self):
         rows = [
-            _row("2026-03", 13.27, 411.13, 54.55),
-            _row("2026-02", 13.27, 412.04, 54.67),
-            _row("2026-01", 13.27, 411.39, 54.61),
+            _row("2026-03", 13.27, 411.13, 54.55, base=10.27, hkn=3.00),
+            _row("2026-02", 13.27, 412.04, 54.67, base=10.27, hkn=3.00),
+            _row("2026-01", 13.27, 411.39, 54.61, base=10.27, hkn=3.00),
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
         title, body = _format_recompute_notification(report)
         assert "1 quarter" in title
         assert "Totals:" not in body  # suppressed for single-quarter
 
-    def test_truncation_at_24_months(self):
+    def test_quarterly_period_label_renders(self):
+        # Quarterly billing → row period is "2026Q1" not "2026-01".
+        rows = [_row("2026Q1", 13.27, 1233.56, 163.83, base=10.27, hkn=3.00)]
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
+        _, body = _format_recompute_notification(report)
+        assert "| 2026Q1 |" in body
+        assert "1 quarter (1 periods)" in _format_recompute_notification(report)[0]
+
+    def test_truncation_at_24_periods(self):
         rows = [_row(f"2026-{m:02d}", 10.0, 100.0, 10.0) for m in range(12, 0, -1)]
-        # Add older year to push past 24 rows
+        # Add older years to push past 24 rows
         rows += [_row(f"2025-{m:02d}", 10.0, 100.0, 10.0) for m in range(12, 0, -1)]
         rows += [_row(f"2024-{m:02d}", 10.0, 100.0, 10.0) for m in range(12, 0, -1)]
         # 36 rows total
         report = _RecomputeReport(rows=rows, quarters_recomputed=12, config=_config_dict())
         _, body = _format_recompute_notification(report)
-        assert "12 older month(s) not shown" in body
+        assert "12 older period(s) not shown" in body
         # First shown row should be 2026-12, last 2025-01 (24 newest)
         assert "| 2026-12 |" in body
         assert "| 2025-01 |" in body
@@ -294,7 +424,7 @@ class TestFormatRecomputeNotification:
             rows=rows, quarters_recomputed=1, config=_config_dict()
         )
         _, body = _format_recompute_notification(report)
-        assert "| 2026-02 | — | — | — |" in body
+        assert "| 2026-02 | — | — | — | — | — |" in body
 
     def test_remote_source_renders_in_header(self):
         rows = [_row("2026-01", 10.0, 100.0, 10.0)]
