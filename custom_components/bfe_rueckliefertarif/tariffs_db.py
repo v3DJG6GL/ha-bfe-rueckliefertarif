@@ -69,6 +69,13 @@ class ResolvedTariff:
     # structure" (any base_model other than fixed_ht_nt).
     ht_window: dict | None = None
 
+    # Seasonal (summer/winter) override for the rate window. Shape:
+    # {"summer_months": [...], "winter_months": [...],
+    #  "summer_rp_kwh": x, "winter_rp_kwh": y,           # for fixed_flat
+    #  "summer_ht_rp_kwh"/"summer_nt_rp_kwh"/...}        # for fixed_ht_nt
+    # None means no seasonal overlay; tier rates apply year-round.
+    seasonal: dict | None = None
+
 
 # ----- Loader ---------------------------------------------------------------
 
@@ -252,6 +259,13 @@ def resolve_tariff_at(
             f"(rate window starting {rate['valid_from']})"
         )
 
+    seasonal = rate.get("seasonal")
+    if seasonal is not None and tier["base_model"].startswith("rmp_"):
+        raise ValueError(
+            f"{utility_key!r}@{rate['valid_from']}: seasonal block is not "
+            f"supported for base_model {tier['base_model']!r}"
+        )
+
     cap_rp_kwh: float | None = None
     if rate.get("cap_mode") and rate.get("cap_rules"):
         cap_rule = find_rule(rate["cap_rules"], kw, eigenverbrauch)
@@ -286,6 +300,7 @@ def resolve_tariff_at(
         tariffs_json_version=str(db["schema_version"]),
         tariffs_json_source=source if source is not None else get_source(),
         ht_window=tier.get("ht_window"),
+        seasonal=seasonal,
     )
 
 

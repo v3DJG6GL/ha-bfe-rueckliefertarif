@@ -70,6 +70,72 @@ class TestSchemaConformance:
                     )
 
 
+class TestSeasonalConsistency:
+    """Cross-validate the seasonal block against each tier's base_model.
+
+    JSON Schema can't express "if the rate has a seasonal block AND a
+    tier inside it has base_model=fixed_ht_nt then the seasonal block
+    must contain summer_ht/summer_nt/winter_ht/winter_nt" without hairy
+    path traversal — so we enforce it here in Python instead. Today this
+    loops over zero records (all utilities have ``seasonal: null``), but
+    it locks the contract for the moment a VESE import populates one.
+    """
+
+    ALL_MONTHS = set(range(1, 13))
+
+    def test_summer_winter_months_disjoint_and_complete(self, db):
+        for ukey, u in db["utilities"].items():
+            for rate in u["rates"]:
+                seasonal = rate.get("seasonal")
+                if seasonal is None:
+                    continue
+                summer = set(seasonal["summer_months"])
+                winter = set(seasonal["winter_months"])
+                location = f"{ukey}@{rate['valid_from']}"
+                assert summer & winter == set(), (
+                    f"{location}: summer_months ∩ winter_months must be empty "
+                    f"(overlap: {sorted(summer & winter)})"
+                )
+                assert summer | winter == self.ALL_MONTHS, (
+                    f"{location}: summer_months ∪ winter_months must cover all "
+                    f"12 months (missing: {sorted(self.ALL_MONTHS - (summer | winter))})"
+                )
+
+    def test_seasonal_required_keys_match_tier_base_model(self, db):
+        for ukey, u in db["utilities"].items():
+            for rate in u["rates"]:
+                seasonal = rate.get("seasonal")
+                if seasonal is None:
+                    continue
+                location = f"{ukey}@{rate['valid_from']}"
+                for tier in rate["power_tiers"]:
+                    bm = tier["base_model"]
+                    if bm == "fixed_flat":
+                        for k in ("summer_rp_kwh", "winter_rp_kwh"):
+                            assert k in seasonal, (
+                                f"{location} tier kw_min={tier['kw_min']}: "
+                                f"fixed_flat × seasonal requires {k}"
+                            )
+                    elif bm == "fixed_ht_nt":
+                        for k in (
+                            "summer_ht_rp_kwh",
+                            "summer_nt_rp_kwh",
+                            "winter_ht_rp_kwh",
+                            "winter_nt_rp_kwh",
+                        ):
+                            assert k in seasonal, (
+                                f"{location} tier kw_min={tier['kw_min']}: "
+                                f"fixed_ht_nt × seasonal requires {k}"
+                            )
+                    elif bm.startswith("rmp_"):
+                        # rmp_* × seasonal is unsupported; resolve_tariff_at
+                        # raises, but the schema shouldn't even ship it.
+                        raise AssertionError(
+                            f"{location} tier kw_min={tier['kw_min']}: "
+                            f"rmp_* × seasonal is not supported"
+                        )
+
+
 class TestFindActive:
     def _records(self):
         return [

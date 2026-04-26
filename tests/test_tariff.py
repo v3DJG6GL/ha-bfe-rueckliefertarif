@@ -12,6 +12,7 @@ from custom_components.bfe_rueckliefertarif.tariff import (
     anrechenbarkeitsgrenze_rp_kwh,
     chf_per_mwh_to_rp_per_kwh,
     classify_ht,
+    classify_season,
     effective_rp_kwh,
     mindestverguetung_rp_kwh,
 )
@@ -318,6 +319,70 @@ class TestClassifyHT:
         partial = {"mofr": [7, 20]}
         assert classify_ht(_utc_for_zurich(2025, 1, 18, 12), partial) is False  # Sat
         assert classify_ht(_utc_for_zurich(2025, 1, 19, 12), partial) is False  # Sun
+
+
+class TestClassifySeason:
+    """Summer/winter classification by Zurich-local month."""
+
+    # Canonical Swiss split (Apr–Sep summer, Oct–Mar winter).
+    SUMMER_CH = [4, 5, 6, 7, 8, 9]
+    WINTER_CH = [10, 11, 12, 1, 2, 3]
+
+    def test_july_midday_is_summer(self):
+        assert (
+            classify_season(_utc_for_zurich(2025, 7, 15, 12), self.SUMMER_CH, self.WINTER_CH)
+            == "summer"
+        )
+
+    def test_january_is_winter(self):
+        assert (
+            classify_season(_utc_for_zurich(2025, 1, 15, 12), self.SUMMER_CH, self.WINTER_CH)
+            == "winter"
+        )
+
+    def test_april_first_midnight_is_summer(self):
+        # First instant of summer per the canonical split.
+        assert (
+            classify_season(_utc_for_zurich(2025, 4, 1, 0), self.SUMMER_CH, self.WINTER_CH)
+            == "summer"
+        )
+
+    def test_september_last_evening_is_summer(self):
+        assert (
+            classify_season(_utc_for_zurich(2025, 9, 30, 23), self.SUMMER_CH, self.WINTER_CH)
+            == "summer"
+        )
+
+    def test_october_first_midnight_is_winter(self):
+        # First instant of winter — boundary belongs to the new season.
+        assert (
+            classify_season(_utc_for_zurich(2025, 10, 1, 0), self.SUMMER_CH, self.WINTER_CH)
+            == "winter"
+        )
+
+    def test_dst_fall_back_day_is_winter(self):
+        # 2025-10-26 is the last Sunday of October (CET resumes). Month is
+        # 10 → winter. Confirms the function reads Zurich-local month, not UTC.
+        assert (
+            classify_season(_utc_for_zurich(2025, 10, 26, 12), self.SUMMER_CH, self.WINTER_CH)
+            == "winter"
+        )
+
+    def test_month_in_neither_list_raises(self):
+        # Asymmetric split that leaves several months uncovered.
+        with pytest.raises(ValueError, match="neither"):
+            classify_season(_utc_for_zurich(2025, 4, 1, 12), [5, 6, 7, 8], [11, 12, 1, 2])
+
+    def test_alternate_split_works(self):
+        # Hypothetical utility that uses Mar-Aug as summer.
+        summer = [3, 4, 5, 6, 7, 8]
+        winter = [9, 10, 11, 12, 1, 2]
+        assert (
+            classify_season(_utc_for_zurich(2025, 3, 15, 12), summer, winter) == "summer"
+        )
+        assert (
+            classify_season(_utc_for_zurich(2025, 9, 15, 12), summer, winter) == "winter"
+        )
 
 
 class TestUnitConversion:

@@ -138,6 +138,31 @@ def classify_ht(hour_utc: datetime, ht_window: dict | None) -> bool:
     return start_h <= local.hour < end_h
 
 
+def classify_season(
+    hour_utc: datetime,
+    summer_months: list[int],
+    winter_months: list[int],
+) -> str:
+    """Return ``"summer"`` or ``"winter"`` for ``hour_utc`` per the
+    utility's seasonal month split.
+
+    Month is determined in Zurich local time (DST-safe via zoneinfo) so
+    the answer matches what a Swiss utility would invoice for that wall-
+    clock hour. Raises ValueError if the hour's month appears in neither
+    list — the caller is responsible for ensuring summer_months and
+    winter_months together cover all 12 months.
+    """
+    local = hour_utc.astimezone(_ZURICH)
+    if local.month in summer_months:
+        return "summer"
+    if local.month in winter_months:
+        return "winter"
+    raise ValueError(
+        f"Month {local.month} is in neither summer_months nor "
+        f"winter_months ({summer_months} / {winter_months})"
+    )
+
+
 def chf_per_mwh_to_rp_per_kwh(chf_per_mwh: float) -> float:
     """BFE publishes in CHF/MWh; HA dashboard thinks in Rp/kWh."""
     return chf_per_mwh / 10.0

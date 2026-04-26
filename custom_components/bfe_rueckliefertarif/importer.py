@@ -91,8 +91,17 @@ def _effective_rate(
     - fixed_ht_nt → conservative HT-rate fallback for callers without hour
       context. Hour-aware callers should route through ``_effective_rate_at_hour``
       to pick HT or NT per the utility's ``ht_window``.
+
+    Raises if the rate has a seasonal overlay — there is no sensible
+    period-flat default for summer/winter splits; the caller must use
+    ``_effective_rate_at_hour`` to pick the season per hour.
     """
     rt = cfg.resolved
+    if rt.seasonal is not None:
+        raise ValueError(
+            f"{rt.utility_key}: seasonal evaluation requires hour context — "
+            f"call _effective_rate_at_hour instead"
+        )
     if rt.base_model in ("rmp_quartal", "rmp_monat"):
         base = reference_rp_kwh
     elif rt.base_model == "fixed_flat":
@@ -112,25 +121,55 @@ def _effective_rate_at_hour(
     """Hour-aware effective rate.
 
     For ``fixed_ht_nt`` utilities, classifies ``hour_utc`` via the
-    utility's ``ht_window`` and applies HT or NT. For all other base
-    models, delegates to ``_effective_rate`` (hour ignored).
+    utility's ``ht_window`` and applies HT or NT. For ``fixed_flat`` or
+    ``fixed_ht_nt`` utilities with a ``seasonal`` overlay, also picks
+    the summer or winter rate by ``hour_utc``'s Zurich-local month. For
+    all other cases, delegates to ``_effective_rate`` (hour ignored).
 
     Forward-compatible: the future hourly Day-Ahead spot work (gated on
     Bundesrat adoption of the EnV Art. 12 revision) slots in as a single
     additional ``elif`` branch — no other changes needed.
     """
-    from .tariff import classify_ht  # local import: avoid cycle
+    from .tariff import classify_ht, classify_season  # local import: avoid cycle
 
     rt = cfg.resolved
+    season: str | None = None
+    if rt.seasonal is not None:
+        season = classify_season(
+            hour_utc,
+            rt.seasonal["summer_months"],
+            rt.seasonal["winter_months"],
+        )
+
     if rt.base_model == "fixed_ht_nt":
         is_ht = classify_ht(hour_utc, rt.ht_window)
-        base = rt.fixed_ht_rp_kwh if is_ht else rt.fixed_nt_rp_kwh
+        if season is not None:
+            key = f"{season}_{'ht' if is_ht else 'nt'}_rp_kwh"
+            base = rt.seasonal.get(key)
+            if base is None:
+                raise ValueError(
+                    f"{rt.utility_key}: fixed_ht_nt × seasonal requires "
+                    f"all 4 rates (missing {key})"
+                )
+        else:
+            base = rt.fixed_ht_rp_kwh if is_ht else rt.fixed_nt_rp_kwh
+            if base is None:
+                raise ValueError(
+                    f"{rt.utility_key}: fixed_ht_nt requires both "
+                    f"fixed_ht_rp_kwh and fixed_nt_rp_kwh"
+                )
+        return _apply_floor_cap_hkn(base, cfg)
+
+    if rt.base_model == "fixed_flat" and season is not None:
+        key = f"{season}_rp_kwh"
+        base = rt.seasonal.get(key)
         if base is None:
             raise ValueError(
-                f"{rt.utility_key}: fixed_ht_nt requires both "
-                f"fixed_ht_rp_kwh and fixed_nt_rp_kwh"
+                f"{rt.utility_key}: fixed_flat × seasonal requires both "
+                f"summer_rp_kwh and winter_rp_kwh (missing {key})"
             )
         return _apply_floor_cap_hkn(base, cfg)
+
     return _effective_rate(cfg, reference_rp_kwh)
 
 
