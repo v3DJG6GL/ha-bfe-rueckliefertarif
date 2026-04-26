@@ -53,8 +53,16 @@ async def async_setup_entry(
 
     coordinator = BfeCoordinator(hass, entry)
     await coordinator.async_load_state()
-    await coordinator.async_config_entry_first_refresh()
+    # Register in hass.data BEFORE first_refresh: the refresh runs
+    # _auto_import_newly_published, which calls _reimport_quarter →
+    # _record_snapshot. _record_snapshot looks up the coordinator via
+    # _first_entry_data(hass).get("coordinator") and silently no-ops if
+    # it's missing — which would lose the per-quarter snapshot writes
+    # (monthly[] / total_kwh / total_chf added in v0.7) that the
+    # post-refresh recompute notification reads from. Setting this slot
+    # first keeps both writes and reads using the same dict.
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
+    await coordinator.async_config_entry_first_refresh()
 
     # Resolve HKN from tariffs.json for the diagnostic sensor's static value.
     # If the user opted in, surface the utility's published HKN; otherwise 0.
