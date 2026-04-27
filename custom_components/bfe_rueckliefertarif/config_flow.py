@@ -19,6 +19,7 @@ tariff fields. ``entry.data`` only carries entity-wiring (no sync needed).
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -564,10 +565,18 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     ) -> "FlowResult":
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         _LOGGER.debug("manage_history: %d record(s) read from options", len(history))
+        today_iso = date.today().isoformat()
         menu: dict[str, str] = {}
         for i, rec in enumerate(history):
+            valid_to = rec.get("valid_to")
+            if valid_to:
+                end_label = valid_to
+            elif rec["valid_from"] <= today_iso:
+                end_label = "now"
+            else:
+                end_label = "..."
             label = (
-                f"{rec['valid_from']} → {rec.get('valid_to') or 'now'}: "
+                f"{rec['valid_from']} → {end_label}: "
                 f"{_format_config_summary(rec['config'])}"
             )
             menu[f"edit_row_{i}"] = label

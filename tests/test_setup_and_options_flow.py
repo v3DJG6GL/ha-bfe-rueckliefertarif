@@ -1550,3 +1550,79 @@ class TestRenderConfigBlockShared:
         # is_today flag controls the cap-line wording.
         assert "current cap" in today_block
         assert "current cap" not in group_block
+
+
+class TestManageHistoryLabels:
+    """v0.9.7 — the open-end marker in the Manage history menu distinguishes
+    currently-active records (``→ now``) from future-scheduled records
+    (``→ ...``). A record whose valid_from is later than today should not
+    pretend to be in effect."""
+
+    def _make_flow(self, history):
+        flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
+        flow.hass = MagicMock()
+        flow_entry = SimpleNamespace(
+            entry_id="test_entry_id",
+            data={"stromnetzeinspeisung_kwh": "sensor.foo"},
+            options=MappingProxyType({OPT_CONFIG_HISTORY: history}),
+        )
+        flow.handler = "test_entry_id"
+        flow.hass.config_entries.async_get_entry.return_value = flow_entry
+        flow.hass.config_entries.async_get_known_entry.return_value = flow_entry
+        return flow
+
+    @pytest.mark.asyncio
+    async def test_active_record_renders_now(self):
+        # Single open record from 2024 — clearly in the past, currently active.
+        history = [
+            {"valid_from": "2024-01-01", "valid_to": None,
+             "config": _entry_data(utility="ekz")},
+        ]
+        flow = self._make_flow(history)
+        with patch(
+            "custom_components.bfe_rueckliefertarif.config_flow.date"
+        ) as mock_date:
+            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
+            result = await flow.async_step_manage_history()
+        labels = result["menu_options"]
+        assert "→ now" in labels["edit_row_0"]
+        assert "→ ..." not in labels["edit_row_0"]
+
+    @pytest.mark.asyncio
+    async def test_future_record_renders_ellipsis(self):
+        # Two-record chain: closed past record + future-scheduled open record.
+        history = [
+            {"valid_from": "2024-01-01", "valid_to": "2026-07-01",
+             "config": _entry_data(utility="ekz")},
+            {"valid_from": "2026-07-01", "valid_to": None,
+             "config": _entry_data(utility="age_sa")},
+        ]
+        flow = self._make_flow(history)
+        with patch(
+            "custom_components.bfe_rueckliefertarif.config_flow.date"
+        ) as mock_date:
+            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
+            result = await flow.async_step_manage_history()
+        labels = result["menu_options"]
+        # Closed past record renders the explicit valid_to.
+        assert "→ 2026-07-01" in labels["edit_row_0"]
+        # Future open record renders ... and NOT now.
+        assert "→ ..." in labels["edit_row_1"]
+        assert "→ now" not in labels["edit_row_1"]
+
+    @pytest.mark.asyncio
+    async def test_record_starting_today_renders_now(self):
+        # Boundary: valid_from == today → still counts as active (<= today).
+        history = [
+            {"valid_from": "2026-04-27", "valid_to": None,
+             "config": _entry_data(utility="ekz")},
+        ]
+        flow = self._make_flow(history)
+        with patch(
+            "custom_components.bfe_rueckliefertarif.config_flow.date"
+        ) as mock_date:
+            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
+            result = await flow.async_step_manage_history()
+        labels = result["menu_options"]
+        assert "→ now" in labels["edit_row_0"]
+        assert "→ ..." not in labels["edit_row_0"]
