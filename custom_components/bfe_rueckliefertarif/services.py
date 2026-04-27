@@ -421,7 +421,6 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     from datetime import date, datetime, timezone
 
     from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.statistics import clear_statistics
 
     # Clear LTS + snapshot map first so the rewrite below is the sole source
     # of truth. Source kWh data (export sensor LTS) is untouched.
@@ -432,11 +431,20 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     comp_id = entry_data["config"][CONF_RUECKLIEFERVERGUETUNG_CHF]
     instance = get_instance(hass)
     # `clear_statistics` mutates `statistics_meta` and is gated on the
-    # recorder's dedicated thread (see HA's
-    # `table_managers/statistics_meta.py:399`). Use the recorder instance's
-    # executor — NOT `hass.async_add_executor_job` — otherwise we hit
-    # `RuntimeError: Detected unsafe call not in recorder thread`.
-    await instance.async_add_executor_job(clear_statistics, instance, [comp_id])
+    # recorder's main thread (`table_managers/statistics_meta.py:399`).
+    # `Recorder.async_clear_statistics` is the @callback API that queues a
+    # ClearStatisticsTask onto that thread (same mechanism
+    # `async_import_statistics` uses for our writes — which is why imports
+    # always worked while the v0.9.2/v0.9.3 clear path didn't).
+    #
+    # `async_block_till_done` then drains the recorder's task queue, so the
+    # clear is fully committed before the per-quarter loop starts. Without
+    # this, anchor reads in `_reimport_quarter` (via the DbWorker executor
+    # pool, parallel to the recorder thread) could observe stale pre-clear
+    # LTS data and seed the rewrite's cumulative sum chain at the wrong
+    # baseline.
+    instance.async_clear_statistics([comp_id])
+    await instance.async_block_till_done()
 
     coordinator = entry_data.get("coordinator")
     if coordinator is not None:

@@ -940,13 +940,14 @@ class TestReimportClearsFirst:
     poisoning the cumulative sum chain)."""
 
     @pytest.mark.asyncio
-    async def test_clear_statistics_runs_on_recorder_thread_not_hass_executor(self):
-        # v0.9.3: clear_statistics MUST be dispatched via the recorder
-        # instance's own `async_add_executor_job`, NOT
-        # `hass.async_add_executor_job`. HA gates the call on the recorder
-        # thread (table_managers/statistics_meta.py:399) and raises
-        # `RuntimeError: Detected unsafe call not in recorder thread`
-        # otherwise. This test verifies the correct executor is used.
+    async def test_clear_via_recorder_task_queue_then_block_till_done(self):
+        # v0.9.4: clear_statistics MUST be queued onto the recorder's main
+        # thread via `Recorder.async_clear_statistics(...)` (which uses
+        # `queue_task` internally). Calling the underlying sync
+        # `clear_statistics` on ANY executor thread (DbWorker, hass exec)
+        # trips HA's `_assert_in_recorder_thread` guard. After queueing, we
+        # `await instance.async_block_till_done()` so anchor reads in the
+        # subsequent quarter loop don't race with the queued clear.
         from custom_components.bfe_rueckliefertarif import services as svc
 
         hass = MagicMock()
@@ -984,21 +985,31 @@ class TestReimportClearsFirst:
 
         order: list[str] = []
 
-        # Recorder-instance executor: receives (clear_statistics, instance,
-        # [stat_id]). This is the path that respects the recorder thread.
-        async def _fake_recorder_executor(fn, *args, **kwargs):
-            order.append(f"clear:{args[1] if len(args) > 1 else ''}")
-            return None
+        # Synchronous @callback API — queues a ClearStatisticsTask onto the
+        # recorder thread. We just need to record that it was called.
+        def _fake_async_clear(stat_ids, **kwargs):
+            order.append(f"clear:{stat_ids}")
+
+        async def _fake_block_till_done():
+            order.append("block_till_done")
 
         recorder_instance = MagicMock()
-        recorder_instance.async_add_executor_job = _fake_recorder_executor
+        recorder_instance.async_clear_statistics = _fake_async_clear
+        recorder_instance.async_block_till_done = _fake_block_till_done
 
-        # Trap any accidental dispatch via hass.async_add_executor_job.
-        async def _wrong_thread(fn, *args, **kwargs):
+        # Trap any accidental dispatch via the WRONG executor pool — both
+        # generic hass and the recorder's read-side DbWorker pool would
+        # crash with "Detected unsafe call not in recorder thread".
+        async def _wrong_hass_thread(fn, *args, **kwargs):
             order.append("WRONG_THREAD:hass_executor")
             return None
 
-        hass.async_add_executor_job = _wrong_thread
+        async def _wrong_recorder_executor(fn, *args, **kwargs):
+            order.append("WRONG_THREAD:recorder_executor")
+            return None
+
+        hass.async_add_executor_job = _wrong_hass_thread
+        recorder_instance.async_add_executor_job = _wrong_recorder_executor
 
         async def _fake_reimport_quarter(_hass, q):
             order.append(f"quarter:{q}")
@@ -1009,17 +1020,22 @@ class TestReimportClearsFirst:
         with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
              patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
              patch.object(svc, "fetch_quarterly", new=_async_return({})), \
-             patch("homeassistant.components.recorder.get_instance", return_value=recorder_instance), \
-             patch("homeassistant.components.recorder.statistics.clear_statistics"):
+             patch("homeassistant.components.recorder.get_instance", return_value=recorder_instance):
             await svc._reimport_all_history(hass)
 
-        # First operation must be the clear; quarter operations follow.
+        # Order must be: clear queued → block_till_done awaited → (any
+        # subsequent quarter work follows).
         assert order, "expected at least the clear call"
-        assert order[0].startswith("clear:")
-        # Recorder thread invariant — no call landed on hass.async_add_executor_job.
+        assert order[0] == f"clear:['{live_entry.data[CONF_RUECKLIEFERVERGUETUNG_CHF]}']"
+        assert order[1] == "block_till_done"
+        # Recorder-thread invariant — no dispatch through any wrong pool.
         assert "WRONG_THREAD:hass_executor" not in order, (
-            "clear_statistics dispatched on the wrong executor (would crash "
-            "with 'Detected unsafe call not in recorder thread' on real HA)"
+            "clear dispatched on hass.async_add_executor_job (DbWorker), "
+            "would crash with 'Detected unsafe call not in recorder thread'"
+        )
+        assert "WRONG_THREAD:recorder_executor" not in order, (
+            "clear dispatched on instance.async_add_executor_job (DbWorker), "
+            "would crash with 'Detected unsafe call not in recorder thread'"
         )
         # Snapshot map cleared.
         assert coordinator._imported == {}
@@ -1085,8 +1101,7 @@ class TestReimportClearsFirst:
         with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
              patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
              patch.object(svc, "fetch_quarterly", new=_async_return(prices)), \
-             patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()), \
-             patch("homeassistant.components.recorder.statistics.clear_statistics"):
+             patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()):
             result = await svc._reimport_all_history(hass)
 
         # 2024Q4 + 2025Q1 predate the 2025-04-01 anchor → before_active.
@@ -1133,8 +1148,7 @@ class TestReimportClearsFirst:
 
         with patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
              patch.object(svc, "fetch_quarterly", new=_async_return({})), \
-             patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()), \
-             patch("homeassistant.components.recorder.statistics.clear_statistics"):
+             patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()):
             result = await svc._reimport_all_history(hass)
         assert result["before_active"] == []
 
@@ -1146,19 +1160,22 @@ def _async_return(value):
 
 
 def _recorder_instance_mock():
-    """Recorder-instance mock with an awaitable async_add_executor_job.
+    """Recorder-instance mock for v0.9.4 dispatch.
 
-    v0.9.3: services._reimport_all_history dispatches clear_statistics via
-    the recorder's own executor (must run on the recorder thread). Tests
-    patch homeassistant.components.recorder.get_instance to return this
-    mock so the awaitable signature matches reality.
+    services._reimport_all_history calls the recorder's first-class API:
+    `instance.async_clear_statistics(stat_ids)` (sync @callback, queues a
+    ClearStatisticsTask on the recorder thread) followed by
+    `await instance.async_block_till_done()` (drains the task queue).
+    Tests patch `homeassistant.components.recorder.get_instance` to
+    return this mock so both call sites succeed without a real recorder.
     """
     inst = MagicMock()
+    inst.async_clear_statistics = MagicMock(return_value=None)
 
-    async def _async_exec(fn, *args, **kwargs):
+    async def _block_till_done():
         return None
 
-    inst.async_add_executor_job = _async_exec
+    inst.async_block_till_done = _block_till_done
     return inst
 
 
