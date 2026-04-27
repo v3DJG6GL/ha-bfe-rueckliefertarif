@@ -43,7 +43,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -78,8 +77,17 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": true,
           "price_floor_rp_kwh": null,
+          "notes": [
+            {
+              "severity": "warning",
+              "text": {
+                "de": "BKW vergütet HKN nur, wenn die Anlage naturemade-star-zertifiziert ist (Selbstdeklaration durch den Anlagebetreiber). Ohne Zertifizierung wird kein HKN-Aufschlag bezahlt.",
+                "en": "BKW pays the HKN bonus only for naturemade-star-certified installations (self-declaration by the plant operator). Without certification, no HKN bonus is paid.",
+                "fr": "BKW ne verse le supplément HKN que pour les installations certifiées naturemade-star (déclaration sur l'honneur de l'exploitant). Sans certification, aucun supplément HKN n'est versé."
+              }
+            }
+          ],
           "bonuses": [],
           "seasonal": null,
           "cap_mode": false,
@@ -108,7 +116,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -138,7 +145,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -173,7 +179,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -208,7 +213,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -238,7 +242,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -268,7 +271,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -299,7 +301,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -330,7 +331,6 @@
               "hkn_structure": "bundled"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -361,7 +361,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
@@ -392,8 +391,17 @@
               "hkn_structure": "bundled"
             }
           ],
-          "requires_naturemade_star": true,
           "price_floor_rp_kwh": null,
+          "notes": [
+            {
+              "severity": "warning",
+              "text": {
+                "de": "AEW vergütet den Fixpreis-Tarif nur für naturemade-star-zertifizierte Anlagen (Selbstdeklaration durch den Anlagebetreiber). Ohne Zertifizierung gilt der Referenzmarktpreis-Tarif.",
+                "en": "AEW pays the fixed-price tariff only for naturemade-star-certified installations (self-declaration by the plant operator). Without certification the reference-market-price tariff applies.",
+                "fr": "AEW n'applique le tarif au prix fixe qu'aux installations certifiées naturemade-star (déclaration sur l'honneur de l'exploitant). Sans certification, le tarif au prix de référence du marché s'applique."
+              }
+            }
+          ],
           "bonuses": [],
           "seasonal": null,
           "cap_mode": false,
@@ -422,7 +430,6 @@
               "hkn_structure": "none"
             }
           ],
-          "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,

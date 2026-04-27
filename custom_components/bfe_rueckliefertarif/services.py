@@ -30,7 +30,12 @@ from .ha_recorder import (
     read_hourly_export,
     read_post_quarter_sums,
 )
-from .importer import TariffConfig, compute_quarter_plan, cumulative_sums
+from .importer import (
+    TariffConfig,
+    compute_quarter_plan,
+    compute_quarter_plan_segmented,
+    cumulative_sums,
+)
 from .quarters import Quarter, hours_in_range, quarter_bounds_utc, quarter_of
 from .tariffs_db import find_active, resolve_tariff_at
 
@@ -103,14 +108,23 @@ def _cfg_for_entry(
     """
     from datetime import date
 
-    entry_data = _first_entry_data(hass)
-    raw_data = entry_data["config"]
-    options = entry_data.get("options") or {}
-
     if for_quarter is not None:
         at_date = date(for_quarter.year, ((for_quarter.q - 1) * 3) + 1, 1)
     else:
         at_date = date.today()
+    return _cfg_for_entry_at_date(hass, at_date)
+
+
+def _cfg_for_entry_at_date(
+    hass: "HomeAssistant", at_date
+) -> tuple[dict, TariffConfig]:
+    """v0.9.9 — like ``_cfg_for_entry`` but takes an arbitrary calendar date,
+    not just quarter starts. Used by ``_resolve_quarter_segments`` to build a
+    per-segment ``TariffConfig`` mid-quarter.
+    """
+    entry_data = _first_entry_data(hass)
+    raw_data = entry_data["config"]
+    options = entry_data.get("options") or {}
 
     resolved_cfg = _resolve_config_at(options, at_date, {})
     cfg = {**raw_data, **resolved_cfg}
@@ -133,6 +147,146 @@ def _cfg_for_entry(
         resolved=resolved,
     )
     return cfg, tariff_cfg
+
+
+def _resolve_quarter_segments(
+    hass: "HomeAssistant", q: Quarter
+) -> list["QuarterSegment"]:
+    """Split ``q`` into contiguous (config × season) segments.
+
+    A segment is a half-open ``[start_utc, end_utc)`` UTC range carrying a
+    fully-resolved ``TariffConfig``. Boundaries come from two sources:
+
+    1. ``OPT_CONFIG_HISTORY`` records whose ``valid_from`` falls strictly
+       inside the quarter — each emits a new segment.
+    2. Seasonal-month boundaries declared by the active rate window's
+       ``seasonal.summer_months/winter_months`` — each summer↔winter
+       transition inside the quarter emits a new segment.
+
+    Single-segment quarters (typical case: one config record covering
+    everything, no seasonal block) round-trip bytewise to the legacy
+    ``compute_quarter_plan`` path. Multi-segment quarters drive sub-row
+    rendering downstream.
+    """
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+
+    from .importer import QuarterSegment
+
+    _ZRH = ZoneInfo("Europe/Zurich")
+
+    def _zurich_midnight_utc(d: date) -> datetime:
+        """Zurich-local 00:00 of ``d`` expressed in UTC. Mirrors the convention
+        used by ``quarter_bounds_utc`` / ``month_bounds_utc`` so segment
+        boundaries align with the importer's hour iteration.
+        """
+        local = datetime(d.year, d.month, d.day, tzinfo=_ZRH)
+        return local.astimezone(ZoneInfo("UTC"))
+
+    q_start_utc, q_end_utc = quarter_bounds_utc(q)
+    q_start_date = date(q.year, ((q.q - 1) * 3) + 1, 1)
+    # Calendar first-day-of-next-quarter (half-open upper bound).
+    if q.q == 4:
+        q_end_date = date(q.year + 1, 1, 1)
+    else:
+        q_end_date = date(q.year, q.q * 3 + 1, 1)
+
+    options = _first_entry_data(hass).get("options") or {}
+    history = options.get(OPT_CONFIG_HISTORY) or []
+
+    # Boundary dates (calendar) where the config record changes inside the
+    # quarter. Always include q_start as the first boundary.
+    boundary_dates: list[date] = [q_start_date]
+    for rec in history:
+        f = date.fromisoformat(rec["valid_from"])
+        if q_start_date < f < q_end_date:
+            boundary_dates.append(f)
+    boundary_dates = sorted(set(boundary_dates))
+
+    # Now overlay seasonal boundaries. Resolve the cfg at each config-segment
+    # start; if its rate window has a `seasonal` block, expand boundaries on
+    # summer↔winter month transitions inside the segment.
+    expanded: list[date] = []
+    for i, seg_start in enumerate(boundary_dates):
+        seg_end = (
+            boundary_dates[i + 1] if i + 1 < len(boundary_dates) else q_end_date
+        )
+        expanded.append(seg_start)
+        try:
+            _, tariff_cfg = _cfg_for_entry_at_date(hass, seg_start)
+        except (KeyError, LookupError, ValueError):
+            continue
+        seasonal = tariff_cfg.resolved.seasonal
+        if not seasonal:
+            continue
+        summer_months = set(seasonal.get("summer_months") or [])
+        winter_months = set(seasonal.get("winter_months") or [])
+        if not summer_months or not winter_months:
+            continue
+        # Walk month-by-month inside [seg_start, seg_end), inserting
+        # boundaries where the season label flips.
+        cursor = seg_start
+        prev_label: str | None = None
+        while cursor < seg_end:
+            month = cursor.month
+            if month in summer_months:
+                lbl = "summer"
+            elif month in winter_months:
+                lbl = "winter"
+            else:
+                lbl = None
+            if prev_label is not None and lbl != prev_label and cursor != seg_start:
+                expanded.append(cursor)
+            prev_label = lbl
+            # Advance to the first of the next month.
+            if cursor.month == 12:
+                cursor = date(cursor.year + 1, 1, 1)
+            else:
+                cursor = date(cursor.year, cursor.month + 1, 1)
+    expanded = sorted(set(expanded))
+
+    # Materialize segments. Each segment carries a stable seg_id like
+    # "2026-01-01" (its start date) so downstream aggregation buckets are
+    # human-readable.
+    segments: list[QuarterSegment] = []
+    for i, seg_start in enumerate(expanded):
+        seg_end = expanded[i + 1] if i + 1 < len(expanded) else q_end_date
+        try:
+            _, tariff_cfg = _cfg_for_entry_at_date(hass, seg_start)
+        except (KeyError, LookupError, ValueError):
+            continue
+        start_utc = _zurich_midnight_utc(seg_start)
+        end_utc = _zurich_midnight_utc(seg_end)
+        # Clip to quarter bounds (defensive — q_end_date math should already
+        # match q_end_utc).
+        if start_utc < q_start_utc:
+            start_utc = q_start_utc
+        if end_utc > q_end_utc:
+            end_utc = q_end_utc
+        if start_utc >= end_utc:
+            continue
+        segments.append(
+            QuarterSegment(
+                seg_id=seg_start.isoformat(),
+                start_utc=start_utc,
+                end_utc=end_utc,
+                cfg=tariff_cfg,
+            )
+        )
+    if not segments:
+        # Fallback: if every per-record resolution failed, synthesize a
+        # single segment from the quarter-start cfg so the caller still
+        # gets a usable plan.
+        _, tariff_cfg = _cfg_for_entry(hass, for_quarter=q)
+        segments.append(
+            QuarterSegment(
+                seg_id="single",
+                start_utc=q_start_utc,
+                end_utc=q_end_utc,
+                cfg=tariff_cfg,
+            )
+        )
+    return segments
 
 
 def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
@@ -206,12 +360,13 @@ async def _reimport_quarter(
     )
     old_first_post = post_sums[0][1] if post_sums else None
 
-    plan = compute_quarter_plan(
+    segments = _resolve_quarter_segments(hass, q)
+    plan = compute_quarter_plan_segmented(
         q=q,
         hourly_kwh=hourly_kwh,
         quarterly_price=q_price,
         monthly_prices=monthly,
-        cfg=tariff_cfg,
+        segments=segments,
         billing_mode=abrechnungs_rhythmus,
         anchor_sum_chf=anchor,
         old_post_quarter_first_sum_chf=old_first_post,
@@ -245,7 +400,7 @@ async def _reimport_quarter(
 
     # Snapshot: freeze the resolved tariff state into _imported[q] so future
     # tariffs.json edits don't retroactively change what we wrote to LTS.
-    _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg)
+    _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg, segments=segments)
 
 
 def _aggregate_by_period(
@@ -263,6 +418,11 @@ def _aggregate_by_period(
     can detect cap-forfeiture by comparing applied (kWh-weighted avg) against
     the intended utility-published rate that was active when the records were
     computed.
+
+    v0.9.9 — when records carry distinct ``seg_id`` values, each period bucket
+    additionally accumulates per-segment kwh/CHF/base/hkn so downstream
+    rendering can emit sub-rows. The top-level period totals always reflect
+    the whole period (sum across all segments).
     """
     from zoneinfo import ZoneInfo
 
@@ -271,6 +431,10 @@ def _aggregate_by_period(
     buckets: dict[str, dict[str, float]] = defaultdict(
         lambda: {"kwh": 0.0, "chf": 0.0, "base_chf": 0.0, "hkn_chf": 0.0}
     )
+    # Sub-bucket per (period, seg_id) for sub-row rendering. Keyed by seg_id
+    # (insertion-order preserved since Python 3.7), so the rendered sub-rows
+    # appear in chronological-segment order.
+    sub_buckets: dict[str, dict[str, dict[str, float]]] = defaultdict(dict)
     for r in records:
         local = r.start.astimezone(z)
         if quarterly:
@@ -280,13 +444,25 @@ def _aggregate_by_period(
         b = buckets[key]
         b["kwh"] += r.kwh
         b["chf"] += r.compensation_chf
-        # Component CHF accumulators (only present when HourRecord carries
-        # the breakdown; pre-v0.7.5 records would lack these attrs).
         base_rp = getattr(r, "base_rp_kwh", None)
         hkn_rp = getattr(r, "hkn_rp_kwh", None)
+        base_chf_inc = r.kwh * base_rp / 100.0 if base_rp is not None else 0.0
+        hkn_chf_inc = r.kwh * hkn_rp / 100.0 if hkn_rp is not None else 0.0
         if base_rp is not None and hkn_rp is not None:
-            b["base_chf"] += r.kwh * base_rp / 100.0
-            b["hkn_chf"] += r.kwh * hkn_rp / 100.0
+            b["base_chf"] += base_chf_inc
+            b["hkn_chf"] += hkn_chf_inc
+
+        seg_id = getattr(r, "seg_id", None)
+        if seg_id is not None:
+            sb = sub_buckets[key].setdefault(
+                seg_id,
+                {"kwh": 0.0, "chf": 0.0, "base_chf": 0.0, "hkn_chf": 0.0},
+            )
+            sb["kwh"] += r.kwh
+            sb["chf"] += r.compensation_chf
+            if base_rp is not None and hkn_rp is not None:
+                sb["base_chf"] += base_chf_inc
+                sb["hkn_chf"] += hkn_chf_inc
 
     out: list[dict] = []
     for key in sorted(buckets):
@@ -295,21 +471,44 @@ def _aggregate_by_period(
         avg_rate = (b["chf"] * 100.0 / kwh) if kwh > 0 else None
         avg_base = (b["base_chf"] * 100.0 / kwh) if kwh > 0 else None
         avg_hkn = (b["hkn_chf"] * 100.0 / kwh) if kwh > 0 else None
-        out.append(
-            {
-                "period": key,
-                "kwh": round(kwh, 3),
-                "chf": round(b["chf"], 4),
-                "rate_rp_kwh_avg": round(avg_rate, 4) if avg_rate is not None else None,
-                "base_rp_kwh_avg": round(avg_base, 4) if avg_base is not None else None,
-                "hkn_rp_kwh_avg": round(avg_hkn, 4) if avg_hkn is not None else None,
-                "intended_hkn_rp_kwh": (
-                    round(intended_hkn_rp_kwh, 4)
-                    if intended_hkn_rp_kwh is not None
-                    else None
-                ),
-            }
-        )
+        period_dict: dict = {
+            "period": key,
+            "kwh": round(kwh, 3),
+            "chf": round(b["chf"], 4),
+            "rate_rp_kwh_avg": round(avg_rate, 4) if avg_rate is not None else None,
+            "base_rp_kwh_avg": round(avg_base, 4) if avg_base is not None else None,
+            "hkn_rp_kwh_avg": round(avg_hkn, 4) if avg_hkn is not None else None,
+            "intended_hkn_rp_kwh": (
+                round(intended_hkn_rp_kwh, 4)
+                if intended_hkn_rp_kwh is not None
+                else None
+            ),
+        }
+        # Sub-rows: only emit when the period actually spans >1 segment.
+        # Single-segment periods stay rendered as a single row (legacy shape).
+        seg_map = sub_buckets.get(key) or {}
+        if len(seg_map) > 1:
+            sub_rows: list[dict] = []
+            # Keep insertion order — segments are added in record order which
+            # is chronological by hours_in_range.
+            for seg_id, sb in seg_map.items():
+                s_kwh = sb["kwh"]
+                s_chf = sb["chf"]
+                s_avg_rate = (s_chf * 100.0 / s_kwh) if s_kwh > 0 else None
+                s_avg_base = (sb["base_chf"] * 100.0 / s_kwh) if s_kwh > 0 else None
+                s_avg_hkn = (sb["hkn_chf"] * 100.0 / s_kwh) if s_kwh > 0 else None
+                sub_rows.append(
+                    {
+                        "seg_id": seg_id,
+                        "kwh": round(s_kwh, 3),
+                        "chf": round(s_chf, 4),
+                        "rate_rp_kwh_avg": round(s_avg_rate, 4) if s_avg_rate is not None else None,
+                        "base_rp_kwh_avg": round(s_avg_base, 4) if s_avg_base is not None else None,
+                        "hkn_rp_kwh_avg": round(s_avg_hkn, 4) if s_avg_hkn is not None else None,
+                    }
+                )
+            period_dict["sub_rows"] = sub_rows
+        out.append(period_dict)
     return out
 
 
@@ -323,12 +522,134 @@ def _floor_source(rt) -> str:
     return "utility" if utl > fed else "federal"
 
 
+def _pick_note_text(text_dict: dict | None, lang: str) -> str | None:
+    """Pick the best language match from a note's ``text`` dict.
+
+    Order: user locale → ``de`` (Swiss default) → first available key.
+    Returns ``None`` when ``text_dict`` is empty / missing.
+    """
+    if not text_dict:
+        return None
+    if lang in text_dict:
+        return text_dict[lang]
+    if "de" in text_dict:
+        return text_dict["de"]
+    return next(iter(text_dict.values()), None)
+
+
+def _render_notes_lines(notes, lang: str) -> list[str]:
+    """Render a list of active rate-window notes as recompute-block bullets.
+
+    Returns ``[]`` when ``notes`` is empty / None. Otherwise emits a parent
+    ``- **Notes:**`` line followed by one indented bullet per note formatted
+    as ``  - *(severity)* text``. The severity is italicized so it doesn't
+    compete with the surrounding bold field labels.
+    """
+    if not notes:
+        return []
+    lines: list[str] = []
+    rendered_any = False
+    for n in notes:
+        text = _pick_note_text(n.get("text") if isinstance(n, dict) else None, lang)
+        if not text:
+            continue
+        sev = n.get("severity", "info") if isinstance(n, dict) else "info"
+        if not rendered_any:
+            lines.append("- **Notes:**")
+            rendered_any = True
+        lines.append(f"  - *({sev})* {text}")
+    return lines
+
+
+_MONTH_ABBR_EN = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _summarize_months(months: list[int] | None) -> str:
+    """Compact month-list summary: ``[4,5,6,7,8,9]`` → ``"Apr–Sep"``,
+    ``[10,11,12,1,2,3]`` → ``"Oct–Mar"``, ``[3, 6, 9]`` → ``"Mar, Jun, Sep"``.
+    """
+    if not months:
+        return "—"
+    if len(months) == 1:
+        return _MONTH_ABBR_EN[months[0]]
+    # Detect contiguous run (allowing wrap from 12 → 1).
+    is_run = True
+    for i in range(1, len(months)):
+        prev = months[i - 1]
+        cur = months[i]
+        expected = 1 if prev == 12 else prev + 1
+        if cur != expected:
+            is_run = False
+            break
+    if is_run:
+        return f"{_MONTH_ABBR_EN[months[0]]}–{_MONTH_ABBR_EN[months[-1]]}"
+    return ", ".join(_MONTH_ABBR_EN[m] for m in months)
+
+
+def _seasonal_summary(seasonal: dict | None) -> str | None:
+    """Pretty-print a rate-window's seasonal block as
+    ``"summer: Apr–Sep; winter: Oct–Mar"`` or ``None`` when no overlay.
+    """
+    if not seasonal:
+        return None
+    summer = _summarize_months(seasonal.get("summer_months"))
+    winter = _summarize_months(seasonal.get("winter_months"))
+    return f"summer: {summer}; winter: {winter}"
+
+
+def _format_segment_label(seg_id: str | None, meta: dict | None) -> str:
+    """Build the period-cell label for one sub-row.
+
+    Falls back through several shapes:
+    - With full ``meta`` (utility name + date range) → ``"Jan 1 – Feb 14
+      (Utility A)"``.
+    - With only ``seg_id`` (start date) → ``"from 2026-02-15"``.
+    - Neither → ``"segment"``.
+    """
+    if not meta:
+        if seg_id:
+            return f"from {seg_id}"
+        return "segment"
+    f_iso = meta.get("valid_from") or seg_id or ""
+    t_iso = meta.get("valid_to") or ""
+    utility_name = meta.get("utility_name") or meta.get("utility_key") or ""
+    f_disp = _short_date(f_iso) if f_iso else "?"
+    # Sub-row range is half-open at month/quarter boundary; render the inclusive
+    # last day so the user reads it naturally.
+    if t_iso:
+        from datetime import date, timedelta
+
+        try:
+            t_excl = date.fromisoformat(t_iso)
+            t_incl = t_excl - timedelta(days=1)
+            t_disp = _short_date(t_incl.isoformat())
+        except ValueError:
+            t_disp = _short_date(t_iso)
+    else:
+        t_disp = "?"
+    range_str = f"{f_disp} – {t_disp}"
+    return f"{range_str} ({utility_name})" if utility_name else range_str
+
+
+def _short_date(iso: str) -> str:
+    """Compact date label: ``2026-02-15`` → ``Feb 15``."""
+    from datetime import date
+
+    try:
+        d = date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return f"{_MONTH_ABBR_EN[d.month]} {d.day}"
+
+
 def _record_snapshot(
     hass: "HomeAssistant",
     q: Quarter,
     q_price_chf_mwh: float,
     plan,
     tariff_cfg: TariffConfig,
+    segments: list | None = None,
 ) -> None:
     """Write the per-quarter import snapshot to the coordinator's storage.
 
@@ -392,7 +713,39 @@ def _record_snapshot(
         "floor_source": _floor_source(rt),
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
+        # v0.9.9 — captured at import time so the recompute notification
+        # can render rate-window context (seasonal label, contextual notes)
+        # for past quarters even after the rate window has rolled forward.
+        "seasonal": rt.seasonal,
+        "notes_active": list(rt.notes) if rt.notes else None,
     }
+
+    # v0.9.9 — segment metadata for sub-row rendering. Only persisted when
+    # the quarter actually spans >1 segment (single-segment quarters render
+    # as today's flat shape).
+    if segments and len(segments) > 1:
+        from .quarters import month_bounds_utc as _mbu  # noqa: F401
+        from zoneinfo import ZoneInfo
+
+        z = ZoneInfo("Europe/Zurich")
+        segments_meta: dict[str, dict] = {}
+        db = load_tariffs()
+        for seg in segments:
+            srt = seg.cfg.resolved
+            utility_meta = db["utilities"].get(srt.utility_key, {})
+            seg_local_start = seg.start_utc.astimezone(z)
+            seg_local_end = seg.end_utc.astimezone(z)
+            segments_meta[seg.seg_id] = {
+                "valid_from": seg_local_start.date().isoformat(),
+                "valid_to": seg_local_end.date().isoformat(),
+                "utility_key": srt.utility_key,
+                "utility_name": utility_meta.get("name_de", srt.utility_key),
+                "kw": seg.cfg.installierte_leistung_kw,
+                "eigenverbrauch": seg.cfg.eigenverbrauch_aktiviert,
+                "hkn_optin": seg.cfg.hkn_aktiviert,
+                "base_model": srt.base_model,
+            }
+        snapshot["segments_meta"] = segments_meta
 
     from datetime import datetime, timezone
 
@@ -669,6 +1022,11 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
         "is_current_estimate": True,
+        # v0.9.9 — same rate-window context fields as the published-quarter
+        # snapshot so the running-quarter row in the recompute notification
+        # gets the same Seasonal/Notes treatment.
+        "seasonal": rt.seasonal,
+        "notes_active": list(rt.notes) if rt.notes else None,
     }
     coordinator._imported[str(q)] = {
         "q_price_chf_mwh": None,
@@ -819,6 +1177,23 @@ async def _handle_refresh_tariffs(call: "ServiceCall") -> None:
 
 
 @dataclass(frozen=True)
+class _PeriodSubRow:
+    """One sub-row beneath a main period row (v0.9.9).
+
+    Emitted when a period spans more than one (config × season) segment.
+    ``label`` is a human-readable segment description like
+    ``"Jan 1 – Feb 14 (utility A)"`` or ``"Apr 1 – Jun 30 (summer)"``.
+    """
+
+    label: str
+    base_rp_kwh_avg: float | None
+    hkn_rp_kwh_avg: float | None
+    rate_rp_kwh_avg: float | None
+    total_kwh: float | None
+    total_chf: float | None
+
+
+@dataclass(frozen=True)
 class _RecomputeReportRow:
     """One row per billing period in the recompute notification table.
 
@@ -862,6 +1237,14 @@ class _RecomputeReportRow:
     # to the period cell + a single footnote line. The basis label is still
     # exposed on the live BasisVerguetungSensor's attributes.
     is_current_estimate: bool = False
+    # v0.9.9 — rate-window-derived metadata captured per period so per-group
+    # config blocks can render seasonal labels + contextual notes.
+    seasonal_at_period: dict | None = None
+    notes_active_at_period: list | None = None
+    # v0.9.9 — per-period sub-rows for seasonal / mid-period config splits.
+    # ``None`` keeps legacy single-row rendering; populated when a period
+    # spans more than one (config × season) segment.
+    sub_rows: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -898,6 +1281,7 @@ def _build_recompute_report(
 
     db = load_tariffs()
     utility_meta = db["utilities"].get(rt.utility_key, {})
+    user_lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
     header = {
         "utility_key": rt.utility_key,
         "utility_name": utility_meta.get("name_de", rt.utility_key),
@@ -916,6 +1300,10 @@ def _build_recompute_report(
         "cap_rp_kwh": rt.cap_rp_kwh,
         "tariffs_version": rt.tariffs_json_version,
         "tariffs_source": rt.tariffs_json_source,
+        # v0.9.9 — seasonal applied + rate-window notes.
+        "seasonal": rt.seasonal,
+        "notes_active": list(rt.notes) if rt.notes else None,
+        "notes_lang": user_lang,
     }
 
     rows: list[_RecomputeReportRow] = []
@@ -947,13 +1335,35 @@ def _build_recompute_report(
                 "tariffs_version_at_period": snap.get("tariffs_json_version"),
                 "tariffs_source_at_period": snap.get("tariffs_json_source"),
                 "is_current_estimate": bool(snap.get("is_current_estimate", False)),
+                "seasonal_at_period": snap.get("seasonal"),
+                "notes_active_at_period": snap.get("notes_active"),
             }
             # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
             periods = snap.get("periods") or [
                 {**m, "period": m.get("month")} for m in (snap.get("monthly") or [])
             ]
+            segments_meta = snap.get("segments_meta") or {}
             for p in periods:
+                sub_rows_payload = p.get("sub_rows") or []
+                materialized_sub_rows: tuple[_PeriodSubRow, ...] = ()
+                if sub_rows_payload:
+                    sub_list: list[_PeriodSubRow] = []
+                    for sr in sub_rows_payload:
+                        sub_list.append(
+                            _PeriodSubRow(
+                                label=_format_segment_label(
+                                    sr.get("seg_id"),
+                                    segments_meta.get(sr.get("seg_id")),
+                                ),
+                                base_rp_kwh_avg=sr.get("base_rp_kwh_avg"),
+                                hkn_rp_kwh_avg=sr.get("hkn_rp_kwh_avg"),
+                                rate_rp_kwh_avg=sr.get("rate_rp_kwh_avg"),
+                                total_kwh=sr.get("kwh"),
+                                total_chf=sr.get("chf"),
+                            )
+                        )
+                    materialized_sub_rows = tuple(sub_list)
                 rows.append(
                     _RecomputeReportRow(
                         period=p.get("period") or p.get("month"),
@@ -963,6 +1373,7 @@ def _build_recompute_report(
                         intended_hkn_rp_kwh=p.get("intended_hkn_rp_kwh"),
                         total_kwh=p.get("kwh"),
                         total_chf=p.get("chf"),
+                        sub_rows=materialized_sub_rows,
                         **row_meta,
                     )
                 )
@@ -1102,6 +1513,19 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     if tv:
         src = f" ({ts})" if ts else ""
         lines.append(f"- **Tariff data:** v{tv}{src}")
+
+    # v0.9.9 — seasonal applied marker + per-rate-window notes.
+    seasonal_summary = _seasonal_summary(c.get("seasonal"))
+    if seasonal_summary is not None:
+        lines.append(f"- **Seasonal rates:** Yes ({seasonal_summary})")
+    elif "seasonal" in c:
+        # Distinguish "explicitly absent" (rate window has no seasonal block)
+        # from "key was not threaded through" (legacy snapshot — silent).
+        lines.append("- **Seasonal rates:** No")
+
+    notes_lang = c.get("notes_lang") or "en"
+    lines.extend(_render_notes_lines(c.get("notes_active"), notes_lang))
+
     return lines
 
 
@@ -1158,6 +1582,8 @@ def _render_group_heading(
     fingerprint: tuple,
     sample_row: _RecomputeReportRow,
     group_rows: list[_RecomputeReportRow],
+    *,
+    notes_lang: str = "en",
 ) -> list[str]:
     """v0.9.2: date-bounded heading + the same bullet-list as the active-today
     block. Replaces the prior horizontal one-liner.
@@ -1211,6 +1637,9 @@ def _render_group_heading(
         "cap_rp_kwh": sample_row.cap_rp_kwh_at_period,
         "tariffs_version": sample_row.tariffs_version_at_period,
         "tariffs_source": sample_row.tariffs_source_at_period,
+        "seasonal": sample_row.seasonal_at_period,
+        "notes_active": sample_row.notes_active_at_period,
+        "notes_lang": notes_lang,
     }
     return [heading, *_render_config_block(config_dict)]
 
@@ -1233,32 +1662,75 @@ def _render_period_table(
     ]
     forfeit_rows: list[_RecomputeReportRow] = []
     has_estimate = False
-    for r in rows:
-        base = f"{r.base_rp_kwh_avg:.3f}" if r.base_rp_kwh_avg is not None else "—"
-        intended = r.intended_hkn_rp_kwh
-        applied = r.hkn_rp_kwh_avg
-        is_forfeit = (
-            intended is not None
-            and intended > 0
-            and applied is not None
-            and applied < intended - 1e-4
+
+    def _format_cell_block(
+        period_cell: str,
+        base_v: float | None,
+        applied_v: float | None,
+        intended_v: float | None,
+        rate_v: float | None,
+        kwh_v: float | None,
+        chf_v: float | None,
+    ) -> tuple[str, bool]:
+        """Render one row's six markdown cells. Returns (markdown, is_forfeit).
+        Shared between main rows and sub-rows so both honour the same dash
+        / forfeit conventions.
+        """
+        base_s = f"{base_v:.3f}" if base_v is not None else "—"
+        forfeit = (
+            intended_v is not None
+            and intended_v > 0
+            and applied_v is not None
+            and applied_v < intended_v - 1e-4
         )
-        if applied is None:
-            hkn = "—"
-        elif is_forfeit:
-            hkn = f"{applied:.3f} / {intended:.2f}"
-            forfeit_rows.append(r)
+        if applied_v is None:
+            hkn_s = "—"
+        elif forfeit:
+            hkn_s = f"{applied_v:.3f} / {intended_v:.2f}"
         else:
-            hkn = f"{applied:.3f}"
-        rate = f"{r.rate_rp_kwh_avg:.3f}" if r.rate_rp_kwh_avg is not None else "—"
-        kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
-        chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
+            hkn_s = f"{applied_v:.3f}"
+        rate_s = f"{rate_v:.3f}" if rate_v is not None else "—"
+        kwh_s = f"{kwh_v:,.2f}" if kwh_v is not None else "—"
+        chf_s = f"{chf_v:,.2f}" if chf_v is not None else "—"
+        return (
+            f"| {period_cell} | {base_s} | {hkn_s} | {rate_s} | {kwh_s} | {chf_s} |",
+            forfeit,
+        )
+
+    for r in rows:
         if r.is_current_estimate:
             has_estimate = True
             period_cell = f"{r.period} *"
         else:
             period_cell = r.period
-        lines.append(f"| {period_cell} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
+        markdown, is_forfeit = _format_cell_block(
+            period_cell,
+            r.base_rp_kwh_avg,
+            r.hkn_rp_kwh_avg,
+            r.intended_hkn_rp_kwh,
+            r.rate_rp_kwh_avg,
+            r.total_kwh,
+            r.total_chf,
+        )
+        lines.append(markdown)
+        if is_forfeit:
+            forfeit_rows.append(r)
+        # v0.9.9 — sub-rows under the main row when this period spans
+        # >1 (config × season) segment.
+        for sub in r.sub_rows or ():
+            sub_markdown, _ = _format_cell_block(
+                f"  ↳ {sub.label}",
+                sub.base_rp_kwh_avg,
+                sub.hkn_rp_kwh_avg,
+                # Sub-row forfeit detection deliberately suppressed: the
+                # main row's slash already conveys the cap-forfeit story for
+                # the period.
+                None,
+                sub.rate_rp_kwh_avg,
+                sub.total_kwh,
+                sub.total_chf,
+            )
+            lines.append(sub_markdown)
     if has_estimate:
         lines.append("")
         lines.append(
@@ -1344,10 +1816,15 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
                 f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
             )
     else:
+        notes_lang = report.config.get("notes_lang", "en")
         for fingerprint, group_rows in groups:
             sample = group_rows[0]
             lines.append("")
-            lines.extend(_render_group_heading(fingerprint, sample, group_rows))
+            lines.extend(
+                _render_group_heading(
+                    fingerprint, sample, group_rows, notes_lang=notes_lang
+                )
+            )
             lines.append("")
             table_lines, forfeit_rows = _render_period_table(group_rows)
             lines.extend(table_lines)

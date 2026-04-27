@@ -297,6 +297,74 @@ def _active_hkn_structure(utility_key: str, valid_from_iso: str) -> str | None:
         return None
 
 
+_NOTE_SEVERITY_PREFIX: dict[str, str] = {
+    "info": "ℹ",
+    "warning": "⚠",
+    "error": "❌",
+}
+
+
+def _pick_note_text(text_dict: dict[str, str] | None, lang: str) -> str | None:
+    """Pick the best language match from a note's ``text`` dict.
+
+    Order: user locale → ``de`` (Swiss default) → first available key.
+    Returns ``None`` when ``text_dict`` is empty / missing.
+    """
+    if not text_dict:
+        return None
+    if lang in text_dict:
+        return text_dict[lang]
+    if "de" in text_dict:
+        return text_dict["de"]
+    return next(iter(text_dict.values()), None)
+
+
+def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
+    """Markdown block rendered for utility notes active at ``valid_from_iso``.
+
+    Looks up the active rate window for ``utility_key``, picks notes whose
+    half-open ``[valid_from, valid_to)`` straddles ``valid_from_iso``, and
+    renders one bold paragraph per note with a severity emoji prefix:
+    ``info → ℹ``, ``warning → ⚠``, ``error → ❌``. Returns ``""`` when no
+    notes apply. Used as the ``{notes_block}`` description placeholder in
+    every OptionsFlow form so the user sees rate-window context inline.
+    """
+    try:
+        db = load_tariffs()
+        utility = db["utilities"].get(utility_key)
+        if utility is None:
+            return ""
+        at_date = date.fromisoformat(valid_from_iso)
+        rate = find_active(utility["rates"], at_date)
+        if rate is None:
+            return ""
+        raw_notes = rate.get("notes") or []
+    except (KeyError, ValueError, LookupError):
+        return ""
+
+    lang = "en"
+    if hass is not None:
+        lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+
+    blocks: list[str] = []
+    for n in raw_notes:
+        nf = n.get("valid_from")
+        nt = n.get("valid_to")
+        f = date.fromisoformat(nf) if nf else date.min
+        t = date.fromisoformat(nt) if nt else date.max
+        if not (f <= at_date < t):
+            continue
+        text = _pick_note_text(n.get("text"), lang)
+        if not text:
+            continue
+        prefix = _NOTE_SEVERITY_PREFIX.get(n.get("severity", "info"), "ℹ")
+        blocks.append(f"**{prefix} {text}**")
+
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks)
+
+
 def _force_hkn_for_save(hkn_structure: str | None, user_hkn: bool) -> bool:
     """Pick the persisted ``hkn_aktiviert`` value given the gate.
 
@@ -489,6 +557,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "utility_name": _utility_display_name(utility_key),
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
+                "notes_block": _notes_block(utility_key, gate_valid_from, self.hass),
                 **_source_links(self.hass),
             },
         )
@@ -713,6 +782,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             description_placeholders={
                 "current_summary": _format_config_summary(open_cfg) if open_cfg else "—",
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
+                "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
                 **_source_links(self.hass),
             },
         )
@@ -963,6 +1033,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             errors=errors,
             description_placeholders={
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
+                "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
             },
         )
 

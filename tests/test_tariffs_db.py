@@ -291,7 +291,12 @@ class TestResolveTariffAt:
         assert rt.base_model == "fixed_flat"
         assert rt.fixed_rp_kwh == 8.20
         assert rt.hkn_structure == "bundled"
-        assert rt.requires_naturemade_star is True
+        # v0.9.9 — requires_naturemade_star dropped; replaced by a notes[]
+        # entry warning users that the fixed-price tariff is conditional on
+        # naturemade-star certification.
+        assert rt.notes is not None and len(rt.notes) >= 1
+        assert rt.notes[0]["severity"] == "warning"
+        assert "naturemade" in rt.notes[0]["text"]["de"].lower()
         assert rt.cap_mode is False
         assert rt.cap_rp_kwh is None
 
@@ -432,3 +437,121 @@ class TestPerTierBaseModelVariation:
             eigenverbrauch=True, data=endigo_db,
         )
         assert rt.base_model == "rmp_quartal"
+
+
+class TestRateWindowNotes:
+    """v0.9.9 #5 — rate-window notes loaded into ResolvedTariff with date filtering."""
+
+    def test_naturemade_field_dropped_from_resolved(self, db):
+        rt = resolve_tariff_at(
+            "ekz", date(2026, 4, 1), kw=10.0, eigenverbrauch=True, data=db
+        )
+        assert not hasattr(rt, "requires_naturemade_star")
+
+    def test_notes_loaded_with_locale_text_dict(self):
+        db = _synthetic_db(
+            "noterix",
+            [
+                {
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal",
+                    "power_tiers": [
+                        {"kw_min": 0, "kw_max": None, "base_model": "fixed_flat",
+                         "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 2.0,
+                         "hkn_structure": "additive_optin"}
+                    ],
+                    "cap_mode": False, "cap_rules": None,
+                    "notes": [
+                        {
+                            "severity": "warning",
+                            "text": {
+                                "de": "Nur mit Zertifikat.",
+                                "en": "Certificate required.",
+                                "fr": "Certificat requis.",
+                            },
+                        }
+                    ],
+                }
+            ],
+        )
+        rt = resolve_tariff_at(
+            "noterix", date(2026, 4, 1), kw=10.0, eigenverbrauch=True, data=db
+        )
+        assert rt.notes is not None
+        assert len(rt.notes) == 1
+        n = rt.notes[0]
+        assert n["severity"] == "warning"
+        assert n["text"]["de"].startswith("Nur mit Zertifikat")
+        assert n["text"]["en"].startswith("Certificate required")
+        assert n["text"]["fr"].startswith("Certificat requis")
+
+    def test_notes_filtered_by_at_date(self):
+        db = _synthetic_db(
+            "noterix",
+            [
+                {
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal",
+                    "power_tiers": [
+                        {"kw_min": 0, "kw_max": None, "base_model": "fixed_flat",
+                         "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 0.0,
+                         "hkn_structure": "none"}
+                    ],
+                    "cap_mode": False, "cap_rules": None,
+                    "notes": [
+                        {
+                            "valid_from": "2026-01-01", "valid_to": "2026-04-01",
+                            "severity": "info",
+                            "text": {"de": "Q1-Hinweis"},
+                        },
+                        {
+                            "valid_from": "2026-04-01", "valid_to": "2026-07-01",
+                            "severity": "info",
+                            "text": {"de": "Q2-Hinweis"},
+                        },
+                    ],
+                }
+            ],
+        )
+        # March → first note only.
+        rt_q1 = resolve_tariff_at(
+            "noterix", date(2026, 3, 15), kw=5.0,
+            eigenverbrauch=True, data=db,
+        )
+        assert rt_q1.notes is not None and len(rt_q1.notes) == 1
+        assert rt_q1.notes[0]["text"]["de"] == "Q1-Hinweis"
+        # April → second note only.
+        rt_q2 = resolve_tariff_at(
+            "noterix", date(2026, 4, 15), kw=5.0,
+            eigenverbrauch=True, data=db,
+        )
+        assert rt_q2.notes is not None and len(rt_q2.notes) == 1
+        assert rt_q2.notes[0]["text"]["de"] == "Q2-Hinweis"
+        # August → outside both windows.
+        rt_q3 = resolve_tariff_at(
+            "noterix", date(2026, 8, 1), kw=5.0,
+            eigenverbrauch=True, data=db,
+        )
+        assert rt_q3.notes is not None and len(rt_q3.notes) == 0
+
+    def test_no_notes_field_yields_none(self):
+        db = _synthetic_db(
+            "noterix",
+            [
+                {
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal",
+                    "power_tiers": [
+                        {"kw_min": 0, "kw_max": None, "base_model": "fixed_flat",
+                         "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 0.0,
+                         "hkn_structure": "none"}
+                    ],
+                    "cap_mode": False, "cap_rules": None,
+                }
+            ],
+        )
+        rt = resolve_tariff_at(
+            "noterix", date(2026, 4, 1), kw=5.0,
+            eigenverbrauch=True, data=db,
+        )
+        assert rt.notes is None

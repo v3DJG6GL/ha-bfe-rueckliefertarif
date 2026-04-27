@@ -122,9 +122,13 @@
           "items": { "$ref": "#/$defs/power_tier" }
         },
 
-        "requires_naturemade_star": { "type": "boolean" },
         "price_floor_rp_kwh": {
           "oneOf": [{ "type": "number" }, { "type": "null" }]
+        },
+
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
         },
 
         "bonuses": {
@@ -214,6 +218,25 @@
         "rate_rp_kwh":  { "type": "number" },
         "applies_when": { "type": "string", "enum": ["always", "opt_in"] },
         "note":         { "type": "string" }
+      }
+    },
+
+    "note": {
+      "type": "object",
+      "required": ["text", "severity"],
+      "additionalProperties": true,
+      "properties": {
+        "valid_from": { "$ref": "#/$defs/iso_date_or_null" },
+        "valid_to":   { "$ref": "#/$defs/iso_date_or_null" },
+        "severity":   { "type": "string", "enum": ["info", "warning", "error"] },
+        "text": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z]{2}$": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
       }
     },
 

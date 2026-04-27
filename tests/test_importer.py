@@ -69,7 +69,6 @@ def _make_resolved(
         cap_rp_kwh=cap_rp_kwh,
         federal_floor_rp_kwh=federal_floor_rp_kwh,
         federal_floor_label="<30 kW",
-        requires_naturemade_star=False,
         price_floor_rp_kwh=price_floor_rp_kwh,
         tariffs_json_version="1.0.0",
         tariffs_json_source="bundled",
@@ -733,3 +732,90 @@ class TestSnapshotFloorSource:
 
         rt_none = _make_resolved(federal_floor_rp_kwh=None, price_floor_rp_kwh=None)
         assert _floor_source(rt_none) == "federal"
+
+
+class TestSegmentedQuarterPlan:
+    """v0.9.9 — compute_quarter_plan_segmented + legacy back-compat path."""
+
+    def test_legacy_single_segment_records_carry_seg_id(self):
+        # Sanity: single-segment legacy compute_quarter_plan now returns
+        # records with seg_id="single".
+        q = Quarter(2026, 1)
+        cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
+            hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(base_model="fixed_flat", fixed_rp_kwh=9.0),
+        )
+        plan = compute_quarter_plan(
+            q=q,
+            hourly_kwh=uniform_hourly(q, 1.0),
+            quarterly_price=BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=600000.0),
+            monthly_prices=None,
+            cfg=cfg,
+            billing_mode=ABRECHNUNGS_RHYTHMUS_QUARTAL,
+            anchor_sum_chf=0.0,
+            old_post_quarter_first_sum_chf=None,
+        )
+        assert plan.records  # non-empty
+        # Every record carries the wrapper's stable single-segment id.
+        assert {r.seg_id for r in plan.records} == {"single"}
+
+    def test_segmented_two_configs_split_at_mid_quarter_boundary(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            QuarterSegment,
+            compute_quarter_plan_segmented,
+        )
+
+        q = Quarter(2026, 1)
+        q_start, q_end = quarter_bounds_utc(q)
+        # Split mid-quarter at Zurich-local 2026-02-15 00:00.
+        boundary = datetime(2026, 2, 15, tzinfo=ZoneInfo("Europe/Zurich")).astimezone(timezone.utc)
+        cfg_a = TariffConfig(
+            eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
+            hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(base_model="fixed_flat", fixed_rp_kwh=8.0),
+        )
+        cfg_b = TariffConfig(
+            eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
+            hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(base_model="fixed_flat", fixed_rp_kwh=10.0),
+        )
+        segments = [
+            QuarterSegment(seg_id="2026-01-01", start_utc=q_start, end_utc=boundary, cfg=cfg_a),
+            QuarterSegment(seg_id="2026-02-15", start_utc=boundary, end_utc=q_end, cfg=cfg_b),
+        ]
+        plan = compute_quarter_plan_segmented(
+            q=q,
+            hourly_kwh=uniform_hourly(q, 1.0),
+            quarterly_price=BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=600000.0),
+            monthly_prices=None,
+            segments=segments,
+            billing_mode=ABRECHNUNGS_RHYTHMUS_QUARTAL,
+            anchor_sum_chf=0.0,
+            old_post_quarter_first_sum_chf=None,
+        )
+        # Both seg_ids appear in the records.
+        assert {r.seg_id for r in plan.records} == {"2026-01-01", "2026-02-15"}
+        # All A-segment records use 8.0 rate; all B-segment records use 10.0.
+        a_rates = {r.rate_rp_kwh for r in plan.records if r.seg_id == "2026-01-01"}
+        b_rates = {r.rate_rp_kwh for r in plan.records if r.seg_id == "2026-02-15"}
+        assert a_rates == {8.0}
+        assert b_rates == {10.0}
+
+    def test_segmented_empty_segments_raises(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            compute_quarter_plan_segmented,
+        )
+
+        q = Quarter(2026, 1)
+        with pytest.raises(ValueError):
+            compute_quarter_plan_segmented(
+                q=q,
+                hourly_kwh={},
+                quarterly_price=BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=600000.0),
+                monthly_prices=None,
+                segments=[],
+                billing_mode=ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                anchor_sum_chf=0.0,
+                old_post_quarter_first_sum_chf=None,
+            )

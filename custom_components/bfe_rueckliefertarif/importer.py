@@ -56,6 +56,9 @@ class HourRecord:
     compensation_chf: float  # kwh × rate / 100
     base_rp_kwh: float       # base after federal floor (and cap when binding)
     hkn_rp_kwh: float        # HKN bonus actually applied (0 if not opted in or cap-forfeited)
+    # v0.9.9 — stable bucket key when a quarter spans multiple
+    # (config × season) segments. ``None`` for legacy single-segment imports.
+    seg_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -350,32 +353,48 @@ def _rate_rp_kwh_at_hour(
     return derived, derived - q_hkn, q_hkn
 
 
-def compute_quarter_plan(
+@dataclass(frozen=True)
+class QuarterSegment:
+    """One contiguous (config × season) slice of a quarter.
+
+    v0.9.9 — splits a quarter into segments so OPT_CONFIG_HISTORY transitions
+    that fall mid-quarter, and seasonal-month boundaries that fall mid-quarter,
+    each yield their own per-hour rate rather than rounding to quarter-start.
+
+    ``seg_id`` is a stable bucketing key (used by ``_aggregate_by_period`` to
+    group sub-rows under each main period row). ``start_utc`` / ``end_utc``
+    are the half-open UTC bounds of this segment.
+    """
+
+    seg_id: str
+    start_utc: datetime
+    end_utc: datetime
+    cfg: TariffConfig
+
+
+def compute_quarter_plan_segmented(
     q: Quarter,
     hourly_kwh: dict[datetime, float],
     quarterly_price: BfePrice,
     monthly_prices: dict[Month, BfePrice] | None,
-    cfg: TariffConfig,
+    segments: list[QuarterSegment],
     billing_mode: str,
     anchor_sum_chf: float,
     old_post_quarter_first_sum_chf: float | None,
 ) -> QuarterPlan:
-    """Build the quarter's compensation LTS records.
+    """Segmented variant of :func:`compute_quarter_plan`. Each hour gets its
+    rate from the segment whose ``[start_utc, end_utc)`` covers it.
 
-    Args:
-        q: the quarter being imported.
-        hourly_kwh: {hour_utc: exported kWh in that hour}. Must cover the full quarter
-            (missing hours treated as 0).
-        quarterly_price: BFE quarterly PV reference price for q.
-        monthly_prices: BFE monthly PV prices; required if billing_mode is monthly.
-        cfg: tariff config.
-        billing_mode: BILLING_MODE_QUARTERLY | BILLING_MODE_MONTHLY.
-        anchor_sum_chf: the compensation LTS `sum` at quarter_start - 1h. 0.0 for first-ever quarter.
-        old_post_quarter_first_sum_chf: existing sum of compensation entity at
-            quarter_end (first hour of next quarter). None if no post-quarter data.
-
-    Returns a QuarterPlan with records + transition-spike delta.
+    Single-segment lists reduce to the legacy single-cfg path bytewise.
+    Multi-segment lists drive sub-row rendering downstream — see
+    ``services._aggregate_by_period``. The ``billing_mode`` parameter is
+    treated as a quarter-level constant (it's auto-derived from the
+    quarter-start utility's ``settlement_period`` and stays uniform across
+    segments by construction).
     """
+    if not segments:
+        raise ValueError("compute_quarter_plan_segmented requires >=1 segment")
+
     q_start_utc, q_end_utc = quarter_bounds_utc(q)
 
     # Pre-compute per-month kWh totals (needed for M3 derivation in monthly mode).
@@ -387,13 +406,49 @@ def compute_quarter_plan(
             if ms <= h < me:
                 kwh_per_month[m] += kwh
 
+    single_segment = len(segments) == 1
+
     records: list[HourRecord] = []
     running_sum = anchor_sum_chf
+    seg_idx = 0
     for h in hours_in_range(q_start_utc, q_end_utc):
+        # Advance the segment cursor; segments are pre-sorted contiguous.
+        while seg_idx < len(segments) - 1 and h >= segments[seg_idx].end_utc:
+            seg_idx += 1
+        seg = segments[seg_idx]
         kwh = hourly_kwh.get(h, 0.0)
-        rate_rp, base_rp, hkn_rp = _rate_rp_kwh_at_hour(
-            h, q, quarterly_price, monthly_prices, cfg, billing_mode, kwh_per_month
-        )
+        if single_segment:
+            # Preserve the legacy M3-derivation closure (Σ over Q == Q_kwh × Q_rate).
+            rate_rp, base_rp, hkn_rp = _rate_rp_kwh_at_hour(
+                h, q, quarterly_price, monthly_prices, seg.cfg, billing_mode, kwh_per_month
+            )
+        else:
+            # Multi-segment: rate per hour is derived directly from the
+            # appropriate BFE price + this segment's cfg. The Σ-closure
+            # invariant only holds within each segment's hours, not across
+            # the whole quarter (different cfgs → different effective rates).
+            q_rp = chf_per_mwh_to_rp_per_kwh(quarterly_price.chf_per_mwh)
+            is_fixed_base = seg.cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt")
+            if is_fixed_base or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
+                rate_rp, base_rp, hkn_rp = _effective_rate_breakdown_at_hour(
+                    seg.cfg, q_rp, h
+                )
+            else:
+                # Monthly RMP with multi-segment: use the month's own price
+                # (M3 closure deliberately dropped — see docstring).
+                if monthly_prices is None:
+                    raise ValueError("monthly_prices required for monthly RMP mode")
+                for m in (m1, m2, m3):
+                    ms, me = month_bounds_utc(m)
+                    if ms <= h < me:
+                        this_month = m
+                        break
+                if this_month not in monthly_prices:
+                    raise PriceNotYetPublished(
+                        f"Monthly PV price for {this_month} not published"
+                    )
+                m_rp = chf_per_mwh_to_rp_per_kwh(monthly_prices[this_month].chf_per_mwh)
+                rate_rp, base_rp, hkn_rp = _effective_rate_breakdown(seg.cfg, m_rp)
         chf = kwh * rp_per_kwh_to_chf_per_kwh(rate_rp)
         running_sum += chf
         records.append(
@@ -404,13 +459,10 @@ def compute_quarter_plan(
                 compensation_chf=chf,
                 base_rp_kwh=base_rp,
                 hkn_rp_kwh=hkn_rp,
+                seg_id=seg.seg_id,
             )
         )
 
-    # Transition-spike fix: shift post-quarter LTS such that new_sum at q_end - 1h
-    # plus any delta sees continuity with the next hour. Our last record's running_sum
-    # is new_sum at q_end - 1h. The next LTS record (q_end) has old_post_quarter_first_sum.
-    # Delta = running_sum - old_post_quarter_first_sum_chf (positive → shift up).
     if old_post_quarter_first_sum_chf is None:
         post_delta = 0.0
     else:
@@ -422,6 +474,41 @@ def compute_quarter_plan(
         records=records,
         final_sum_chf=running_sum,
         post_quarter_delta_chf=post_delta,
+    )
+
+
+def compute_quarter_plan(
+    q: Quarter,
+    hourly_kwh: dict[datetime, float],
+    quarterly_price: BfePrice,
+    monthly_prices: dict[Month, BfePrice] | None,
+    cfg: TariffConfig,
+    billing_mode: str,
+    anchor_sum_chf: float,
+    old_post_quarter_first_sum_chf: float | None,
+) -> QuarterPlan:
+    """Build the quarter's compensation LTS records (single-config path).
+
+    Thin wrapper around :func:`compute_quarter_plan_segmented` with one
+    segment spanning the entire quarter. Existing callers and tests stay
+    bytewise-compatible; the records returned have ``seg_id="single"``.
+    """
+    q_start_utc, q_end_utc = quarter_bounds_utc(q)
+    segment = QuarterSegment(
+        seg_id="single",
+        start_utc=q_start_utc,
+        end_utc=q_end_utc,
+        cfg=cfg,
+    )
+    return compute_quarter_plan_segmented(
+        q,
+        hourly_kwh,
+        quarterly_price,
+        monthly_prices,
+        [segment],
+        billing_mode,
+        anchor_sum_chf,
+        old_post_quarter_first_sum_chf,
     )
 
 

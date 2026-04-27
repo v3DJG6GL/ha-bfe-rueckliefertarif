@@ -7,7 +7,7 @@
       },
       "tariff": {
         "title": "Tariff configuration ({utility_name})",
-        "description": "Tell us about your plant — utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}",
+        "description": "Tell us about your plant — utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Active since",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -63,7 +63,7 @@
       },
       "add_new_row": {
         "title": "Add transition",
-        "description": "Record a config change effective from a specific date.\n\n{hkn_gate_note}",
+        "description": "Record a config change effective from a specific date.\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Active since",
           "energieversorger": "Utility",
@@ -74,7 +74,7 @@
       },
       "edit_row": {
         "title": "Edit transition",
-        "description": "Update or delete this config transition. Tick **Delete this record** to remove it.\n\n{hkn_gate_note}",
+        "description": "Update or delete this config transition. Tick **Delete this record** to remove it.\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Active since",
           "energieversorger": "Utility",
@@ -86,7 +86,7 @@
       },
       "apply_change": {
         "title": "Apply configuration change",
-        "description": "Record a config change effective from a date — covers utility switches, kW expansion, HKN opt-in/out. All fields are pre-filled from your current config; adjust whatever changed. Billing rhythm is derived from the chosen utility's published settlement period.\n\n**Currently active:** {current_summary}\n\n{hkn_gate_note}",
+        "description": "Record a config change effective from a date — covers utility switches, kW expansion, HKN opt-in/out. All fields are pre-filled from your current config; adjust whatever changed. Billing rhythm is derived from the chosen utility's published settlement period.\n\n**Currently active:** {current_summary}\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Effective from",
           "energieversorger": "Utility",

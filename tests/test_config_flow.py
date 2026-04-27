@@ -234,3 +234,62 @@ class TestStringsAndTranslations:
         assert "user" in fr_translations["config"]["step"]
         assert "tariff" in fr_translations["config"]["step"]
         assert "entities" in fr_translations["config"]["step"]
+
+
+class TestNotesBlockHelper:
+    """v0.9.9 — `_notes_block` returns a localized markdown note for
+    rate-window-level notes; falls back gracefully when nothing applies."""
+
+    def test_bkw_has_naturemade_warning_in_de(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        class _Hass:
+            class config:
+                language = "de"
+
+        out = _notes_block("bkw", "2026-04-01", _Hass())
+        assert "naturemade" in out.lower()
+        assert "⚠" in out  # warning emoji prefix
+
+    def test_bkw_falls_back_when_unknown_locale(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        class _Hass:
+            class config:
+                language = "xx"  # unknown locale → falls back to de
+
+        out = _notes_block("bkw", "2026-04-01", _Hass())
+        assert "naturemade" in out.lower()
+
+    def test_utility_without_notes_returns_empty(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        class _Hass:
+            class config:
+                language = "en"
+
+        out = _notes_block("ekz", "2026-04-01", _Hass())
+        assert out == ""
+
+    def test_unknown_utility_returns_empty(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        out = _notes_block("does_not_exist", "2026-04-01", None)
+        assert out == ""
+
+    def test_invalid_date_returns_empty(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        out = _notes_block("bkw", "not-a-date", None)
+        assert out == ""
+
+    def test_pick_note_text_locale_priority(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _pick_note_text
+
+        text = {"de": "Hallo", "en": "Hello", "fr": "Bonjour"}
+        assert _pick_note_text(text, "fr") == "Bonjour"
+        # User locale missing → fallback to de.
+        assert _pick_note_text(text, "es") == "Hallo"
+        # Empty / missing → None.
+        assert _pick_note_text(None, "en") is None
+        assert _pick_note_text({}, "en") is None

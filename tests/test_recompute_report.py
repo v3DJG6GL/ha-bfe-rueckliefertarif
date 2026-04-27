@@ -206,7 +206,6 @@ def _make_resolved() -> ResolvedTariff:
         cap_rp_kwh=None,
         federal_floor_rp_kwh=6.00,
         federal_floor_label="<30 kW",
-        requires_naturemade_star=False,
         price_floor_rp_kwh=None,
         tariffs_json_version="1.0.0",
         tariffs_json_source="bundled",
@@ -702,3 +701,191 @@ class TestPerConfigGrouping:
         assert "Utility:** (unknown)" in body
         # Row still rendered.
         assert "| 2025Q3 |" in body
+
+
+class TestNotesAndSeasonalConfigBlock:
+    """v0.9.9 — config-block rendering for rate-window notes + seasonal markers."""
+
+    def test_config_block_includes_notes_when_present(self):
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(
+            notes_active=[
+                {"severity": "warning", "text": {"en": "Self-attest naturemade-star."}}
+            ],
+            notes_lang="en",
+        )
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "**Notes:**" in body
+        assert "*(warning)* Self-attest naturemade-star." in body
+
+    def test_config_block_no_notes_when_empty(self):
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(notes_active=None, notes_lang="en")
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "**Notes:**" not in body
+
+    def test_config_block_locale_fallback_to_de(self):
+        # Note has only DE text; renderer asked for EN → falls back to DE.
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(
+            notes_active=[
+                {"severity": "info", "text": {"de": "Nur Deutsch verfügbar."}}
+            ],
+            notes_lang="en",
+        )
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "Nur Deutsch verfügbar." in body
+
+    def test_config_block_locale_fallback_to_first_when_de_missing(self):
+        # Neither user lang nor DE → falls back to first available.
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(
+            notes_active=[
+                {"severity": "info", "text": {"it": "Solo italiano."}}
+            ],
+            notes_lang="en",
+        )
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "Solo italiano." in body
+
+    def test_config_block_seasonal_yes_renders_summer_winter_split(self):
+        rows = [_row("2026Q2", 10.00, 100.0, 10.00)]
+        cfg = _config_dict(
+            seasonal={
+                "summer_months": [4, 5, 6, 7, 8, 9],
+                "winter_months": [10, 11, 12, 1, 2, 3],
+            }
+        )
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "**Seasonal rates:** Yes" in body
+        assert "summer: Apr–Sep" in body
+        assert "winter: Oct–Mar" in body
+
+    def test_config_block_seasonal_no_when_explicit_none(self):
+        rows = [_row("2026Q2", 10.00, 100.0, 10.00)]
+        cfg = _config_dict(seasonal=None)
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "**Seasonal rates:** No" in body
+
+
+class TestAggregateBySegment:
+    """v0.9.9 — `_aggregate_by_period` emits per-segment sub-buckets when the
+    records carry distinct seg_id values."""
+
+    def test_single_seg_id_no_sub_rows(self):
+        # All hours tagged with the same seg_id → no sub_rows in output.
+        records = [
+            HourRecord(start=_hour(2026, 1, h, 0), kwh=1.0, rate_rp_kwh=8.0,
+                       compensation_chf=0.08, base_rp_kwh=8.0, hkn_rp_kwh=0.0,
+                       seg_id="single")
+            for h in range(1, 5)
+        ]
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_QUARTAL)
+        assert len(out) == 1
+        assert "sub_rows" not in out[0]
+
+    def test_two_seg_ids_emit_sub_rows_with_distinct_rates(self):
+        # Two seg_ids inside one quarterly bucket → output carries sub_rows.
+        records = [
+            HourRecord(start=_hour(2026, 1, 5, 0), kwh=1.0, rate_rp_kwh=8.0,
+                       compensation_chf=0.08, base_rp_kwh=8.0, hkn_rp_kwh=0.0,
+                       seg_id="a"),
+            HourRecord(start=_hour(2026, 1, 6, 0), kwh=1.0, rate_rp_kwh=8.0,
+                       compensation_chf=0.08, base_rp_kwh=8.0, hkn_rp_kwh=0.0,
+                       seg_id="a"),
+            HourRecord(start=_hour(2026, 2, 20, 0), kwh=1.0, rate_rp_kwh=10.0,
+                       compensation_chf=0.10, base_rp_kwh=10.0, hkn_rp_kwh=0.0,
+                       seg_id="b"),
+            HourRecord(start=_hour(2026, 2, 21, 0), kwh=1.0, rate_rp_kwh=10.0,
+                       compensation_chf=0.10, base_rp_kwh=10.0, hkn_rp_kwh=0.0,
+                       seg_id="b"),
+        ]
+        out = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_QUARTAL)
+        assert len(out) == 1
+        assert "sub_rows" in out[0]
+        sub_map = {sr["seg_id"]: sr for sr in out[0]["sub_rows"]}
+        assert set(sub_map) == {"a", "b"}
+        assert sub_map["a"]["rate_rp_kwh_avg"] == pytest.approx(8.0)
+        assert sub_map["b"]["rate_rp_kwh_avg"] == pytest.approx(10.0)
+        # Sub-row kWh sums to top-level period kWh.
+        assert (sub_map["a"]["kwh"] + sub_map["b"]["kwh"]) == pytest.approx(out[0]["kwh"])
+        assert (sub_map["a"]["chf"] + sub_map["b"]["chf"]) == pytest.approx(out[0]["chf"], abs=1e-6)
+
+
+class TestPeriodTableSubRowRendering:
+    """v0.9.9 — `_render_period_table` emits ↳-prefixed sub-rows when set."""
+
+    def test_period_table_renders_sub_rows_when_set(self):
+        from custom_components.bfe_rueckliefertarif.services import (
+            _PeriodSubRow,
+            _render_period_table,
+        )
+
+        row = _RecomputeReportRow(
+            period="2026Q1",
+            rate_rp_kwh_avg=9.0,
+            base_rp_kwh_avg=9.0,
+            hkn_rp_kwh_avg=0.0,
+            intended_hkn_rp_kwh=None,
+            total_kwh=200.0,
+            total_chf=18.0,
+            sub_rows=(
+                _PeriodSubRow(
+                    label="Jan 1 – Feb 14 (Utility A)",
+                    base_rp_kwh_avg=8.0, hkn_rp_kwh_avg=0.0,
+                    rate_rp_kwh_avg=8.0, total_kwh=100.0, total_chf=8.0,
+                ),
+                _PeriodSubRow(
+                    label="Feb 15 – Mar 31 (Utility B)",
+                    base_rp_kwh_avg=10.0, hkn_rp_kwh_avg=0.0,
+                    rate_rp_kwh_avg=10.0, total_kwh=100.0, total_chf=10.0,
+                ),
+            ),
+        )
+        lines, _ = _render_period_table([row])
+        # Main row plus 2 sub-rows.
+        assert any("| 2026Q1 |" in line for line in lines)
+        assert any("↳ Jan 1 – Feb 14 (Utility A)" in line for line in lines)
+        assert any("↳ Feb 15 – Mar 31 (Utility B)" in line for line in lines)
+
+    def test_period_table_no_sub_rows_when_unset(self):
+        from custom_components.bfe_rueckliefertarif.services import _render_period_table
+
+        row = _row("2026Q1", 9.0, 100.0, 9.0)  # no sub_rows
+        lines, _ = _render_period_table([row])
+        # Header (3 lines) + one main row + nothing else (no estimate footer).
+        non_meta = [line for line in lines if "↳" in line]
+        assert non_meta == []
+
+    def test_period_table_sub_row_handles_none_cells(self):
+        from custom_components.bfe_rueckliefertarif.services import (
+            _PeriodSubRow,
+            _render_period_table,
+        )
+
+        row = _RecomputeReportRow(
+            period="2026Q1",
+            rate_rp_kwh_avg=9.0,
+            base_rp_kwh_avg=9.0,
+            hkn_rp_kwh_avg=0.0,
+            intended_hkn_rp_kwh=None,
+            total_kwh=100.0,
+            total_chf=9.0,
+            sub_rows=(
+                _PeriodSubRow(
+                    label="zero-export segment",
+                    base_rp_kwh_avg=None, hkn_rp_kwh_avg=None,
+                    rate_rp_kwh_avg=None, total_kwh=None, total_chf=None,
+                ),
+            ),
+        )
+        lines, _ = _render_period_table([row])
+        sub_line = next(line for line in lines if "↳" in line)
+        # 5 — markers (base, hkn, rate, kwh, chf) — exact 5 dashes.
+        assert sub_line.count("—") == 5

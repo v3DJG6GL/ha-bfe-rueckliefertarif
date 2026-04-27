@@ -7,7 +7,7 @@
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",
-        "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}",
+        "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Actif depuis",
           "installierte_leistung_kw": "Puissance installée (kW)",
@@ -63,7 +63,7 @@
       },
       "add_new_row": {
         "title": "Ajouter une transition",
-        "description": "Enregistrer un changement de configuration à partir d'une date.\n\n{hkn_gate_note}",
+        "description": "Enregistrer un changement de configuration à partir d'une date.\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Actif depuis",
           "energieversorger": "Fournisseur",
@@ -74,7 +74,7 @@
       },
       "edit_row": {
         "title": "Modifier la transition",
-        "description": "Mettre à jour ou supprimer cette transition. Cochez **Supprimer cet enregistrement** pour le retirer.\n\n{hkn_gate_note}",
+        "description": "Mettre à jour ou supprimer cette transition. Cochez **Supprimer cet enregistrement** pour le retirer.\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Actif depuis",
           "energieversorger": "Fournisseur",
@@ -86,7 +86,7 @@
       },
       "apply_change": {
         "title": "Appliquer un changement de configuration",
-        "description": "Enregistre un changement de configuration à partir d'une date — couvre changement de fournisseur, extension kW, opt-in/out GO. Tous les champs sont pré-remplis depuis votre configuration actuelle ; modifiez ce qui a changé. La fréquence de facturation est dérivée de la période de règlement publiée par le fournisseur choisi.\n\n**Actuellement actif :** {current_summary}\n\n{hkn_gate_note}",
+        "description": "Enregistre un changement de configuration à partir d'une date — couvre changement de fournisseur, extension kW, opt-in/out GO. Tous les champs sont pré-remplis depuis votre configuration actuelle ; modifiez ce qui a changé. La fréquence de facturation est dérivée de la période de règlement publiée par le fournisseur choisi.\n\n**Actuellement actif :** {current_summary}\n\n{hkn_gate_note}\n\n{notes_block}",
         "data": {
           "valid_from": "Effectif depuis",
           "energieversorger": "Fournisseur",

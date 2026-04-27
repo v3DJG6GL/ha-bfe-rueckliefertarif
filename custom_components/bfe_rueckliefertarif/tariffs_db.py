@@ -57,7 +57,6 @@ class ResolvedTariff:
     federal_floor_rp_kwh: float | None
     federal_floor_label: str        # runtime-rendered: "<30 kW", "≥150 kW", etc.
 
-    requires_naturemade_star: bool
     price_floor_rp_kwh: float | None
 
     tariffs_json_version: str
@@ -75,6 +74,13 @@ class ResolvedTariff:
     #  "summer_ht_rp_kwh"/"summer_nt_rp_kwh"/...}        # for fixed_ht_nt
     # None means no seasonal overlay; tier rates apply year-round.
     seasonal: dict | None = None
+
+    # v0.9.9 — rate-window-level notes filtered to ``at_date``. Each entry:
+    # ``{"valid_from": iso|None, "valid_to": iso|None, "severity":
+    # "info"|"warning"|"error", "text": {lang: str}}``. ``None`` when the
+    # rate window has no notes; empty list when notes exist but are all
+    # outside the ``at_date`` window.
+    notes: tuple[dict, ...] | None = None
 
 
 # ----- Loader ---------------------------------------------------------------
@@ -222,6 +228,18 @@ def _fmt_kw(v: float) -> str:
     return f"{v:g}"
 
 
+def _note_active_at(note: dict, at_date: date) -> bool:
+    """Half-open ``[valid_from, valid_to)`` for a single note. Missing
+    bounds default to ±∞, so a note without dates is always active for the
+    rate window it lives in.
+    """
+    f_str = note.get("valid_from")
+    t_str = note.get("valid_to")
+    f = date.fromisoformat(f_str) if f_str else date.min
+    t = date.fromisoformat(t_str) if t_str else date.max
+    return f <= at_date < t
+
+
 # ----- One-call resolver used by importer/coordinator/services -------------
 
 
@@ -289,6 +307,12 @@ def resolve_tariff_at(
             federal_floor = evaluate_federal_floor(fed_rule, kw)
             floor_lbl = floor_label(fed_rule)
 
+    raw_notes = rate.get("notes")
+    if raw_notes is None:
+        notes_filtered: tuple[dict, ...] | None = None
+    else:
+        notes_filtered = tuple(n for n in raw_notes if _note_active_at(n, at_date))
+
     return ResolvedTariff(
         utility_key=utility_key,
         valid_from=rate["valid_from"],
@@ -303,12 +327,12 @@ def resolve_tariff_at(
         cap_rp_kwh=cap_rp_kwh,
         federal_floor_rp_kwh=federal_floor,
         federal_floor_label=floor_lbl,
-        requires_naturemade_star=bool(rate.get("requires_naturemade_star", False)),
         price_floor_rp_kwh=rate.get("price_floor_rp_kwh"),
         tariffs_json_version=str(db["schema_version"]),
         tariffs_json_source=source if source is not None else get_source(),
         ht_window=tier.get("ht_window"),
         seasonal=seasonal,
+        notes=notes_filtered,
     )
 
 
