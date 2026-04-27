@@ -501,3 +501,161 @@ class TestFormatRecomputeNotification:
         _, body = _format_recompute_notification(report)
         assert " / " not in body
         assert "forfeited" not in body
+
+
+# ----- v0.8.6: per-config grouping --------------------------------------------
+
+
+def _row_with_meta(
+    period: str,
+    rate: float | None,
+    kwh: float | None,
+    chf: float | None,
+    *,
+    base: float | None = None,
+    hkn: float | None = None,
+    intended_hkn: float | None = None,
+    utility_key: str | None = None,
+    utility_name: str | None = None,
+    kw: float | None = None,
+    eigenverbrauch: bool | None = None,
+    hkn_optin: bool | None = None,
+    billing: str | None = None,
+    base_model: str | None = None,
+    cap_mode: bool | None = None,
+    cap_rp_kwh: float | None = None,
+    floor_label: str | None = None,
+    floor_rp_kwh: float | None = None,
+    tariffs_version: str | None = None,
+    tariffs_source: str | None = None,
+) -> _RecomputeReportRow:
+    if rate is not None and base is None and hkn is None:
+        base, hkn = rate, 0.0
+    return _RecomputeReportRow(
+        period=period,
+        rate_rp_kwh_avg=rate,
+        base_rp_kwh_avg=base,
+        hkn_rp_kwh_avg=hkn,
+        intended_hkn_rp_kwh=intended_hkn,
+        total_kwh=kwh,
+        total_chf=chf,
+        utility_key_at_period=utility_key,
+        utility_name_at_period=utility_name,
+        kw_at_period=kw,
+        eigenverbrauch_at_period=eigenverbrauch,
+        hkn_optin_at_period=hkn_optin,
+        billing_at_period=billing,
+        base_model_at_period=base_model,
+        cap_mode_at_period=cap_mode,
+        cap_rp_kwh_at_period=cap_rp_kwh,
+        floor_label_at_period=floor_label,
+        floor_rp_kwh_at_period=floor_rp_kwh,
+        tariffs_version_at_period=tariffs_version,
+        tariffs_source_at_period=tariffs_source,
+    )
+
+
+class TestPerConfigGrouping:
+    """v0.8.6: notification renders one section per distinct config used."""
+
+    def test_single_config_matching_today_suppresses_per_group_heading(self):
+        # When the only group's fingerprint matches today, the per-group
+        # heading is suppressed — output looks like v0.8.5 (active-today
+        # block + single table).
+        rows = [_row_with_meta(
+            "2026Q1", 13.27, 1000.0, 132.70, base=10.27, hkn=3.00,
+            utility_key="ekz", utility_name="Elektrizitätswerke des Kantons Zürich (EKZ)",
+            kw=25.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
+        )]
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
+        _, body = _format_recompute_notification(report)
+        assert "## Active configuration (today)" in body
+        assert "## Per-period results" in body
+        assert "## Periods computed under" not in body
+
+    def test_two_configs_emits_two_groups(self):
+        rows = [
+            _row_with_meta(
+                "2026Q1", 10.96, 586.21, 64.25, base=10.266, hkn=0.694,
+                intended_hkn=3.00,
+                utility_key="ekz", utility_name="EKZ",
+                kw=8.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
+                base_model="rmp_quartal", cap_mode=True, cap_rp_kwh=10.96,
+            ),
+            _row_with_meta(
+                "2025Q4", 8.0, 335.38, 26.83, base=8.0, hkn=0.0,
+                utility_key="age_sa", utility_name="Acqua Gas Elettricità SA Chiasso",
+                kw=105.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                base_model="fixed_flat", cap_mode=False,
+            ),
+        ]
+        report = _RecomputeReport(rows=rows, quarters_recomputed=2, config=_config_dict())
+        _, body = _format_recompute_notification(report)
+        # Two per-group headings, in newest-first order (ekz before age_sa).
+        ekz_idx = body.find("## Periods computed under: ekz")
+        age_idx = body.find("## Periods computed under: age_sa")
+        assert ekz_idx != -1 and age_idx != -1, "both groups should render"
+        assert ekz_idx < age_idx, "ekz (newer) should render before age_sa (older)"
+        # Each group has its own table with the right rate.
+        assert "| 2026Q1 | 10.266 | 0.694 / 3.00 | 10.960 | 586.21 | 64.25 |" in body
+        assert "| 2025Q4 | 8.000 | 0.000 | 8.000 | 335.38 | 26.83 |" in body
+        # Per-group sub-bullets reflect per-row metadata.
+        assert "**Tariff model:** rmp_quartal" in body
+        assert "**Tariff model:** fixed_flat" in body
+        assert "Cap mode (Anrechenbarkeitsgrenze):** Active — cap 10.96 Rp/kWh" in body
+        assert "Cap mode (Anrechenbarkeitsgrenze):** Off" in body
+
+    def test_grouping_preserves_newest_first_order(self):
+        rows = [
+            _row_with_meta("2026Q1", 11.0, 100.0, 11.0,
+                           utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                           hkn_optin=True, billing="quartal"),
+            _row_with_meta("2025Q4", 8.0, 100.0, 8.0,
+                           utility_key="age_sa", kw=105.0, eigenverbrauch=True,
+                           hkn_optin=False, billing="quartal"),
+            _row_with_meta("2025Q3", 8.0, 100.0, 8.0,
+                           utility_key="age_sa", kw=105.0, eigenverbrauch=True,
+                           hkn_optin=False, billing="quartal"),
+        ]
+        report = _RecomputeReport(rows=rows, quarters_recomputed=3, config=_config_dict())
+        _, body = _format_recompute_notification(report)
+        # Inside the age_sa group, 2025Q4 appears before 2025Q3.
+        age_block = body[body.find("## Periods computed under: age_sa"):]
+        q4_idx = age_block.find("| 2025Q4 |")
+        q3_idx = age_block.find("| 2025Q3 |")
+        assert q4_idx != -1 and q3_idx != -1
+        assert q4_idx < q3_idx
+
+    def test_forfeit_footnote_per_group(self):
+        # Group A (ekz, 2026Q1) has a forfeit; group B (age_sa) doesn't.
+        # The footnote must appear within group A's section and reference
+        # group A's published HKN — not the active-today header value.
+        rows = [
+            _row_with_meta("2026Q1", 10.96, 586.21, 64.25,
+                           base=10.266, hkn=0.694, intended_hkn=3.00,
+                           utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                           hkn_optin=True, billing="quartal"),
+            _row_with_meta("2025Q4", 8.0, 335.38, 26.83,
+                           base=8.0, hkn=0.0,
+                           utility_key="age_sa", kw=105.0, eigenverbrauch=True,
+                           hkn_optin=False, billing="quartal"),
+        ]
+        report = _RecomputeReport(rows=rows, quarters_recomputed=2, config=_config_dict())
+        _, body = _format_recompute_notification(report)
+        # Footnote text appears once.
+        assert body.count("HKN was reduced or forfeited") == 1
+        # And it references group A's published HKN (3.00, the intended
+        # value carried on the forfeit row), not the today header value.
+        assert "Published HKN: 3.00 Rp/kWh" in body
+
+    def test_legacy_snapshot_without_metadata_falls_back_to_unknown_group(self):
+        # Pre-v0.8.6 snapshots don't carry per-period metadata — all None
+        # fields. Should render under a "(unknown)" heading without
+        # crashing.
+        rows = [_row("2025Q3", 8.0, 100.0, 8.0)]  # bare _row, no meta
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
+        _, body = _format_recompute_notification(report)
+        # Heading present (group fingerprint = all-None ≠ today fingerprint).
+        assert "## Periods computed under: (unknown)" in body
+        # Row still rendered.
+        assert "| 2025Q3 |" in body

@@ -377,6 +377,7 @@ def _record_snapshot(
         "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
         "hkn_optin": tariff_cfg.hkn_aktiviert,
         "cap_mode": rt.cap_mode,
+        "cap_rp_kwh": rt.cap_rp_kwh,
         "cap_applied": bool(cap_applied),
         "total_kwh": round(total_kwh, 3),
         "total_chf": round(total_chf, 4),
@@ -387,6 +388,8 @@ def _record_snapshot(
         "utility_key": rt.utility_key,
         "base_model": rt.base_model,
         "billing": billing,
+        "floor_label": rt.federal_floor_label,
+        "floor_rp_kwh": rt.federal_floor_rp_kwh,
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
     }
@@ -607,6 +610,12 @@ class _RecomputeReportRow:
     Rate columns are kWh-weighted averages over the period; ``base + hkn``
     sums to ``rate_rp_kwh_avg`` within rounding (HKN may be 0 if the user
     didn't opt in or the cap forfeited it).
+
+    v0.8.6: per-period config metadata (utility, kw, EV, HKN, billing, cap,
+    floor, tariffs version) is carried alongside so multi-utility recompute
+    notifications can group rows by config and render per-group headings.
+    Fields are nullable to keep legacy snapshots renderable (group falls
+    back to "(unknown)" for those rows).
     """
 
     period: str
@@ -616,6 +625,19 @@ class _RecomputeReportRow:
     intended_hkn_rp_kwh: float | None
     total_kwh: float | None
     total_chf: float | None
+    utility_key_at_period: str | None = None
+    utility_name_at_period: str | None = None
+    kw_at_period: float | None = None
+    eigenverbrauch_at_period: bool | None = None
+    hkn_optin_at_period: bool | None = None
+    billing_at_period: str | None = None
+    base_model_at_period: str | None = None
+    cap_mode_at_period: bool | None = None
+    cap_rp_kwh_at_period: float | None = None
+    floor_label_at_period: str | None = None
+    floor_rp_kwh_at_period: float | None = None
+    tariffs_version_at_period: str | None = None
+    tariffs_source_at_period: str | None = None
 
 
 @dataclass(frozen=True)
@@ -664,6 +686,29 @@ def _build_recompute_report(
     if coordinator is not None:
         for q in sorted(quarters):
             snap = (coordinator._imported.get(str(q)) or {}).get("snapshot") or {}
+            # Per-period config metadata — pulled from the snapshot so each
+            # row carries the utility/cap/floor that was active at import
+            # time. Defaults are None for legacy snapshots predating v0.8.6.
+            snap_utility_key = snap.get("utility_key")
+            snap_utility_name = (
+                db["utilities"].get(snap_utility_key, {}).get("name_de")
+                if snap_utility_key else None
+            ) or snap_utility_key
+            row_meta = {
+                "utility_key_at_period": snap_utility_key,
+                "utility_name_at_period": snap_utility_name,
+                "kw_at_period": snap.get("kw"),
+                "eigenverbrauch_at_period": snap.get("eigenverbrauch_aktiviert"),
+                "hkn_optin_at_period": snap.get("hkn_optin"),
+                "billing_at_period": snap.get("billing"),
+                "base_model_at_period": snap.get("base_model"),
+                "cap_mode_at_period": snap.get("cap_mode"),
+                "cap_rp_kwh_at_period": snap.get("cap_rp_kwh"),
+                "floor_label_at_period": snap.get("floor_label"),
+                "floor_rp_kwh_at_period": snap.get("floor_rp_kwh"),
+                "tariffs_version_at_period": snap.get("tariffs_json_version"),
+                "tariffs_source_at_period": snap.get("tariffs_json_source"),
+            }
             # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
             periods = snap.get("periods") or [
@@ -679,6 +724,7 @@ def _build_recompute_report(
                         intended_hkn_rp_kwh=p.get("intended_hkn_rp_kwh"),
                         total_kwh=p.get("kwh"),
                         total_chf=p.get("chf"),
+                        **row_meta,
                     )
                 )
     rows.sort(key=lambda r: r.period, reverse=True)
@@ -689,28 +735,49 @@ def _build_recompute_report(
     )
 
 
-def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
-    """Pure function: report → ``(title, markdown_body)``. Easy to unit-test."""
-    n_periods = len(report.rows)
-    n_q = report.quarters_recomputed
+def _row_config_fingerprint(r: _RecomputeReportRow) -> tuple:
+    """Group key — rows sharing this fingerprint render under one heading.
 
-    def _plural(n: int, singular: str, plural: str) -> str:
-        return singular if n == 1 else plural
+    v0.8.6: covers the rate-affecting fields (utility, kw, EV, HKN opt-in,
+    billing). Cap mode / floor / tariffs version are presentation-only and
+    don't change the group identity.
+    """
+    return (
+        r.utility_key_at_period,
+        r.kw_at_period,
+        r.eigenverbrauch_at_period,
+        r.hkn_optin_at_period,
+        r.billing_at_period,
+    )
 
-    if n_q == 1 and n_periods == 1:
-        title = "Tariff recomputed — 1 period"
-    elif n_q == 1:
-        title = f"Tariff recomputed — 1 quarter ({n_periods} periods)"
-    else:
-        title = (
-            f"Tariff history recomputed — {n_periods} "
-            f"{_plural(n_periods, 'period', 'periods')} across {n_q} "
-            f"{_plural(n_q, 'quarter', 'quarters')}"
-        )
 
-    c = report.config
+def _group_rows_by_config(
+    rows: list[_RecomputeReportRow],
+) -> list[tuple[tuple, list[_RecomputeReportRow]]]:
+    """Bucket rows by config fingerprint, preserving the input order.
+
+    Group order = order in which each fingerprint first appeared in the
+    input list. Since ``rows`` is newest-first, the group containing the
+    most-recent row comes first.
+    """
+    buckets: dict[tuple, list[_RecomputeReportRow]] = {}
+    order: list[tuple] = []
+    for r in rows:
+        key = _row_config_fingerprint(r)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(r)
+    return [(key, buckets[key]) for key in order]
+
+
+def _render_active_today_block(c: dict) -> list[str]:
+    """The 'Active configuration (today)' header block — one per report.
+
+    Mirrors the layout of the per-group blocks below for visual symmetry.
+    """
     lines = [
-        "## Current configuration",
+        "## Active configuration (today)",
         f"- **Utility:** {c['utility_key']} — {c['utility_name']}",
         f"- **Tariff model:** {c['base_model']} (settlement: {c['settlement_period']})",
         f"- **Installed power:** {c['kw']:.1f} kW",
@@ -744,28 +811,70 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     lines.append(
         f"- **Tariff data:** v{c['tariffs_version']} ({c['tariffs_source']})"
     )
+    return lines
 
-    lines.append("")
-    lines.append("## Per-period results")
-    lines.append("")
-    LIMIT = 24
-    if n_periods > LIMIT:
-        shown = report.rows[:LIMIT]
-        elided = n_periods - LIMIT
-    else:
-        shown = report.rows
-        elided = 0
 
-    lines.append("_Rates in Rp/kWh; energy in kWh; CHF totals._")
-    lines.append("")
-    lines.append("| Period | Base | HKN | Total | kWh | CHF |")
-    lines.append("|---|---|---|---|---|---|")
+def _render_group_heading(
+    fingerprint: tuple, sample_row: _RecomputeReportRow
+) -> list[str]:
+    """One heading + sub-bullets per config group.
 
+    Pulls display fields from the sample row's snapshot-derived metadata.
+    """
+    utility_key, kw, ev, hkn_optin, billing = fingerprint
+    utility_name = sample_row.utility_name_at_period or utility_key or "(unknown utility)"
+    kw_str = f"{kw:.1f} kW" if kw is not None else "—"
+    ev_str = "EV" if ev else ("no-EV" if ev is False else "EV?")
+    hkn_str = "HKN" if hkn_optin else ("no-HKN" if hkn_optin is False else "HKN?")
+    billing_str = billing or "—"
+
+    title_key = utility_key or "(unknown)"
+    lines = [
+        f"## Periods computed under: {title_key} — {utility_name} · "
+        f"{kw_str} · {ev_str} · {hkn_str} · {billing_str}",
+    ]
+    base_model = sample_row.base_model_at_period
+    if base_model:
+        lines.append(f"- **Tariff model:** {base_model}")
+    floor_label = sample_row.floor_label_at_period
+    if floor_label:
+        floor_v = sample_row.floor_rp_kwh_at_period
+        suffix = f" ({floor_v:.2f} Rp/kWh)" if floor_v is not None else " (none)"
+        lines.append(
+            f"- **Federal floor (Mindestvergütung):** {floor_label}{suffix}"
+        )
+    cap_mode = sample_row.cap_mode_at_period
+    if cap_mode:
+        cap_v = sample_row.cap_rp_kwh_at_period
+        cap_str = f"{cap_v:.2f} Rp/kWh" if cap_v is not None else "n/a"
+        ev_yn = "Yes" if ev else ("No" if ev is False else "—")
+        lines.append(
+            f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — cap "
+            f"{cap_str} ({kw_str}, EV={ev_yn})"
+        )
+    elif cap_mode is False:
+        lines.append("- **Cap mode (Anrechenbarkeitsgrenze):** Off")
+    tv = sample_row.tariffs_version_at_period
+    ts = sample_row.tariffs_source_at_period
+    if tv:
+        src = f" ({ts})" if ts else ""
+        lines.append(f"- **Tariff data:** v{tv}{src}")
+    return lines
+
+
+def _render_period_table(
+    rows: list[_RecomputeReportRow],
+) -> tuple[list[str], list[_RecomputeReportRow]]:
+    """The per-period markdown table for one group. Returns (lines, forfeit_rows)."""
+    lines = [
+        "_Rates in Rp/kWh; energy in kWh; CHF totals._",
+        "",
+        "| Period | Base | HKN | Total | kWh | CHF |",
+        "|---|---|---|---|---|---|",
+    ]
     forfeit_rows: list[_RecomputeReportRow] = []
-    for r in shown:
+    for r in rows:
         base = f"{r.base_rp_kwh_avg:.3f}" if r.base_rp_kwh_avg is not None else "—"
-        # HKN cell: when applied < intended (cap forfeited), show
-        # ``applied / intended`` so the user sees what was published vs paid.
         intended = r.intended_hkn_rp_kwh
         applied = r.hkn_rp_kwh_avg
         is_forfeit = (
@@ -785,20 +894,111 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
         chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
         lines.append(f"| {r.period} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
+    return lines, forfeit_rows
+
+
+def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
+    """Pure function: report → ``(title, markdown_body)``. Easy to unit-test.
+
+    v0.8.6: groups rows by config fingerprint and renders one section per
+    distinct config used. The "Active configuration (today)" block always
+    appears at the top; per-config sections follow in newest-first order.
+    When the recompute spans only one config and that config matches
+    today's, the per-config heading is suppressed so single-utility output
+    looks identical to v0.8.5.
+    """
+    n_periods = len(report.rows)
+    n_q = report.quarters_recomputed
+
+    def _plural(n: int, singular: str, plural: str) -> str:
+        return singular if n == 1 else plural
+
+    if n_q == 1 and n_periods == 1:
+        title = "Tariff recomputed — 1 period"
+    elif n_q == 1:
+        title = f"Tariff recomputed — 1 quarter ({n_periods} periods)"
+    else:
+        title = (
+            f"Tariff history recomputed — {n_periods} "
+            f"{_plural(n_periods, 'period', 'periods')} across {n_q} "
+            f"{_plural(n_q, 'quarter', 'quarters')}"
+        )
+
+    c = report.config
+    lines = _render_active_today_block(c)
+
+    LIMIT = 24
+    if n_periods > LIMIT:
+        shown_rows = report.rows[:LIMIT]
+        elided = n_periods - LIMIT
+    else:
+        shown_rows = report.rows
+        elided = 0
+
+    groups = _group_rows_by_config(shown_rows)
+
+    # Suppress the redundant per-group heading when there's exactly one
+    # group and it matches today's active config — the active-today block
+    # alone already says what's going on.
+    today_fingerprint = (
+        c.get("utility_key"),
+        c.get("kw"),
+        c.get("eigenverbrauch"),
+        c.get("hkn_optin"),
+        c.get("billing"),
+    )
+    suppress_per_group_heading = (
+        len(groups) == 1 and groups[0][0] == today_fingerprint
+    )
+
+    all_forfeits: list[tuple[_RecomputeReportRow, _RecomputeReportRow]] = []
+
+    if suppress_per_group_heading:
+        lines.append("")
+        lines.append("## Per-period results")
+        lines.append("")
+        table_lines, forfeit_rows = _render_period_table(shown_rows)
+        lines.extend(table_lines)
+        if forfeit_rows:
+            lines.append("")
+            published = c.get("hkn_rp_kwh")
+            published_str = (
+                f"{published:.2f} Rp/kWh" if published is not None else "n/a"
+            )
+            n_f = len(forfeit_rows)
+            lines.append(
+                f"_ℹ️ HKN was reduced or forfeited in {n_f} "
+                f"{_plural(n_f, 'period', 'periods')} (cell shows "
+                "`applied / published`) because base + HKN exceeded the "
+                f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
+            )
+    else:
+        for fingerprint, group_rows in groups:
+            sample = group_rows[0]
+            lines.append("")
+            lines.extend(_render_group_heading(fingerprint, sample))
+            lines.append("")
+            table_lines, forfeit_rows = _render_period_table(group_rows)
+            lines.extend(table_lines)
+            if forfeit_rows:
+                lines.append("")
+                # Per-group published HKN (resolved at import time, captured
+                # in the snapshot's intended_hkn_rp_kwh).
+                published = sample.intended_hkn_rp_kwh
+                published_str = (
+                    f"{published:.2f} Rp/kWh" if published is not None else "n/a"
+                )
+                n_f = len(forfeit_rows)
+                lines.append(
+                    f"_ℹ️ HKN was reduced or forfeited in {n_f} "
+                    f"{_plural(n_f, 'period', 'periods')} (cell shows "
+                    "`applied / published`) because base + HKN exceeded the "
+                    f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
+                )
+
     if elided:
         lines.append("")
         lines.append(f"_{elided} older period(s) not shown — see logs._")
-    if forfeit_rows:
-        n_f = len(forfeit_rows)
-        published = c.get("hkn_rp_kwh")
-        published_str = f"{published:.2f} Rp/kWh" if published is not None else "n/a"
-        lines.append("")
-        lines.append(
-            f"_ℹ️ HKN was reduced or forfeited in {n_f} "
-            f"{_plural(n_f, 'period', 'periods')} (cell shows "
-            "`applied / published`) because base + HKN exceeded the "
-            f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
-        )
     if n_q > 1:
         total_kwh = sum(r.total_kwh or 0 for r in report.rows)
         total_chf = sum(r.total_chf or 0 for r in report.rows)
