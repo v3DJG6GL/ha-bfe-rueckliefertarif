@@ -151,10 +151,22 @@ async def import_statistics(
     metadata: dict[str, Any],
     stats: list[dict[str, Any]],
 ) -> None:
-    """Dispatch to HA's async_import_statistics (the officially supported API)."""
+    """Dispatch to HA's async_import_statistics and wait for the recorder to drain.
+
+    ``async_import_statistics`` is a ``@callback`` that *queues* the write onto
+    the recorder's executor thread; it does not block. Without the
+    ``async_block_till_done`` below, a follow-up call that reads the LTS chain
+    (e.g. ``read_compensation_anchor`` for the next quarter in
+    ``_reimport_all_history``) can race the queue and observe ``sum=0``,
+    leading to every quarter being written from anchor 0 — and the Energy
+    Dashboard then displays per-period deltas as ``current - previous``
+    instead of the actual quarter total. v0.9.10 bug fix.
+    """
+    from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.statistics import async_import_statistics
 
     async_import_statistics(hass, metadata, stats)
+    await get_instance(hass).async_block_till_done()
 
 
 def _to_datetime(value: Any) -> datetime:
