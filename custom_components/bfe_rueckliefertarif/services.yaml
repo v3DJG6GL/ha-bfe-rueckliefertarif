@@ -4,16 +4,18 @@ reimport_all_history:
     Re-imports every quarter where both a BFE publication and user's export LTS exist.
     Useful for first-run backfill.
 
-refresh:
-  name: Refresh now
+refresh_data:
+  name: Refresh prices & tariff data
   description: >
-    Force-poll BFE now (instead of waiting for the 6h coordinator tick).
-    Triggers retro-import automatically if new data has been published.
+    Force-poll BFE for new reference market prices AND fetch the latest
+    tariffs.json from the companion repo (https://github.com/v3DJG6GL/bfe-tariffs-data).
+    Skips the 6-hour BFE tick and the daily tariff cache. Auto-imports any
+    quarter BFE has published since the last successful poll. Renamed from
+    'refresh' in v0.9.6.
 
 refresh_tariffs:
-  name: Refresh tariff database
+  name: Refresh tariff database (only)
   description: >
-    Force-fetch tariffs.json from the companion repo (https://github.com/v3DJG6GL/bfe-tariffs-data).
-    Falls back to the bundled file silently on any error (network or schema).
-    The integration also auto-refreshes daily; use this only when you know an
-    update has just landed.
+    Power-user knob — force-fetch tariffs.json from the companion repo without
+    polling BFE. Falls back to the bundled file silently on any error (network
+    or schema). For most cases prefer refresh_data which does both.

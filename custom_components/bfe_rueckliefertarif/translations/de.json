@@ -53,7 +53,7 @@
           "apply_change": "Konfigurationsänderung anwenden (Versorger / kW / HKN / Abrechnung)",
           "manage_history": "Konfigurationsverlauf verwalten",
           "recompute_history": "Gesamte Historie neu berechnen",
-          "refresh_prices": "Preise vom BFE neu laden",
+          "refresh_data": "Preise & Tarifdaten aktualisieren",
           "entities": "Home-Assistant-Entitäten neu verbinden"
         }
       },
@@ -112,11 +112,11 @@
           "confirm": "Ja, jetzt neu berechnen"
         }
       },
-      "refresh_prices": {
-        "title": "Preise vom BFE neu laden",
-        "description": "Erzwingt einen frischen Abruf der Referenz-Marktpreise vom BFE (überspringt den 6-Stunden-Tick). Importiert automatisch jedes seit dem letzten Abruf vom BFE publizierte Quartal.",
+      "refresh_data": {
+        "title": "Preise & Tarifdaten aktualisieren",
+        "description": "Erzwingt einen frischen Abruf der BFE-Referenz-Marktpreise UND einen frischen Fetch der tariffs.json aus dem Companion-Repo (überspringt den 6-Stunden-Tick und den täglichen Tarif-Cache). Importiert automatisch jedes seit dem letzten Abruf vom BFE publizierte Quartal.\n\nVerwende dies, wann immer du einen Fix ins `bfe-tariffs-data`-Repo gepusht hast und HA ihn sofort übernehmen soll.",
         "data": {
-          "confirm": "Ja, jetzt neu laden"
+          "confirm": "Ja, jetzt aktualisieren"
         }
       },
       "entities": {

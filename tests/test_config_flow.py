@@ -193,18 +193,18 @@ class TestStringsAndTranslations:
             assert "init" in d["options"]["step"]
             assert "menu_options" in d["options"]["step"]["init"]
             menu = d["options"]["step"]["init"]["menu_options"]
-            # v0.9.0: lean menu — no more tariff or reimport_quarter steps.
+            # v0.9.6: refresh_prices renamed → refresh_data (combined refresh).
             assert set(menu.keys()) == {
                 "apply_change",
                 "manage_history",
                 "recompute_history",
-                "refresh_prices",
+                "refresh_data",
                 "entities",
             }
 
     @pytest.mark.parametrize(
         "sub_step",
-        ["apply_change", "recompute_history", "refresh_prices", "entities"],
+        ["apply_change", "recompute_history", "refresh_data", "entities"],
     )
     def test_options_substeps_present(self, en_strings, de_translations, sub_step):
         for d in (en_strings, de_translations):

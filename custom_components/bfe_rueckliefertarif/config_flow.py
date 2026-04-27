@@ -411,7 +411,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 "apply_change",
                 "manage_history",
                 "recompute_history",
-                "refresh_prices",
+                "refresh_data",
                 "entities",
             ],
         )
@@ -865,20 +865,24 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     # ----- Sub-step: refresh prices from BFE ---------------------------------
 
-    async def async_step_refresh_prices(
+    async def async_step_refresh_data(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
-        """Confirm + force a fresh BFE price poll (auto-imports new quarters)."""
+        """v0.9.6: combined refresh — BFE prices + companion-repo tariffs.json.
+
+        Replaces the v0.9.0 ``refresh_prices`` step which only polled BFE.
+        Surfaces both fetch results in a single notification.
+        """
         from homeassistant.components.persistent_notification import async_create
 
-        from .services import _refresh_coordinator
+        from .services import _refresh_upstream_data
 
         errors: dict[str, str] = {}
         if user_input is not None and user_input.get("confirm"):
             try:
-                result = await _refresh_coordinator(self.hass)
+                result = await _refresh_upstream_data(self.hass)
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.exception("Refresh prices failed")
+                _LOGGER.exception("Refresh data failed")
                 async_create(
                     self.hass,
                     f"Refresh failed: {exc}",
@@ -887,18 +891,36 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 )
                 errors["base"] = "reimport_failed"
             else:
+                # Line 1: BFE poll status.
                 avail = result["available"]
                 new = result["newly_imported"]
-                line = f"BFE poll OK — {len(avail)} quarter(s) available"
+                bfe_line = f"BFE poll OK — {len(avail)} quarter(s) available"
                 if avail:
-                    line += f" (latest: {max(avail)})"
+                    bfe_line += f" (latest: {max(avail)})"
                 if new:
-                    line += f"; newly imported: {', '.join(str(q) for q in new)}"
+                    bfe_line += (
+                        f"; newly imported: {', '.join(str(q) for q in new)}"
+                    )
                 else:
-                    line += "; no new quarters since last import."
+                    bfe_line += "; no new quarters since last import."
+                # Line 2: tariff data refresh status.
+                if result.get("tariffs_refreshed"):
+                    version = result.get("tariffs_version") or "unknown"
+                    tariffs_line = (
+                        f"Tariff data refreshed (v{version} from companion repo)."
+                    )
+                elif result.get("tariffs_error"):
+                    tariffs_line = (
+                        f"Tariff data refresh failed: {result['tariffs_error']} "
+                        "— using cached tariffs."
+                    )
+                else:
+                    tariffs_line = (
+                        "Tariff data refresh skipped (coordinator not ready)."
+                    )
                 async_create(
                     self.hass,
-                    line,
+                    f"{bfe_line}\n{tariffs_line}",
                     title="BFE Rückliefertarif",
                     notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_refresh",
                 )
@@ -910,7 +932,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             {vol.Required("confirm", default=False): selector.BooleanSelector()}
         )
         return self.async_show_form(
-            step_id="refresh_prices",
+            step_id="refresh_data",
             data_schema=schema,
             errors=errors,
         )

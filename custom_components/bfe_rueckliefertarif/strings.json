@@ -53,7 +53,7 @@
           "apply_change": "Apply config change (utility / kW / HKN / billing)",
           "manage_history": "Manage configuration history",
           "recompute_history": "Recompute full history",
-          "refresh_prices": "Refresh prices from BFE",
+          "refresh_data": "Refresh prices & tariff data",
           "entities": "Re-wire Home Assistant entities"
         }
       },
@@ -112,9 +112,9 @@
           "confirm": "Yes, recompute now"
         }
       },
-      "refresh_prices": {
-        "title": "Refresh prices from BFE",
-        "description": "Force a fresh poll of the BFE reference market prices (skips the 6-hour scheduled tick). Auto-imports any quarter BFE has published since the last successful poll.",
+      "refresh_data": {
+        "title": "Refresh prices & tariff data",
+        "description": "Force a fresh poll of the BFE reference market prices AND a fresh fetch of the companion repo's tariff database (skips the 6-hour scheduled tick and the daily tariff cache). Auto-imports any quarter BFE has published since the last successful poll.\n\nUse this whenever you've pushed a fix to the `bfe-tariffs-data` repo and want HA to pick it up immediately.",
         "data": {
           "confirm": "Yes, refresh now"
         }

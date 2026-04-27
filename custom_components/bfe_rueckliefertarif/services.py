@@ -1,4 +1,4 @@
-"""Service handlers: reimport_all_history, refresh, refresh_tariffs."""
+"""Service handlers: reimport_all_history, refresh_data, refresh_tariffs."""
 
 from __future__ import annotations
 
@@ -45,12 +45,18 @@ _LOGGER = logging.getLogger(__name__)
 async def async_register_services(hass: "HomeAssistant") -> None:
     """Register services on first integration setup."""
     if hass.services.has_service(DOMAIN, "reimport_all_history"):
+        # v0.9.6: drop the legacy ``refresh`` service if it survived from a
+        # pre-v0.9.6 install of the integration in the same HA process. The
+        # idempotency guard above means we're returning early on this code
+        # path, so we still want to clean up — only register what's current.
+        if hass.services.has_service(DOMAIN, "refresh"):
+            hass.services.async_remove(DOMAIN, "refresh")
         return
 
     hass.services.async_register(
         DOMAIN, "reimport_all_history", _handle_reimport_all_history
     )
-    hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
+    hass.services.async_register(DOMAIN, "refresh_data", _handle_refresh_data)
     hass.services.async_register(
         DOMAIN, "refresh_tariffs", _handle_refresh_tariffs
     )
@@ -673,12 +679,30 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     }
 
 
-async def _refresh_coordinator(hass: "HomeAssistant") -> dict:
-    """Trigger a fresh BFE poll via the coordinator. Returns ``{available, newly_imported}``.
+async def _refresh_upstream_data(hass: "HomeAssistant") -> dict:
+    """Trigger a fresh fetch from BOTH upstream sources (v0.9.6).
 
-    The coordinator's ``_async_update_data`` fetches BFE prices and auto-imports
-    quarters whose price changed since the last successful import. We snapshot
-    its private ``_imported`` map before/after to report what was new this tick.
+    Two independent network operations:
+    1. **BFE poll** — ``BfeCoordinator.async_refresh()`` fetches the BFE
+       quarterly/monthly RMP CSVs and auto-imports any newly-published
+       quarter. Snapshot ``_imported`` keys before/after for the diff.
+    2. **Tariffs.json fetch** — ``TariffsDataCoordinator.async_refresh()``
+       pulls the companion repo's tariff database and updates the local
+       cache + the ``_OVERRIDE_PATH`` for ``tariffs_db.load_tariffs``.
+
+    Both operations run unconditionally; the second's success/failure is
+    surfaced in the result dict but does not gate the first. The user-
+    visible flow is the OptionsFlow "Refresh prices & tariff data" step,
+    which renders both statuses in a single notification.
+
+    Returns:
+        ``{
+            "available": sorted Quarters BFE has,
+            "newly_imported": Quarters newly imported this tick,
+            "tariffs_refreshed": bool — True iff async_refresh returned True,
+            "tariffs_version": str | None — tariffs.json schema version after refresh,
+            "tariffs_error": str | None — last_error message on refresh failure,
+        }``
     """
     entry_data = _first_entry_data(hass)
     coordinator = entry_data.get("coordinator")
@@ -689,9 +713,30 @@ async def _refresh_coordinator(hass: "HomeAssistant") -> dict:
     await coordinator.async_refresh()
     after = set(coordinator._imported.keys())
 
+    # Tariffs.json refresh — separate fetch; failure is non-fatal (the
+    # coordinator falls back to the cached / bundled tariffs).
+    tdc = hass.data.get(DOMAIN, {}).get("_tariffs_data")
+    tariffs_refreshed = False
+    tariffs_version: str | None = None
+    tariffs_error: str | None = None
+    if tdc is not None:
+        tariffs_refreshed = await tdc.async_refresh()
+        tariffs_error = tdc.last_error
+        if tariffs_refreshed:
+            try:
+                from .tariffs_db import load_tariffs
+
+                data = await hass.async_add_executor_job(load_tariffs)
+                tariffs_version = data.get("schema_version")
+            except Exception:  # noqa: BLE001
+                tariffs_version = None
+
     return {
         "available": sorted(coordinator.quarterly.keys()),
         "newly_imported": sorted(after - before),
+        "tariffs_refreshed": tariffs_refreshed,
+        "tariffs_version": tariffs_version,
+        "tariffs_error": tariffs_error,
     }
 
 
@@ -734,9 +779,13 @@ async def _handle_reimport_all_history(call: "ServiceCall") -> None:
         _notify_recompute(hass, entry_id, report)
 
 
-async def _handle_refresh(call: "ServiceCall") -> None:
-    """Force the coordinator to poll BFE now (auto-imports newly-published quarters)."""
-    await _refresh_coordinator(call.hass)
+async def _handle_refresh_data(call: "ServiceCall") -> None:
+    """Refresh both BFE prices AND companion-repo tariffs.json.
+
+    v0.9.6: combined service (was: ``refresh`` doing BFE only). The
+    tariffs-only ``refresh_tariffs`` service stays for power users.
+    """
+    await _refresh_upstream_data(call.hass)
 
 
 async def _handle_refresh_tariffs(call: "ServiceCall") -> None:

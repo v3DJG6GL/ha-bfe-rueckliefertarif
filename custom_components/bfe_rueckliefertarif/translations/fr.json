@@ -53,7 +53,7 @@
           "apply_change": "Appliquer un changement de configuration (fournisseur / kW / GO / facturation)",
           "manage_history": "Gérer l'historique de configuration",
           "recompute_history": "Recalculer tout l'historique",
-          "refresh_prices": "Rafraîchir les prix depuis l'OFEN",
+          "refresh_data": "Actualiser prix & données tarifaires",
           "entities": "Reconfigurer les entités Home Assistant"
         }
       },
@@ -112,11 +112,11 @@
           "confirm": "Oui, recalculer maintenant"
         }
       },
-      "refresh_prices": {
-        "title": "Rafraîchir les prix depuis l'OFEN",
-        "description": "Force un nouveau sondage des prix de référence du marché publiés par l'OFEN (saute le tick programmé de 6 heures). Importe automatiquement tout trimestre publié depuis le dernier sondage.",
+      "refresh_data": {
+        "title": "Actualiser prix & données tarifaires",
+        "description": "Force un nouveau sondage des prix de référence du marché publiés par l'OFEN ET un fetch frais de tariffs.json depuis le dépôt compagnon (saute le tick de 6 heures et le cache tarifaire quotidien). Importe automatiquement tout trimestre publié depuis le dernier sondage.\n\nUtilisez ceci à chaque fois que vous avez poussé un correctif vers le dépôt `bfe-tariffs-data` et que vous voulez que HA le récupère immédiatement.",
         "data": {
-          "confirm": "Oui, rafraîchir maintenant"
+          "confirm": "Oui, actualiser maintenant"
         }
       },
       "entities": {

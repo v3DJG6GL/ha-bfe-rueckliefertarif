@@ -654,9 +654,83 @@ class TestRecomputeHistoryStep:
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
 
 
-class TestRefreshPricesStep:
-    """v0.9.0 — the OptionsFlow ``refresh_prices`` step delegates to
-    ``_refresh_coordinator`` after confirmation."""
+class TestRefreshUpstreamDataHelper:
+    """v0.9.6 — `_refresh_upstream_data` runs both fetch operations: BFE
+    prices via `BfeCoordinator.async_refresh()` AND tariffs.json via
+    `TariffsDataCoordinator.async_refresh()`. Returns a dict that surfaces
+    both fetch statuses for the OptionsFlow renderer."""
+
+    def _make_hass(self, *, tdc_refresh_returns=True, tdc_last_error=None):
+        from unittest.mock import AsyncMock
+
+        coordinator = MagicMock()
+        coordinator._imported = {"2025Q4": {}, "2026Q1": {}}
+        coordinator.async_refresh = AsyncMock(return_value=None)
+        coordinator.quarterly = {"2026Q1": object(), "2025Q4": object()}
+
+        tdc = MagicMock()
+        tdc.async_refresh = AsyncMock(return_value=tdc_refresh_returns)
+        tdc.last_error = tdc_last_error
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(),
+            options={},
+        )
+        hass = MagicMock()
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                },
+                "_tariffs_data": tdc,
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+
+        async def _fake_executor(fn, *args, **kwargs):
+            return {"schema_version": "1.0.1"}
+        hass.async_add_executor_job = _fake_executor
+        return hass, coordinator, tdc
+
+    @pytest.mark.asyncio
+    async def test_calls_both_coordinators_and_returns_tariffs_status(self):
+        from custom_components.bfe_rueckliefertarif import services as svc
+
+        hass, coordinator, tdc = self._make_hass(tdc_refresh_returns=True)
+        result = await svc._refresh_upstream_data(hass)
+
+        coordinator.async_refresh.assert_awaited_once()
+        tdc.async_refresh.assert_awaited_once()
+        assert result["tariffs_refreshed"] is True
+        assert result["tariffs_version"] == "1.0.1"
+        assert result["tariffs_error"] is None
+
+    @pytest.mark.asyncio
+    async def test_continues_when_tariffs_refresh_fails(self):
+        from custom_components.bfe_rueckliefertarif import services as svc
+
+        hass, coordinator, tdc = self._make_hass(
+            tdc_refresh_returns=False,
+            tdc_last_error="schema mismatch",
+        )
+        result = await svc._refresh_upstream_data(hass)
+
+        # BFE poll still fired even though tariff refresh failed.
+        coordinator.async_refresh.assert_awaited_once()
+        tdc.async_refresh.assert_awaited_once()
+        assert result["tariffs_refreshed"] is False
+        assert result["tariffs_version"] is None
+        assert result["tariffs_error"] == "schema mismatch"
+
+
+class TestRefreshDataStep:
+    """v0.9.6 — the OptionsFlow ``refresh_data`` step (renamed from
+    ``refresh_prices``) delegates to ``_refresh_upstream_data`` after
+    confirmation, which refreshes BOTH BFE prices AND the companion-repo
+    tariffs.json."""
 
     def _make_flow(self, options=None):
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
@@ -672,15 +746,22 @@ class TestRefreshPricesStep:
         return flow
 
     @pytest.mark.asyncio
-    async def test_confirmed_invokes_coordinator_refresh(self):
+    async def test_confirmed_invokes_upstream_data_refresh(self):
         from unittest.mock import AsyncMock
 
         flow = self._make_flow()
+        # The mocked return now includes the v0.9.6 tariffs_* keys.
         with patch(
-            "custom_components.bfe_rueckliefertarif.services._refresh_coordinator",
-            new=AsyncMock(return_value={"available": [], "newly_imported": []}),
+            "custom_components.bfe_rueckliefertarif.services._refresh_upstream_data",
+            new=AsyncMock(return_value={
+                "available": [],
+                "newly_imported": [],
+                "tariffs_refreshed": True,
+                "tariffs_version": "1.0.1",
+                "tariffs_error": None,
+            }),
         ) as mock_refresh:
-            result = await flow.async_step_refresh_prices({"confirm": True})
+            result = await flow.async_step_refresh_data({"confirm": True})
         assert mock_refresh.call_count == 1
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
 
