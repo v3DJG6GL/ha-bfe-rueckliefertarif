@@ -431,7 +431,12 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     entry_data = _first_entry_data(hass)
     comp_id = entry_data["config"][CONF_RUECKLIEFERVERGUETUNG_CHF]
     instance = get_instance(hass)
-    await hass.async_add_executor_job(clear_statistics, instance, [comp_id])
+    # `clear_statistics` mutates `statistics_meta` and is gated on the
+    # recorder's dedicated thread (see HA's
+    # `table_managers/statistics_meta.py:399`). Use the recorder instance's
+    # executor — NOT `hass.async_add_executor_job` — otherwise we hit
+    # `RuntimeError: Detected unsafe call not in recorder thread`.
+    await instance.async_add_executor_job(clear_statistics, instance, [comp_id])
 
     coordinator = entry_data.get("coordinator")
     if coordinator is not None:

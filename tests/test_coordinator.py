@@ -116,3 +116,113 @@ class TestFilterSkippedQuarters:
             await coord._filter_skipped_to_quarters_with_export(["2025Q4"])
         assert mock_read.call_count == 1
         assert coord._earliest_export_hour == datetime(2025, 9, 1, tzinfo=timezone.utc)
+
+
+class TestCoordinatorAutoImportSkipsPreValidFrom:
+    """v0.9.3 — _auto_import_newly_published must apply the same
+    pre-valid_from quarter skip that _reimport_all_history does. Otherwise
+    every 6-hourly coordinator refresh logs a "predates earliest record"
+    WARNING for each pre-install BFE-published quarter."""
+
+    @pytest.mark.asyncio
+    async def test_skips_quarters_predating_earliest_history_record(self):
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.const import OPT_CONFIG_HISTORY
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        coord = _make_coordinator()
+        # History anchored at 2025-04-01 (plant install).
+        coord.entry = SimpleNamespace(
+            entry_id="test_entry",
+            data={"stromnetzeinspeisung_kwh": "sensor.export"},
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-04-01",
+                        "valid_to": None,
+                        "config": {
+                            "energieversorger": "ekz",
+                            "installierte_leistung_kw": 8.0,
+                            "eigenverbrauch_aktiviert": True,
+                            "hkn_aktiviert": True,
+                            "abrechnungs_rhythmus": "quartal",
+                        },
+                    }
+                ]
+            },
+        )
+        # BFE has 2024Q4 + 2025Q1 + 2025Q2 + 2025Q3 published.
+        coord.quarterly = {
+            Quarter(2024, 4): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+            Quarter(2025, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            Quarter(2025, 2): BfePrice(chf_per_mwh=80.0, days=91, volume_mwh=0.0),
+            Quarter(2025, 3): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+        }
+        coord._imported = {}
+
+        async def _fake_notify(*args, **kwargs):
+            return None
+
+        coord._notify_skipped_quarters = _fake_notify
+
+        called: list[Quarter] = []
+
+        async def _fake_reimport(_hass, q):
+            called.append(q)
+
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._reimport_quarter",
+            new=_fake_reimport,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._build_recompute_report",
+            return_value=None,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._notify_recompute",
+        ):
+            await coord._auto_import_newly_published()
+
+        # Pre-valid_from quarters must NOT reach _reimport_quarter.
+        assert sorted(str(q) for q in called) == ["2025Q2", "2025Q3"]
+
+    @pytest.mark.asyncio
+    async def test_no_history_means_no_filter_applied(self):
+        # Defensive: when entry.options has no history, the coordinator
+        # falls back to importing everything (legacy behavior, no regression).
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        coord = _make_coordinator()
+        coord.entry = SimpleNamespace(
+            entry_id="test_entry",
+            data={"stromnetzeinspeisung_kwh": "sensor.export"},
+            options={},
+        )
+        coord.quarterly = {
+            Quarter(2024, 4): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+            Quarter(2025, 2): BfePrice(chf_per_mwh=80.0, days=91, volume_mwh=0.0),
+        }
+        coord._imported = {}
+
+        async def _fake_notify(*args, **kwargs):
+            return None
+
+        coord._notify_skipped_quarters = _fake_notify
+
+        called: list[Quarter] = []
+
+        async def _fake_reimport(_hass, q):
+            called.append(q)
+
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._reimport_quarter",
+            new=_fake_reimport,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._build_recompute_report",
+            return_value=None,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._notify_recompute",
+        ):
+            await coord._auto_import_newly_published()
+
+        # Both quarters reach _reimport_quarter — no history filter applied.
+        assert sorted(str(q) for q in called) == ["2024Q4", "2025Q2"]

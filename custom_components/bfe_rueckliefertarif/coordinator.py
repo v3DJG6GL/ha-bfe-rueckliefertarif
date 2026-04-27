@@ -247,16 +247,37 @@ class BfeCoordinator(DataUpdateCoordinator):
         summarized in a single rich notification card (utility, model,
         kW/EV/HKN/billing, plus a per-month results table).
         """
+        from datetime import date
+
+        from .const import OPT_CONFIG_HISTORY
         from .services import (
             _build_recompute_report,
             _notify_recompute,
             _reimport_quarter,
         )
 
+        # v0.9.3: skip quarters that predate the earliest config-history
+        # record (the plant install date). Without this guard, every
+        # 6-hourly coordinator refresh logs a "predates earliest record"
+        # WARNING for each pre-install quarter BFE has published — same
+        # root cause `_reimport_all_history`'s pre-active filter addresses
+        # for the explicit Recompute button.
+        history = (self.entry.options or {}).get(OPT_CONFIG_HISTORY) or []
+        earliest_date: date | None = None
+        if history:
+            try:
+                earliest_date = date.fromisoformat(history[0]["valid_from"])
+            except (KeyError, ValueError, TypeError):
+                earliest_date = None
+
         no_data_skipped: list[str] = []
         reimported: list[Quarter] = []
 
         for q, price in sorted(self.quarterly.items()):
+            if earliest_date is not None:
+                q_start_local = date(q.year, ((q.q - 1) * 3) + 1, 1)
+                if q_start_local < earliest_date:
+                    continue
             key = str(q)
             prior = self._imported.get(key)
             if prior and not self._snapshot_is_stale(prior, q, price):
