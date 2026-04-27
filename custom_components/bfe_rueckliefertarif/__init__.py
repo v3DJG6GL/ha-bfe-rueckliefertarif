@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import CONFIG_HISTORY_FIELDS, DOMAIN, OPT_CONFIG_HISTORY
+from .const import CONF_VALID_FROM, CONFIG_HISTORY_FIELDS, DOMAIN, OPT_CONFIG_HISTORY
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -44,9 +44,12 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "ConfigEntry") -> bool
     history = options.get(OPT_CONFIG_HISTORY)
     if history is None:
         # First setup — synthesize sentinel from the just-collected entry.data.
+        # v0.9.2: anchor at user-supplied CONF_VALID_FROM (plant install date)
+        # instead of 1970-01-01. The 1970 fallback covers any pre-v0.9.2 entry
+        # that somehow reaches this code path without the new field.
         options[OPT_CONFIG_HISTORY] = [
             {
-                "valid_from": "1970-01-01",
+                "valid_from": entry.data.get(CONF_VALID_FROM, "1970-01-01"),
                 "valid_to": None,
                 "config": {k: entry.data.get(k) for k in CONFIG_HISTORY_FIELDS},
             }

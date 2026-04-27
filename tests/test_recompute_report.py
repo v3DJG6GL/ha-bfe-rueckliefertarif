@@ -571,7 +571,9 @@ class TestPerConfigGrouping:
         _, body = _format_recompute_notification(report)
         assert "## Active configuration (today)" in body
         assert "## Per-period results" in body
+        # v0.9.2: "Periods computed under" replaced by "Configuration in effect:".
         assert "## Periods computed under" not in body
+        assert "## Configuration in effect" not in body
 
     def test_two_configs_emits_two_groups(self):
         rows = [
@@ -591,14 +593,19 @@ class TestPerConfigGrouping:
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=2, config=_config_dict())
         _, body = _format_recompute_notification(report)
-        # Two per-group headings, in newest-first order (ekz before age_sa).
-        ekz_idx = body.find("## Periods computed under: ekz")
-        age_idx = body.find("## Periods computed under: age_sa")
+        # v0.9.2: heading is "## Configuration in effect: YYYY-MM-DD → YYYY-MM-DD"
+        # with date ranges derived from the group's row periods.
+        # 2026Q1 = 2026-01-01 → 2026-03-31; 2025Q4 = 2025-10-01 → 2025-12-31.
+        ekz_idx = body.find("## Configuration in effect: 2026-01-01 → 2026-03-31")
+        age_idx = body.find("## Configuration in effect: 2025-10-01 → 2025-12-31")
         assert ekz_idx != -1 and age_idx != -1, "both groups should render"
         assert ekz_idx < age_idx, "ekz (newer) should render before age_sa (older)"
         # Each group has its own table with the right rate.
         assert "| 2026Q1 | 10.266 | 0.694 / 3.00 | 10.960 | 586.21 | 64.25 |" in body
         assert "| 2025Q4 | 8.000 | 0.000 | 8.000 | 335.38 | 26.83 |" in body
+        # Each group's bullet block carries its own utility identity.
+        assert "Utility:** ekz — EKZ" in body
+        assert "Utility:** age_sa — Acqua Gas Elettricità SA Chiasso" in body
         # Per-group sub-bullets reflect per-row metadata.
         assert "**Tariff model:** rmp_quartal" in body
         assert "**Tariff model:** fixed_flat" in body
@@ -619,8 +626,10 @@ class TestPerConfigGrouping:
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=3, config=_config_dict())
         _, body = _format_recompute_notification(report)
-        # Inside the age_sa group, 2025Q4 appears before 2025Q3.
-        age_block = body[body.find("## Periods computed under: age_sa"):]
+        # v0.9.2: age_sa group spans 2025Q3 + 2025Q4 → 2025-07-01 → 2025-12-31.
+        age_heading = "## Configuration in effect: 2025-07-01 → 2025-12-31"
+        assert age_heading in body
+        age_block = body[body.find(age_heading):]
         q4_idx = age_block.find("| 2025Q4 |")
         q3_idx = age_block.find("| 2025Q3 |")
         assert q4_idx != -1 and q3_idx != -1
@@ -650,12 +659,14 @@ class TestPerConfigGrouping:
 
     def test_legacy_snapshot_without_metadata_falls_back_to_unknown_group(self):
         # Pre-v0.8.6 snapshots don't carry per-period metadata — all None
-        # fields. Should render under a "(unknown)" heading without
-        # crashing.
+        # fields. Should render under a date-bounded heading + "(unknown)"
+        # utility bullet without crashing.
         rows = [_row("2025Q3", 8.0, 100.0, 8.0)]  # bare _row, no meta
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
         _, body = _format_recompute_notification(report)
-        # Heading present (group fingerprint = all-None ≠ today fingerprint).
-        assert "## Periods computed under: (unknown)" in body
+        # v0.9.2: 2025Q3 → 2025-07-01 → 2025-09-30 heading.
+        assert "## Configuration in effect: 2025-07-01 → 2025-09-30" in body
+        # The bullet block falls back to "(unknown)" for the utility key.
+        assert "Utility:** (unknown)" in body
         # Row still rendered.
         assert "| 2025Q3 |" in body

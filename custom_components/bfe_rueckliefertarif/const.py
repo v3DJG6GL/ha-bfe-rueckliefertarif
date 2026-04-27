@@ -27,6 +27,12 @@ CONF_NAMENSPRAEFIX = "namenspraefix"
 # switch via the apply_change wizard doesn't change the integration's display
 # name or sensor IDs.
 CONF_PLANT_NAME = "plant_name"
+# v0.9.2: plant install date. Anchors the *first* OPT_CONFIG_HISTORY record's
+# valid_from (replaces the artificial 1970-01-01 sentinel). NOT included in
+# CONFIG_HISTORY_FIELDS — it's a per-entry constant, not a versioned field.
+# Quarters before this date are skipped during _reimport_all_history.
+# Same key name as OPT_CONFIG_HISTORY records' valid_from for consistency.
+CONF_VALID_FROM = "valid_from"
 
 # Abrechnungs-Rhythmus values
 ABRECHNUNGS_RHYTHMUS_QUARTAL = "quartal"

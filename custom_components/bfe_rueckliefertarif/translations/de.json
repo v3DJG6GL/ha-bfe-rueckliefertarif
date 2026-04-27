@@ -9,12 +9,14 @@
         "title": "Tarif konfigurieren ({utility_name})",
         "description": "Trag deine Anlagedaten ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.",
         "data": {
+          "valid_from": "Aktiv seit",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
           "hkn_aktiviert": "HKN an Versorger verkaufen?",
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
+          "valid_from": "## Inbetriebnahme-Datum\nDatum, ab dem deine PV-Anlage am Netz ist (oder ab dem diese Konfiguration gilt). Verankert die Konfigurations-Historie — Quartale vor diesem Datum werden bei einer Neuberechnung still übersprungen, weil keine Tarif-Konfiguration sie abdeckt.\n\nStandardwert: heute. Setze das tatsächliche Inbetriebnahme-Datum für eine saubere Import-Historie.",
           "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |",
           "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** wenn ein Teil deiner PV-Produktion vor Ort verbraucht wird (typische Wohn- / Gewerbeanlage). **Nein** für Volleinspeisung (gesamte Produktion ins Netz).\n\nBeeinflusst das Mindestvergütungsband — bei 30–<150 kW ist der Unterschied erheblich (degressiv 180÷kW mit Eigenverbrauch vs. flat 6.20 Rp/kWh ohne).",
           "hkn_aktiviert": "## HKN-Opt-in (Herkunftsnachweis)\n**Ja** wenn du *Herkunftsnachweise* an deinen Versorger verkaufst. Die meisten Versorger bieten das als Opt-in über das Kundenportal an.\n\nDer Satz ist vom Versorger fixiert und in der Tarif-Datenbank hinterlegt — keine Eingabe nötig. **Nein** wenn du keine HKN verkaufst oder die Anlage anderweitig zertifiziert hast (z. B. *naturemade star*) und HKN auf dem freien Markt verkaufst.",

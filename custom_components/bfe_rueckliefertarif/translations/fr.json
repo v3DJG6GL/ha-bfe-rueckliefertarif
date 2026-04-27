@@ -9,12 +9,14 @@
         "title": "Configuration du tarif ({utility_name})",
         "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.",
         "data": {
+          "valid_from": "Actif depuis",
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation activée",
           "hkn_aktiviert": "Vendre les GO au fournisseur ?",
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
+          "valid_from": "## Date de mise en service\nDate à laquelle votre installation PV a été connectée au réseau (ou date de début de cette configuration). Sert d'ancre à l'historique de configuration — les trimestres antérieurs à cette date sont silencieusement ignorés lors du recalcul, car aucune configuration tarifaire ne les couvre.\n\nValeur par défaut : aujourd'hui. Indiquez la date réelle de mise en service pour un historique d'import propre.",
           "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026).",
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place. **Non** pour une installation en injection totale (Volleinspeisung).",
           "hkn_aktiviert": "## Opt-in GO (Garantie d'Origine)\n**Oui** si vous vendez vos *garanties d'origine* à votre fournisseur. Le taux est fixé par le fournisseur et n'est pas modifiable ici.",

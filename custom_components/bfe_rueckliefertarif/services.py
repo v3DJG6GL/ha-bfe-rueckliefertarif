@@ -396,6 +396,16 @@ def _one_hour() -> "timedelta":
 async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     """Re-import every quarter BFE has published, then estimate the running quarter.
 
+    v0.9.2 changes:
+    - **Clear-then-rewrite**: wipes the compensation LTS chain and the
+      in-memory ``coordinator._imported`` snapshot map at the top, so the
+      first run after a fresh install is idempotent (no leftover rows from
+      HA's energy-component auto-compensation polluting the cumulative sum).
+    - **Pre-valid_from skip**: quarters whose Zurich-local start date predates
+      the earliest ``OPT_CONFIG_HISTORY`` record's ``valid_from`` are silently
+      skipped — there's no config to compute a tariff for them, and the user's
+      plant didn't exist yet anyway.
+
     Result dict keys:
     - ``available``: sorted list of all Quarters BFE has published
     - ``imported``: list of Quarters successfully recomputed from BFE prices
@@ -404,9 +414,40 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     - ``estimated``: list of Quarters written via the running-quarter estimate
       (typically the current in-progress quarter; empty if BFE already published it
       or the estimate failed)
+    - ``before_active``: list of Quarters skipped because they predate
+      ``OPT_CONFIG_HISTORY[0].valid_from`` (the plant install date)
     """
     import aiohttp
-    from datetime import datetime, timezone
+    from datetime import date, datetime, timezone
+
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import clear_statistics
+
+    # Clear LTS + snapshot map first so the rewrite below is the sole source
+    # of truth. Source kWh data (export sensor LTS) is untouched.
+    # Read comp_id from entry.data directly (NOT _cfg_for_entry) — the
+    # latter requires a resolvable utility, which isn't guaranteed at this
+    # point if the user has a degenerate history.
+    entry_data = _first_entry_data(hass)
+    comp_id = entry_data["config"][CONF_RUECKLIEFERVERGUETUNG_CHF]
+    instance = get_instance(hass)
+    await hass.async_add_executor_job(clear_statistics, instance, [comp_id])
+
+    coordinator = entry_data.get("coordinator")
+    if coordinator is not None:
+        coordinator._imported.clear()
+        await coordinator._async_save_state()
+
+    # Earliest valid_from = plant install date (sentinel anchor). Quarters
+    # before this date are skipped — no config covers them.
+    options = entry_data.get("options") or {}
+    history = options.get(OPT_CONFIG_HISTORY) or []
+    earliest_date: date | None = None
+    if history:
+        try:
+            earliest_date = date.fromisoformat(history[0]["valid_from"])
+        except (KeyError, ValueError, TypeError):
+            earliest_date = None
 
     async with aiohttp.ClientSession() as session:
         quarterly = await fetch_quarterly(session)
@@ -414,7 +455,13 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     imported: list = []
     skipped: list = []
     failed: list = []
+    before_active: list = []
     for q in sorted(quarterly.keys()):
+        if earliest_date is not None:
+            q_start_local = date(q.year, ((q.q - 1) * 3) + 1, 1)
+            if q_start_local < earliest_date:
+                before_active.append(q)
+                continue
         try:
             await _reimport_quarter(hass, q)
             imported.append(q)
@@ -444,6 +491,7 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
         "skipped": skipped,
         "failed": failed,
         "estimated": estimated,
+        "before_active": before_active,
     }
 
 
@@ -485,7 +533,6 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
 
     rate_rp_kwh = float(breakdown["effective_rp_kwh"])
     is_estimate = bool(breakdown.get("is_estimate", False))
-    estimate_basis = breakdown.get("estimate_basis")
 
     now = datetime.now(timezone.utc)
     q = quarter_of(now)
@@ -500,7 +547,6 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
             "hours_imported": 0,
             "chf_total": 0.0,
             "is_estimate": is_estimate,
-            "estimate_basis": estimate_basis,
         }
 
     hourly_kwh = await read_hourly_export(hass, export_id, q_start_utc, last_full_hour)
@@ -562,7 +608,6 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
         "is_current_estimate": True,
-        "estimate_basis": estimate_basis,
     }
     coordinator._imported[str(q)] = {
         "q_price_chf_mwh": None,
@@ -572,8 +617,8 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     hass.async_create_task(coordinator._async_save_state())
 
     _LOGGER.info(
-        "Imported running %s estimate: rate=%.4f Rp/kWh, hours=%d, total=%.4f CHF (estimate=%s, basis=%s)",
-        q, rate_rp_kwh, len(records), chf_total, is_estimate, estimate_basis,
+        "Imported running %s estimate: rate=%.4f Rp/kWh, hours=%d, total=%.4f CHF (estimate=%s)",
+        q, rate_rp_kwh, len(records), chf_total, is_estimate,
     )
 
     return {
@@ -582,7 +627,6 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         "hours_imported": len(records),
         "chf_total": chf_total,
         "is_estimate": is_estimate,
-        "estimate_basis": estimate_basis,
     }
 
 
@@ -609,7 +653,42 @@ async def _refresh_coordinator(hass: "HomeAssistant") -> dict:
 
 
 async def _handle_reimport_all_history(call: "ServiceCall") -> None:
-    await _reimport_all_history(call.hass)
+    """Service handler for `bfe_rueckliefertarif.reimport_all_history`.
+
+    v0.9.2: also emits the same recompute summary notification the OptionsFlow
+    `recompute_history` step does, so calling the service via the YAML/Python
+    API gives the same user-visible output.
+    """
+    hass = call.hass
+    result = await _reimport_all_history(hass)
+    quarters_for_report = list(result.get("imported", [])) + list(
+        result.get("estimated", [])
+    )
+    if not quarters_for_report and not result.get("before_active"):
+        return
+    before_active = result.get("before_active") or []
+    earliest: str | None = None
+    try:
+        entry_data = _first_entry_data(hass)
+        history = (entry_data.get("options") or {}).get(OPT_CONFIG_HISTORY) or []
+        if history:
+            earliest = history[0].get("valid_from")
+    except RuntimeError:
+        pass
+    report = _build_recompute_report(
+        hass,
+        quarters_for_report,
+        before_active_count=len(before_active),
+        before_active_earliest=earliest,
+    )
+    # Use the first non-underscore key in hass.data[DOMAIN] as the entry id.
+    entry_id: str | None = None
+    for key in (hass.data.get(DOMAIN) or {}):
+        if not key.startswith("_"):
+            entry_id = key
+            break
+    if entry_id:
+        _notify_recompute(hass, entry_id, report)
 
 
 async def _handle_refresh(call: "ServiceCall") -> None:
@@ -671,8 +750,10 @@ class _RecomputeReportRow:
     tariffs_source_at_period: str | None = None
     # v0.9.0: marks rows from the running-quarter estimate (BFE not yet
     # published; rate is the active utility's effective floor).
+    # v0.9.2: ``estimate_basis`` dropped — the renderer just appends a "*"
+    # to the period cell + a single footnote line. The basis label is still
+    # exposed on the live BasisVerguetungSensor's attributes.
     is_current_estimate: bool = False
-    estimate_basis: str | None = None
 
 
 @dataclass(frozen=True)
@@ -680,10 +761,20 @@ class _RecomputeReport:
     rows: list[_RecomputeReportRow]   # newest-first
     quarters_recomputed: int
     config: dict
+    # v0.9.2: how many BFE-published quarters were skipped because they
+    # predate OPT_CONFIG_HISTORY[0].valid_from (the plant install date).
+    # When non-zero, the renderer emits a single footer line so the user
+    # knows older quarters exist but were intentionally not imported.
+    before_active_count: int = 0
+    before_active_earliest: str | None = None
 
 
 def _build_recompute_report(
-    hass: "HomeAssistant", quarters: list[Quarter]
+    hass: "HomeAssistant",
+    quarters: list[Quarter],
+    *,
+    before_active_count: int = 0,
+    before_active_earliest: str | None = None,
 ) -> _RecomputeReport:
     """Pull current config + per-quarter snapshots into a render-ready report.
 
@@ -744,7 +835,6 @@ def _build_recompute_report(
                 "tariffs_version_at_period": snap.get("tariffs_json_version"),
                 "tariffs_source_at_period": snap.get("tariffs_json_source"),
                 "is_current_estimate": bool(snap.get("is_current_estimate", False)),
-                "estimate_basis": snap.get("estimate_basis"),
             }
             # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
@@ -769,6 +859,8 @@ def _build_recompute_report(
         rows=rows,
         quarters_recomputed=len(quarters),
         config=header,
+        before_active_count=before_active_count,
+        before_active_earliest=before_active_earliest,
     )
 
 
@@ -808,101 +900,209 @@ def _group_rows_by_config(
     return [(key, buckets[key]) for key in order]
 
 
-def _render_active_today_block(c: dict) -> list[str]:
-    """The 'Active configuration (today)' header block — one per report.
+def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
+    """Shared bullet-list renderer used by both the active-today block and
+    each per-group "Configuration in effect" block (v0.9.2).
 
-    Mirrors the layout of the per-group blocks below for visual symmetry.
+    Expected dict keys (any may be missing — None-guarded throughout):
+    - ``utility_key`` (str), ``utility_name`` (str)
+    - ``base_model`` (str), ``settlement_period`` (str)
+    - ``kw`` (float), ``eigenverbrauch`` (bool), ``hkn_optin`` (bool)
+    - ``hkn_rp_kwh`` (float, only used when ``hkn_optin`` is True)
+    - ``billing`` (str)
+    - ``floor_label`` (str), ``floor_rp_kwh`` (float)
+    - ``cap_mode`` (bool), ``cap_rp_kwh`` (float)
+    - ``tariffs_version`` (str), ``tariffs_source`` (str)
+
+    ``is_today=True`` causes the cap line to read "Active — current cap …"
+    (today's value); otherwise it reads "Active — cap …" (the snapshot's
+    value at import time).
     """
-    lines = [
-        "## Active configuration (today)",
-        f"- **Utility:** {c['utility_key']} — {c['utility_name']}",
-        f"- **Tariff model:** {c['base_model']} (settlement: {c['settlement_period']})",
-        f"- **Installed power:** {c['kw']:.1f} kW",
-        f"- **Eigenverbrauch (self-consumption):** "
-        + ("Yes" if c["eigenverbrauch"] else "No"),
-    ]
-    if c["hkn_optin"]:
-        lines.append(
-            f"- **HKN opt-in:** Yes ({c['hkn_rp_kwh']:.2f} Rp/kWh additive)"
-        )
-    else:
-        lines.append("- **HKN opt-in:** No")
-    lines.append(f"- **Billing period:** {c['billing']}")
+    lines: list[str] = []
+    utility_key = c.get("utility_key") or "(unknown)"
+    utility_name = c.get("utility_name") or utility_key
+    lines.append(f"- **Utility:** {utility_key} — {utility_name}")
 
-    if c["floor_label"]:
-        floor = c["floor_rp_kwh"]
-        suffix = f" ({floor:.2f} Rp/kWh)" if floor is not None else " (none)"
-        lines.append(
-            f"- **Federal floor (Mindestvergütung):** {c['floor_label']}{suffix}"
-        )
-    if c["cap_mode"]:
-        cap_v = c.get("cap_rp_kwh")
-        cap_str = f"{cap_v:.2f} Rp/kWh" if cap_v is not None else "n/a"
-        ev_str = "Yes" if c["eigenverbrauch"] else "No"
-        lines.append(
-            f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — current cap "
-            f"{cap_str} ({c['kw']:.1f} kW, EV={ev_str})"
-        )
-    else:
-        lines.append("- **Cap mode (Anrechenbarkeitsgrenze):** Off")
-    lines.append(
-        f"- **Tariff data:** v{c['tariffs_version']} ({c['tariffs_source']})"
-    )
-    return lines
-
-
-def _render_group_heading(
-    fingerprint: tuple, sample_row: _RecomputeReportRow
-) -> list[str]:
-    """One heading + sub-bullets per config group.
-
-    Pulls display fields from the sample row's snapshot-derived metadata.
-    """
-    utility_key, kw, ev, hkn_optin, billing = fingerprint
-    utility_name = sample_row.utility_name_at_period or utility_key or "(unknown utility)"
-    kw_str = f"{kw:.1f} kW" if kw is not None else "—"
-    ev_str = "EV" if ev else ("no-EV" if ev is False else "EV?")
-    hkn_str = "HKN" if hkn_optin else ("no-HKN" if hkn_optin is False else "HKN?")
-    billing_str = billing or "—"
-
-    title_key = utility_key or "(unknown)"
-    lines = [
-        f"## Periods computed under: {title_key} — {utility_name} · "
-        f"{kw_str} · {ev_str} · {hkn_str} · {billing_str}",
-    ]
-    base_model = sample_row.base_model_at_period
-    if base_model:
+    base_model = c.get("base_model")
+    settlement = c.get("settlement_period")
+    if base_model and settlement:
+        lines.append(f"- **Tariff model:** {base_model} (settlement: {settlement})")
+    elif base_model:
         lines.append(f"- **Tariff model:** {base_model}")
-    floor_label = sample_row.floor_label_at_period
+
+    kw = c.get("kw")
+    if kw is not None:
+        lines.append(f"- **Installed power:** {kw:.1f} kW")
+    else:
+        lines.append("- **Installed power:** —")
+
+    ev = c.get("eigenverbrauch")
+    ev_str = "Yes" if ev else ("No" if ev is False else "—")
+    lines.append(f"- **Eigenverbrauch (self-consumption):** {ev_str}")
+
+    hkn_optin = c.get("hkn_optin")
+    if hkn_optin:
+        hkn_rp = c.get("hkn_rp_kwh")
+        if hkn_rp is not None:
+            lines.append(f"- **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)")
+        else:
+            lines.append("- **HKN opt-in:** Yes")
+    elif hkn_optin is False:
+        lines.append("- **HKN opt-in:** No")
+    else:
+        lines.append("- **HKN opt-in:** —")
+
+    billing = c.get("billing")
+    lines.append(f"- **Billing period:** {billing or '—'}")
+
+    floor_label = c.get("floor_label")
     if floor_label:
-        floor_v = sample_row.floor_rp_kwh_at_period
+        floor_v = c.get("floor_rp_kwh")
         suffix = f" ({floor_v:.2f} Rp/kWh)" if floor_v is not None else " (none)"
         lines.append(
             f"- **Federal floor (Mindestvergütung):** {floor_label}{suffix}"
         )
-    cap_mode = sample_row.cap_mode_at_period
+
+    cap_mode = c.get("cap_mode")
     if cap_mode:
-        cap_v = sample_row.cap_rp_kwh_at_period
+        cap_v = c.get("cap_rp_kwh")
         cap_str = f"{cap_v:.2f} Rp/kWh" if cap_v is not None else "n/a"
-        ev_yn = "Yes" if ev else ("No" if ev is False else "—")
+        kw_str = f"{kw:.1f} kW" if kw is not None else "—"
+        cap_ev_str = "Yes" if ev else ("No" if ev is False else "—")
+        cap_label = "current cap" if is_today else "cap"
         lines.append(
-            f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — cap "
-            f"{cap_str} ({kw_str}, EV={ev_yn})"
+            f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — {cap_label} "
+            f"{cap_str} ({kw_str}, EV={cap_ev_str})"
         )
     elif cap_mode is False:
         lines.append("- **Cap mode (Anrechenbarkeitsgrenze):** Off")
-    tv = sample_row.tariffs_version_at_period
-    ts = sample_row.tariffs_source_at_period
+
+    tv = c.get("tariffs_version")
+    ts = c.get("tariffs_source")
     if tv:
         src = f" ({ts})" if ts else ""
         lines.append(f"- **Tariff data:** v{tv}{src}")
     return lines
 
 
+def _render_active_today_block(c: dict) -> list[str]:
+    """The 'Active configuration (today)' header block — one per report."""
+    return [
+        "## Active configuration (today)",
+        *_render_config_block(c, is_today=True),
+    ]
+
+
+def _period_bounds(period: str) -> tuple[str, str] | None:
+    """Parse ``YYYYQN`` or ``YYYY-MM`` → ``(start_iso, end_iso)`` (end inclusive
+    last day). Returns ``None`` if unparseable. Used by the date-bounded
+    "Configuration in effect: X → Y" group heading."""
+    from datetime import date, timedelta
+
+    s = period.strip()
+    if "Q" in s:
+        try:
+            year_str, q_str = s.split("Q", 1)
+            year = int(year_str)
+            qn = int(q_str)
+            if qn not in (1, 2, 3, 4):
+                return None
+            start_month = (qn - 1) * 3 + 1
+            start = date(year, start_month, 1)
+            if qn == 4:
+                next_q = date(year + 1, 1, 1)
+            else:
+                next_q = date(year, start_month + 3, 1)
+            end = next_q - timedelta(days=1)
+            return start.isoformat(), end.isoformat()
+        except (ValueError, TypeError):
+            return None
+    if "-" in s and len(s) == 7:
+        try:
+            year_str, month_str = s.split("-", 1)
+            year = int(year_str)
+            month = int(month_str)
+            start = date(year, month, 1)
+            if month == 12:
+                next_m = date(year + 1, 1, 1)
+            else:
+                next_m = date(year, month + 1, 1)
+            end = next_m - timedelta(days=1)
+            return start.isoformat(), end.isoformat()
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _render_group_heading(
+    fingerprint: tuple,
+    sample_row: _RecomputeReportRow,
+    group_rows: list[_RecomputeReportRow],
+) -> list[str]:
+    """v0.9.2: date-bounded heading + the same bullet-list as the active-today
+    block. Replaces the prior horizontal one-liner.
+
+    Date range is derived from the rows' period strings (the renderer is
+    hass-free by design). When the group contains an ``is_current_estimate``
+    row, the end-of-range is rendered as ``now`` instead of the period's
+    last calendar day.
+    """
+    utility_key, kw, ev, hkn_optin, billing = fingerprint
+
+    # Earliest period start, latest period end (or "now" for open groups).
+    starts: list[str] = []
+    ends: list[str] = []
+    has_estimate = False
+    for r in group_rows:
+        if r.is_current_estimate:
+            has_estimate = True
+        bounds = _period_bounds(r.period or "")
+        if bounds is None:
+            continue
+        starts.append(bounds[0])
+        ends.append(bounds[1])
+
+    if starts:
+        start_str = min(starts)
+        end_str = "now" if has_estimate else max(ends)
+        heading = f"## Configuration in effect: {start_str} → {end_str}"
+    else:
+        # Defensive — shouldn't happen with v0.7.5+ snapshots.
+        heading = "## Configuration in effect: —"
+
+    config_dict = {
+        "utility_key": utility_key,
+        "utility_name": sample_row.utility_name_at_period,
+        "base_model": sample_row.base_model_at_period,
+        # settlement_period not carried per-row; omit (renderer handles None).
+        "settlement_period": None,
+        "kw": kw,
+        "eigenverbrauch": ev,
+        "hkn_optin": hkn_optin,
+        # The intended HKN rate from the snapshot is the "published" value;
+        # display it next to "Yes" when opted-in.
+        "hkn_rp_kwh": sample_row.intended_hkn_rp_kwh,
+        "billing": billing,
+        "floor_label": sample_row.floor_label_at_period,
+        "floor_rp_kwh": sample_row.floor_rp_kwh_at_period,
+        "cap_mode": sample_row.cap_mode_at_period,
+        "cap_rp_kwh": sample_row.cap_rp_kwh_at_period,
+        "tariffs_version": sample_row.tariffs_version_at_period,
+        "tariffs_source": sample_row.tariffs_source_at_period,
+    }
+    return [heading, *_render_config_block(config_dict)]
+
+
 def _render_period_table(
     rows: list[_RecomputeReportRow],
 ) -> tuple[list[str], list[_RecomputeReportRow]]:
-    """The per-period markdown table for one group. Returns (lines, forfeit_rows)."""
+    """The per-period markdown table for one group. Returns (lines, forfeit_rows).
+
+    v0.9.2: estimate rows render as ``YYYYQN *`` (compact asterisk anchor)
+    instead of the prior wide ``*(estimate · …)*`` decoration. When any row
+    in the table is ``is_current_estimate``, a single footnote line is
+    appended below the table explaining what the asterisk means.
+    """
     lines = [
         "_Rates in Rp/kWh; energy in kWh; CHF totals._",
         "",
@@ -910,6 +1110,7 @@ def _render_period_table(
         "|---|---|---|---|---|---|",
     ]
     forfeit_rows: list[_RecomputeReportRow] = []
+    has_estimate = False
     for r in rows:
         base = f"{r.base_rp_kwh_avg:.3f}" if r.base_rp_kwh_avg is not None else "—"
         intended = r.intended_hkn_rp_kwh
@@ -931,11 +1132,17 @@ def _render_period_table(
         kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
         chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
         if r.is_current_estimate:
-            basis = r.estimate_basis or "active utility floor"
-            period_cell = f"{r.period} *(estimate · {basis})*"
+            has_estimate = True
+            period_cell = f"{r.period} *"
         else:
             period_cell = r.period
         lines.append(f"| {period_cell} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
+    if has_estimate:
+        lines.append("")
+        lines.append(
+            "_* Estimated from today's kWh production (running quarter). "
+            "Rates may vary._"
+        )
     return lines, forfeit_rows
 
 
@@ -1018,7 +1225,7 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         for fingerprint, group_rows in groups:
             sample = group_rows[0]
             lines.append("")
-            lines.extend(_render_group_heading(fingerprint, sample))
+            lines.extend(_render_group_heading(fingerprint, sample, group_rows))
             lines.append("")
             table_lines, forfeit_rows = _render_period_table(group_rows)
             lines.extend(table_lines)
@@ -1048,6 +1255,13 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         lines.append(
             f"**Totals:** {n_periods} {_plural(n_periods, 'period', 'periods')} · "
             f"{total_kwh:,.2f} kWh · {total_chf:,.2f} CHF."
+        )
+    if report.before_active_count > 0:
+        lines.append("")
+        anchor = report.before_active_earliest or "plant install date"
+        lines.append(
+            f"_{report.before_active_count} quarter(s) before plant install "
+            f"({anchor}) — not imported._"
         )
     lines.append("")
     lines.append("_For per-hour inspection, see `tools/verify_quarters.sql`._")

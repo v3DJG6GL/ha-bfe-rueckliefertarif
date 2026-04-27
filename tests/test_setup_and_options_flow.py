@@ -31,6 +31,7 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_VALID_FROM,
     DOMAIN,
     OPT_CONFIG_HISTORY,
 )
@@ -499,7 +500,6 @@ class TestRecomputeHistoryEstimate:
             "tariffs_json_version": "2026.01",
             "tariffs_json_source": "bundled",
             "is_current_estimate": True,
-            "estimate_basis": "fixpreis",
         }
 
         coordinator = MagicMock()
@@ -543,10 +543,13 @@ class TestRecomputeHistoryEstimate:
         assert len(report.rows) == 1
         row = report.rows[0]
         assert row.is_current_estimate is True
-        assert row.estimate_basis == "fixpreis"
         assert row.utility_key_at_period == "ewz"
 
     def test_renderer_marks_estimate_row_visually(self):
+        # v0.9.2: replaces the wide "(estimate · BASIS)" inline tag with a
+        # compact `*` in the period cell + a single footnote line below the
+        # table. The basis label is gone (fixed_flat utilities don't really
+        # have a "floor" — sensor attributes still expose estimate_basis).
         from custom_components.bfe_rueckliefertarif.services import (
             _RecomputeReport,
             _RecomputeReportRow,
@@ -576,7 +579,6 @@ class TestRecomputeHistoryEstimate:
                 tariffs_version_at_period="2026.01",
                 tariffs_source_at_period="bundled",
                 is_current_estimate=True,
-                estimate_basis="fixpreis",
             ),
         ]
         report = _RecomputeReport(
@@ -601,8 +603,12 @@ class TestRecomputeHistoryEstimate:
             },
         )
         _title, body = _format_recompute_notification(report)
-        # Estimate marker rendered in the period column.
-        assert "*(estimate · fixpreis)*" in body
+        # Old wide decoration must be gone.
+        assert "*(estimate · " not in body
+        # Compact asterisk anchor on the period cell.
+        assert "2026Q2 *" in body
+        # Footnote line present.
+        assert "* Estimated from today's kWh production" in body
 
 
 class TestRecomputeHistoryStep:
@@ -859,3 +865,319 @@ class TestOptionsEntitiesStepUpdatesTitle:
         # data is updated, but title is not pushed because it's unchanged.
         kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
         assert "title" not in kwargs
+
+
+class TestValidFromInitialFlow:
+    """v0.9.2 — `valid_from` field on the initial tariff step replaces the
+    artificial 1970-01-01 sentinel for fresh installs."""
+
+    @pytest.mark.asyncio
+    async def test_first_setup_uses_valid_from_as_sentinel_anchor(self):
+        # entry.data carries a CONF_VALID_FROM picked by the user during the
+        # initial flow → that becomes the synthesized sentinel's valid_from.
+        hass = _mock_hass()
+        data = {
+            **_entry_data(utility="ekz"),
+            CONF_VALID_FROM: "2024-06-15",
+        }
+        entry = _entry(options={}, data=data)
+        captured: dict = {}
+
+        def _record(_entry, **kwargs):
+            captured.update(kwargs)
+
+        hass.config_entries.async_update_entry.side_effect = _record
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services.async_register_services",
+            new=_async_noop,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.data_coordinator."
+            "TariffsDataCoordinator"
+        ) as tdc_cls:
+            tdc_cls.return_value.async_load = _async_noop
+            hass.config_entries.async_forward_entry_setups = _async_noop
+            await async_setup_entry(hass, entry)
+
+        history = captured["options"][OPT_CONFIG_HISTORY]
+        assert len(history) == 1
+        assert history[0]["valid_from"] == "2024-06-15"
+        # CONF_VALID_FROM is NOT in CONFIG_HISTORY_FIELDS — must not appear in
+        # the record's "config" dict (it's a per-entry anchor, not versioned).
+        assert CONF_VALID_FROM not in history[0]["config"]
+
+    @pytest.mark.asyncio
+    async def test_first_setup_falls_back_to_1970_when_valid_from_missing(self):
+        # Defensive: pre-v0.9.2 entries reaching this code path don't carry
+        # CONF_VALID_FROM. The synthesized sentinel must still be valid (uses
+        # the 1970 fallback so the existing-entry behavior is preserved).
+        hass = _mock_hass()
+        data = _entry_data(utility="ekz")  # no CONF_VALID_FROM
+        entry = _entry(options={}, data=data)
+        captured: dict = {}
+
+        hass.config_entries.async_update_entry.side_effect = (
+            lambda _e, **kw: captured.update(kw)
+        )
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services.async_register_services",
+            new=_async_noop,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.data_coordinator."
+            "TariffsDataCoordinator"
+        ) as tdc_cls:
+            tdc_cls.return_value.async_load = _async_noop
+            hass.config_entries.async_forward_entry_setups = _async_noop
+            await async_setup_entry(hass, entry)
+
+        history = captured["options"][OPT_CONFIG_HISTORY]
+        assert history[0]["valid_from"] == "1970-01-01"
+
+
+class TestReimportClearsFirst:
+    """v0.9.2 — _reimport_all_history wipes LTS + the in-memory snapshot map
+    BEFORE iterating quarters, so the first run after a fresh install is
+    idempotent (no stale rows from HA's energy-component auto-compensation
+    poisoning the cumulative sum chain)."""
+
+    @pytest.mark.asyncio
+    async def test_clear_statistics_called_with_comp_id_before_quarter_loop(self):
+        # Patch the recorder API + the per-quarter import so we can observe
+        # ordering without a real HA setup.
+        from custom_components.bfe_rueckliefertarif import services as svc
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {"2025Q4": {"snapshot": {}}}
+        coordinator._async_save_state = _async_noop_factory()
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                **_entry_data(utility="ekz"),
+            },
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+
+        order: list[str] = []
+
+        async def _fake_executor(fn, *args, **kwargs):
+            order.append(f"clear:{args[1] if len(args) > 1 else ''}")
+            return None
+
+        hass.async_add_executor_job = _fake_executor
+
+        async def _fake_reimport_quarter(_hass, q):
+            order.append(f"quarter:{q}")
+
+        async def _fake_estimate(_hass):
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "fetch_quarterly", new=_async_return({})), \
+             patch("homeassistant.components.recorder.get_instance", return_value=MagicMock()), \
+             patch("homeassistant.components.recorder.statistics.clear_statistics"):
+            await svc._reimport_all_history(hass)
+
+        # First operation must be the clear; quarter operations follow.
+        assert order, "expected at least the clear call"
+        assert order[0].startswith("clear:")
+        # Snapshot map cleared.
+        assert coordinator._imported == {}
+
+    @pytest.mark.asyncio
+    async def test_skips_quarters_predating_valid_from(self):
+        # History anchor at 2025-04-01. Pretend BFE has 2024Q4 + 2025Q1 +
+        # 2025Q2 + 2025Q3. Only 2025Q2 + 2025Q3 should be imported; 2024Q4
+        # and 2025Q1 land in `before_active`.
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                **_entry_data(utility="ekz"),
+            },
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-04-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+        hass.async_add_executor_job = _async_noop_factory()
+
+        imported_quarters: list[Quarter] = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            imported_quarters.append(q)
+
+        async def _fake_estimate(_hass):
+            return {}
+
+        prices = {
+            Quarter(2024, 4): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+            Quarter(2025, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            Quarter(2025, 2): BfePrice(chf_per_mwh=80.0, days=91, volume_mwh=0.0),
+            Quarter(2025, 3): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+        }
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "fetch_quarterly", new=_async_return(prices)), \
+             patch("homeassistant.components.recorder.get_instance", return_value=MagicMock()), \
+             patch("homeassistant.components.recorder.statistics.clear_statistics"):
+            result = await svc._reimport_all_history(hass)
+
+        # 2024Q4 + 2025Q1 predate the 2025-04-01 anchor → before_active.
+        assert sorted(str(q) for q in result["before_active"]) == ["2024Q4", "2025Q1"]
+        # 2025Q2 + 2025Q3 went through.
+        assert sorted(str(q) for q in imported_quarters) == ["2025Q2", "2025Q3"]
+        # And the result dict carries the new key.
+        assert "before_active" in result
+
+    @pytest.mark.asyncio
+    async def test_result_dict_always_has_before_active_key(self):
+        # Even when no history exists or no quarters predate, the key is
+        # always present so callers can rely on it.
+        from custom_components.bfe_rueckliefertarif import services as svc
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                **_entry_data(utility="ekz"),
+            },
+            options={},  # no history
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+        hass.async_add_executor_job = _async_noop_factory()
+
+        async def _fake_estimate(_hass):
+            return {}
+
+        with patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "fetch_quarterly", new=_async_return({})), \
+             patch("homeassistant.components.recorder.get_instance", return_value=MagicMock()), \
+             patch("homeassistant.components.recorder.statistics.clear_statistics"):
+            result = await svc._reimport_all_history(hass)
+        assert result["before_active"] == []
+
+
+def _async_return(value):
+    async def _f(*args, **kwargs):
+        return value
+    return _f
+
+
+def _async_noop_factory():
+    async def _f(*args, **kwargs):
+        return None
+    return _f
+
+
+class TestRenderConfigBlockShared:
+    """v0.9.2 — `_render_config_block` is the shared bullet-list renderer
+    used by both the active-today block and each per-group "Configuration in
+    effect" block. Same field labels in both places."""
+
+    def test_shared_helper_emits_consistent_labels(self):
+        from custom_components.bfe_rueckliefertarif.services import (
+            _render_active_today_block,
+            _render_config_block,
+        )
+        c = {
+            "utility_key": "ekz",
+            "utility_name": "EKZ",
+            "base_model": "rmp_quartal",
+            "settlement_period": "quartal",
+            "kw": 8.0,
+            "eigenverbrauch": True,
+            "hkn_optin": True,
+            "hkn_rp_kwh": 3.0,
+            "billing": "quartal",
+            "floor_label": "<30 kW",
+            "floor_rp_kwh": 6.0,
+            "cap_mode": True,
+            "cap_rp_kwh": 10.96,
+            "tariffs_version": "1.0.0",
+            "tariffs_source": "remote",
+        }
+        today_block = "\n".join(_render_active_today_block(c))
+        group_block = "\n".join(_render_config_block(c, is_today=False))
+
+        # Both blocks contain the same set of label lines (differing only on
+        # the "current cap" vs "cap" wording, intentionally).
+        for label in (
+            "**Utility:**",
+            "**Tariff model:**",
+            "**Installed power:**",
+            "**Eigenverbrauch (self-consumption):**",
+            "**HKN opt-in:**",
+            "**Billing period:**",
+            "**Federal floor (Mindestvergütung):**",
+            "**Cap mode (Anrechenbarkeitsgrenze):**",
+            "**Tariff data:**",
+        ):
+            assert label in today_block, f"{label} missing in today block"
+            assert label in group_block, f"{label} missing in group block"
+
+        # is_today flag controls the cap-line wording.
+        assert "current cap" in today_block
+        assert "current cap" not in group_block

@@ -23,6 +23,7 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_VALID_FROM,
 )
 from custom_components.bfe_rueckliefertarif.tariffs_db import list_utility_keys
 
@@ -124,6 +125,7 @@ class TestStringsAndTranslations:
     @pytest.mark.parametrize(
         "field",
         [
+            CONF_VALID_FROM,
             CONF_INSTALLIERTE_LEISTUNG_KW,
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_HKN_AKTIVIERT,

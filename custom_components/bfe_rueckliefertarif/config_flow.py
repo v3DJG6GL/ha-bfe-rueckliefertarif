@@ -39,6 +39,7 @@ from .const import (
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_VALID_FROM,
     DOMAIN,
     CONFIG_HISTORY_FIELDS,
     OPT_CONFIG_HISTORY,
@@ -127,10 +128,20 @@ def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     Only personal inputs: installed kW, Eigenverbrauch yes/no, HKN opt-in
     yes/no, Abrechnungs-Rhythmus. All utility-published values come from
     ``data/tariffs.json`` looked up by the utility chosen in step 1.
+
+    v0.9.2: also collects ``valid_from`` (the plant install date), which
+    becomes the first OPT_CONFIG_HISTORY record's valid_from anchor and
+    gates pre-install quarter import-skipping.
     """
+    from datetime import date
+
     d = defaults or {}
     return vol.Schema(
         {
+            vol.Required(
+                CONF_VALID_FROM,
+                default=d.get(CONF_VALID_FROM, date.today().isoformat()),
+            ): selector.DateSelector(),
             vol.Required(
                 CONF_INSTALLIERTE_LEISTUNG_KW,
                 default=d.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
@@ -803,8 +814,18 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 errors["base"] = "reimport_failed"
             else:
                 quarters_for_report = list(result["imported"]) + list(result["estimated"])
+                before_active = result.get("before_active") or []
+                history = (self.config_entry.options or {}).get(
+                    OPT_CONFIG_HISTORY
+                ) or []
+                earliest = history[0]["valid_from"] if history else None
                 if quarters_for_report:
-                    report = _build_recompute_report(self.hass, quarters_for_report)
+                    report = _build_recompute_report(
+                        self.hass,
+                        quarters_for_report,
+                        before_active_count=len(before_active),
+                        before_active_earliest=earliest,
+                    )
                     _notify_recompute(self.hass, self.config_entry.entry_id, report)
                 else:
                     skipped = result.get("skipped") or []
@@ -813,6 +834,11 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     if skipped:
                         lines.append(
                             f"{len(skipped)} skipped (not yet published by BFE)."
+                        )
+                    if before_active:
+                        lines.append(
+                            f"{len(before_active)} skipped (predate plant install "
+                            f"{earliest})."
                         )
                     if failed:
                         lines.append(

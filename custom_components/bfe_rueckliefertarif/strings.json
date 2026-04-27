@@ -9,12 +9,14 @@
         "title": "Tariff configuration ({utility_name})",
         "description": "Tell us about your plant — utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.",
         "data": {
+          "valid_from": "Active since",
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption enabled",
           "hkn_aktiviert": "Sell HKN to your utility?",
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
+          "valid_from": "## Plant install date\nThe date your PV plant came online (or this configuration started applying). The integration uses this as the anchor of your config history — quarters before this date are silently skipped during recompute since no tariff configuration covers them.\n\nDefault: today. Set to your actual install date for a clean import history.",
           "installierte_leistung_kw": "## Installed peak power\nThe DC peak rating of your PV plant in kilowatts. Used to look up the federal **Mindestvergütung** floor ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, in force since 1.1.2026):\n\n| Size | Mode | Federal floor (Rp/kWh) |\n|---|---|---|\n| <30 kW | any | **6.00** |\n| 30–<150 kW | with self-consumption | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | feed-in only | **6.20** |\n| ≥150 kW | any | no federal floor |",
           "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** if any portion of your PV production is consumed on-site (typical residential / commercial setup). **No** for full feed-in plants (Volleinspeisung) where 100% of production goes to the grid.\n\nThis flag affects the federal floor band you fall into — for 30–<150 kW plants the difference is significant (degressive 180÷kW with self-consumption vs. flat 6.20 Rp/kWh without).",
           "hkn_aktiviert": "## HKN (Herkunftsnachweis) opt-in\n**Yes** if you sell your *Herkunftsnachweise* (Swiss guarantees of origin) to your utility. Most utilities offer this as an opt-in — register through the utility's customer portal.\n\nThe rate is fixed by your utility and bundled into this integration's tariff database — no manual entry needed. Set to **No** if you don't sell HKN, or if you've certified the plant elsewhere (e.g. *naturemade star*) and sell HKN on the open market.",
