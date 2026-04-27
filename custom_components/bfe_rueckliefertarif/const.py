@@ -22,6 +22,11 @@ CONF_ABRECHNUNGS_RHYTHMUS = "abrechnungs_rhythmus"
 CONF_STROMNETZEINSPEISUNG_KWH = "stromnetzeinspeisung_kwh"
 CONF_RUECKLIEFERVERGUETUNG_CHF = "rueckliefervergutung_chf"
 CONF_NAMENSPRAEFIX = "namenspraefix"
+# v0.9.1: stable plant identity, used as the entry title and as the basis for
+# the namenspraefix default. Decoupled from CONF_ENERGIEVERSORGER so a utility
+# switch via the apply_change wizard doesn't change the integration's display
+# name or sensor IDs.
+CONF_PLANT_NAME = "plant_name"
 
 # Abrechnungs-Rhythmus values
 ABRECHNUNGS_RHYTHMUS_QUARTAL = "quartal"

@@ -17,6 +17,7 @@ import pytest
 
 from custom_components.bfe_rueckliefertarif import async_setup_entry
 from custom_components.bfe_rueckliefertarif.config_flow import (
+    BfeRuecklieferTarifFlow,
     BfeRuecklieferTarifOptionsFlow,
 )
 from custom_components.bfe_rueckliefertarif.const import (
@@ -26,6 +27,11 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_NAMENSPRAEFIX,
+    CONF_PLANT_NAME,
+    CONF_RUECKLIEFERVERGUETUNG_CHF,
+    CONF_STROMNETZEINSPEISUNG_KWH,
+    DOMAIN,
     OPT_CONFIG_HISTORY,
 )
 
@@ -689,3 +695,167 @@ class TestPlatformsAfterAplus:
             __import__(
                 "custom_components.bfe_rueckliefertarif.button"
             )
+
+
+class TestWarmCacheBootstrap:
+    """v0.9.1 — _async_warm_cache lazy-inits TariffsDataCoordinator so the
+    initial config flow's utility dropdown sees the live remote list (not
+    just bundled). Without this, age_sa and any other remote-only utility
+    is invisible until an entry exists."""
+
+    @pytest.mark.asyncio
+    async def test_lazy_inits_when_missing(self):
+        from unittest.mock import AsyncMock
+
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _async_warm_cache,
+        )
+
+        hass = MagicMock()
+        hass.data = {}
+        hass.async_add_executor_job = AsyncMock(return_value=None)
+        with patch(
+            "custom_components.bfe_rueckliefertarif.data_coordinator."
+            "TariffsDataCoordinator"
+        ) as tdc_cls:
+            tdc_instance = tdc_cls.return_value
+            tdc_instance.async_load = AsyncMock(return_value=None)
+            await _async_warm_cache(hass)
+        # Singleton was instantiated and stored in hass.data.
+        assert tdc_cls.call_count == 1
+        assert hass.data[DOMAIN]["_tariffs_data"] is tdc_instance
+        tdc_instance.async_load.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reuses_existing_singleton(self):
+        from unittest.mock import AsyncMock
+
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _async_warm_cache,
+        )
+
+        hass = MagicMock()
+        existing = MagicMock()
+        hass.data = {DOMAIN: {"_tariffs_data": existing}}
+        hass.async_add_executor_job = AsyncMock(return_value=None)
+        with patch(
+            "custom_components.bfe_rueckliefertarif.data_coordinator."
+            "TariffsDataCoordinator"
+        ) as tdc_cls:
+            await _async_warm_cache(hass)
+        # No second instantiation; the existing slot is preserved.
+        assert tdc_cls.call_count == 0
+        assert hass.data[DOMAIN]["_tariffs_data"] is existing
+
+
+class TestInitialEntitiesStepPlantName:
+    """v0.9.1 — initial config flow uses plant_name as the entry title and
+    derives the namenspraefix default via slugify(plant_name)."""
+
+    def _make_flow(self, energieversorger="ekz"):
+        flow = BfeRuecklieferTarifFlow.__new__(BfeRuecklieferTarifFlow)
+        flow._data = {
+            CONF_ENERGIEVERSORGER: energieversorger,
+            CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+            CONF_HKN_AKTIVIERT: True,
+            CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        }
+        return flow
+
+    @pytest.mark.asyncio
+    async def test_uses_plant_name_as_title_and_derives_prefix(self):
+        flow = self._make_flow()
+        result = await flow.async_step_entities(
+            {
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                CONF_PLANT_NAME: "Rooftop South",
+                CONF_NAMENSPRAEFIX: "",
+            }
+        )
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        assert result["title"] == "Rooftop South"
+        assert result["data"][CONF_PLANT_NAME] == "Rooftop South"
+        assert result["data"][CONF_NAMENSPRAEFIX] == "rooftop_south_rueckliefertarif"
+
+    @pytest.mark.asyncio
+    async def test_explicit_namenspraefix_wins_over_derived(self):
+        flow = self._make_flow()
+        result = await flow.async_step_entities(
+            {
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                CONF_PLANT_NAME: "Rooftop South",
+                CONF_NAMENSPRAEFIX: "custom_pv",
+            }
+        )
+        assert result["data"][CONF_NAMENSPRAEFIX] == "custom_pv"
+
+
+class TestOptionsEntitiesStepUpdatesTitle:
+    """v0.9.1 — OptionsFlow entities step lets users rename the entry by
+    submitting a new plant_name."""
+
+    @pytest.mark.asyncio
+    async def test_submitting_new_plant_name_updates_entry_title(self):
+        flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
+        flow.hass = MagicMock()
+        flow_entry = SimpleNamespace(
+            entry_id="test_entry_id",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                CONF_NAMENSPRAEFIX: "ekz_rueckliefertarif",
+            },
+            options=MappingProxyType({OPT_CONFIG_HISTORY: []}),
+            title="EKZ (Elektrizitätswerke des Kantons Zürich)",
+        )
+        flow.handler = "test_entry_id"
+        flow.hass.config_entries.async_get_entry.return_value = flow_entry
+        flow.hass.config_entries.async_get_known_entry.return_value = flow_entry
+
+        await flow.async_step_entities(
+            {
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                CONF_PLANT_NAME: "Rooftop South",
+                CONF_NAMENSPRAEFIX: "ekz_rueckliefertarif",
+            }
+        )
+        # async_update_entry must have been called with title=new_plant_name.
+        flow.hass.config_entries.async_update_entry.assert_called_once()
+        kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
+        assert kwargs.get("title") == "Rooftop South"
+        assert kwargs["data"][CONF_PLANT_NAME] == "Rooftop South"
+
+    @pytest.mark.asyncio
+    async def test_unchanged_plant_name_does_not_push_title_update(self):
+        flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
+        flow.hass = MagicMock()
+        flow_entry = SimpleNamespace(
+            entry_id="test_entry_id",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                CONF_NAMENSPRAEFIX: "rooftop_south_rueckliefertarif",
+                CONF_PLANT_NAME: "Rooftop South",
+            },
+            options=MappingProxyType({OPT_CONFIG_HISTORY: []}),
+            title="Rooftop South",
+        )
+        flow.handler = "test_entry_id"
+        flow.hass.config_entries.async_get_entry.return_value = flow_entry
+        flow.hass.config_entries.async_get_known_entry.return_value = flow_entry
+
+        await flow.async_step_entities(
+            {
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                CONF_PLANT_NAME: "Rooftop South",
+                CONF_NAMENSPRAEFIX: "rooftop_south_rueckliefertarif",
+            }
+        )
+        # data is updated, but title is not pushed because it's unchanged.
+        kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
+        assert "title" not in kwargs

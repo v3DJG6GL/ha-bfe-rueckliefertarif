@@ -23,16 +23,18 @@
       },
       "entities": {
         "title": "Home-Assistant-Entitäten",
-        "description": "Verbinde den kWh-Zähler deiner Stromnetzeinspeisung mit dem CHF-Sensor, den das Energy-Dashboard automatisch anlegt.",
+        "description": "Verbinde kWh-Zähler und CHF-Sensor und vergib einen Anlagen-Namen.",
         "data": {
           "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
           "rueckliefervergutung_chf": "Rückliefervergütung (CHF)",
-          "namenspraefix": "Namenspräfix"
+          "plant_name": "Anlagen-Name",
+          "namenspraefix": "Namenspräfix (optional)"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh-Zähler\nDer **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
           "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
-          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** und **Aktions-Buttons** dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`).\n\n*Nur ändern*, wenn der Standardname kollidiert."
+          "plant_name": "## Anlagen-Name\nStabiler Anzeigename dieser PV-Anlage — z. B. `Dach Süd`, `Garage Carport`. Erscheint als Integrations-Titel in **Einstellungen → Geräte & Dienste** und liefert den Standardwert für das Namens-Präfix unten.\n\n**Bleibt bei späterem Versorgerwechsel gleich** (Versorgerwechsel laufen über *Konfigurieren → Konfigurationsänderung anwenden*).",
+          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** dieser Integration vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`).\n\n**Leer lassen**, um aus dem Anlagen-Namen abzuleiten (z. B. `dach_sud_rueckliefertarif`). *Nur explizit setzen* für einen eigenen Wert oder bei Kollision mit einer existierenden Entity."
         }
       }
     },
@@ -117,16 +119,18 @@
       },
       "entities": {
         "title": "Home-Assistant-Entitäten neu verbinden",
-        "description": "Verbinde den kWh-Zähler deiner Stromnetzeinspeisung mit dem CHF-Sensor, den das Energy-Dashboard automatisch anlegt.",
+        "description": "Entitäten neu verbinden und diesen Eintrag umbenennen.",
         "data": {
           "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
           "rueckliefervergutung_chf": "Rückliefervergütung (CHF)",
+          "plant_name": "Anlagen-Name",
           "namenspraefix": "Namenspräfix"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh-Zähler\nDer **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
           "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
-          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** und **Aktions-Buttons** dieser Integration als Präfix vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`, `button.PRAEFIX_aktuelles_quartal_neu_berechnen`).\n\n*Nur ändern*, wenn der Standardname kollidiert."
+          "plant_name": "## Anlagen-Name\nAnzeigename dieses Eintrags — sichtbar in **Einstellungen → Geräte & Dienste**. Bearbeiten ändert den Integrations-Titel.",
+          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** dieser Integration vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`).\n\n⚠ **Eine Änderung verwaist Long-Term-Statistics, die am alten Präfix hängen** — nur ändern, wenn die Konsequenz verstanden ist."
         }
       }
     },

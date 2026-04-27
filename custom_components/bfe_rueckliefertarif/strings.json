@@ -23,16 +23,18 @@
       },
       "entities": {
         "title": "Home Assistant entity wiring",
-        "description": "Link the kWh counter for your grid export and the CHF sensor that the Energy Dashboard auto-creates.",
+        "description": "Link the kWh counter for your grid export, the CHF sensor that the Energy Dashboard auto-creates, and a plant name.",
         "data": {
           "stromnetzeinspeisung_kwh": "Grid export (kWh)",
           "rueckliefervergutung_chf": "Feed-in remuneration (CHF)",
-          "namenspraefix": "Name prefix"
+          "plant_name": "Plant name",
+          "namenspraefix": "Name prefix (optional)"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh counter\nThe **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
           "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
-          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
+          "plant_name": "## Plant name\nA stable display name for this PV plant — e.g. `Rooftop South`, `Garage Carport`. Used as the integration's title in **Settings → Devices & Services** and as the default for the entity name prefix below.\n\n**Stays the same even if you switch utility later** (utility changes happen via *Configure → Apply config change*).",
+          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** (e.g. `sensor.PREFIX_basisverguetung`).\n\n**Leave empty** to auto-derive from the plant name (e.g. `rooftop_south_rueckliefertarif`). *Only set explicitly* if you want a custom value or the default would collide with an existing entity."
         }
       }
     },
@@ -117,16 +119,18 @@
       },
       "entities": {
         "title": "Re-wire Home Assistant entities",
-        "description": "Link the kWh counter for your grid export and the CHF sensor that the Energy Dashboard auto-creates.",
+        "description": "Re-wire the entity links and rename this entry.",
         "data": {
           "stromnetzeinspeisung_kwh": "Grid export (kWh)",
           "rueckliefervergutung_chf": "Feed-in remuneration (CHF)",
+          "plant_name": "Plant name",
           "namenspraefix": "Name prefix"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh counter\nThe **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
           "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
-          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** and **action buttons** (e.g. `sensor.PREFIX_basisverguetung`, `button.PREFIX_recompute_aktuelles_quartal`).\n\n*Only change* if the default collides."
+          "plant_name": "## Plant name\nDisplay name for this entry — shown in **Settings → Devices & Services**. Editing this field updates the integration's title.",
+          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** (e.g. `sensor.PREFIX_basisverguetung`).\n\n⚠ **Changing this orphans Long-Term Statistics tied to the old prefix** — only change if you understand the consequence."
         }
       }
     },

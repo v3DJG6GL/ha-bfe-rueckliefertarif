@@ -20,6 +20,7 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_NAMENSPRAEFIX,
+    CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
 )
@@ -139,6 +140,7 @@ class TestStringsAndTranslations:
         [
             CONF_STROMNETZEINSPEISUNG_KWH,
             CONF_RUECKLIEFERVERGUETUNG_CHF,
+            CONF_PLANT_NAME,
             CONF_NAMENSPRAEFIX,
         ],
     )

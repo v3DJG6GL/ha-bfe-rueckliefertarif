@@ -36,6 +36,7 @@ from .const import (
     CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_NAMENSPRAEFIX,
+    CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
     DOMAIN,
@@ -49,9 +50,24 @@ async def _async_warm_cache(hass) -> None:
     """Pre-load tariffs.json via executor so the in-event-loop callers below
     hit the lru_cache instead of triggering HA's blocking-I/O detector.
 
+    v0.9.1: also lazy-init the ``TariffsDataCoordinator`` if it's missing
+    from ``hass.data[DOMAIN]``. Without this, the first-time config flow
+    (and any post-uninstall re-install) renders only the bundled utility
+    list — the remote companion-repo fetch otherwise only fires inside
+    ``async_setup_entry``, which runs *after* an entry exists. Reusing
+    the same ``_tariffs_data`` slot ``async_setup_entry`` would have
+    populated keeps init idempotent.
+
     Cheap to call repeatedly — after the first hit the cache is populated
     and the executor job is a no-op dict return.
     """
+    hass.data.setdefault(DOMAIN, {})
+    if "_tariffs_data" not in hass.data[DOMAIN]:
+        from .data_coordinator import TariffsDataCoordinator
+
+        tdc = TariffsDataCoordinator(hass)
+        await tdc.async_load()
+        hass.data[DOMAIN]["_tariffs_data"] = tdc
     await hass.async_add_executor_job(load_tariffs)
 
 if TYPE_CHECKING:
@@ -325,13 +341,22 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
         if user_input is not None:
+            from homeassistant.util import slugify
+
+            plant_name = (user_input.get(CONF_PLANT_NAME) or "").strip()
+            # If the user leaves namenspraefix empty, derive it from the
+            # plant name (stable identifier, decoupled from the utility).
+            prefix = (user_input.get(CONF_NAMENSPRAEFIX) or "").strip()
+            if not prefix:
+                prefix = f"{slugify(plant_name)}_rueckliefertarif"
+            user_input[CONF_NAMENSPRAEFIX] = prefix
+            user_input[CONF_PLANT_NAME] = plant_name
             self._data.update(user_input)
             return self.async_create_entry(
-                title=_utility_display_name(self._data[CONF_ENERGIEVERSORGER]),
+                title=plant_name,
                 data=self._data,
             )
 
-        default_prefix = self._data.get(CONF_ENERGIEVERSORGER, "bfe")
         schema = vol.Schema(
             {
                 vol.Required(CONF_STROMNETZEINSPEISUNG_KWH): selector.EntitySelector(
@@ -342,10 +367,8 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_RUECKLIEFERVERGUETUNG_CHF): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="sensor")
                 ),
-                vol.Optional(
-                    CONF_NAMENSPRAEFIX,
-                    default=f"{default_prefix}_rueckliefertarif",
-                ): str,
+                vol.Required(CONF_PLANT_NAME): str,
+                vol.Optional(CONF_NAMENSPRAEFIX, default=""): str,
             }
         )
         return self.async_show_form(step_id="entities", data_schema=schema)
@@ -872,9 +895,17 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
         if user_input is not None:
+            # Plant name doubles as the entry title — extract before merging.
+            plant_name = (user_input.get(CONF_PLANT_NAME) or "").strip()
             new_data = {**self.config_entry.data, **user_input}
+            new_data[CONF_PLANT_NAME] = plant_name
+            update_kwargs: dict[str, Any] = {"data": new_data}
+            # Only push a new title when plant_name was provided AND differs;
+            # blank plant_name means "leave title alone".
+            if plant_name and plant_name != self.config_entry.title:
+                update_kwargs["title"] = plant_name
             self.hass.config_entries.async_update_entry(
-                self.config_entry, data=new_data
+                self.config_entry, **update_kwargs
             )
             # Reload happens automatically via OptionsFlowWithReload.
             return self.async_create_entry(
@@ -882,6 +913,11 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             )
 
         current = dict(self.config_entry.data)
+        # Plant name default: existing entry.data value if present (set by
+        # initial flow on v0.9.1+ entries), else the current entry title
+        # (legacy entries created pre-v0.9.1 still show their utility-derived
+        # title, which the user can now overwrite here).
+        plant_name_default = current.get(CONF_PLANT_NAME) or self.config_entry.title
         schema = vol.Schema(
             {
                 vol.Required(
@@ -898,6 +934,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="sensor")
                 ),
+                vol.Required(
+                    CONF_PLANT_NAME, default=plant_name_default
+                ): str,
                 vol.Optional(
                     CONF_NAMENSPRAEFIX,
                     default=current.get(CONF_NAMENSPRAEFIX, "bfe_rueckliefertarif"),

@@ -23,16 +23,18 @@
       },
       "entities": {
         "title": "Entités Home Assistant",
-        "description": "Sélectionnez les entités HA pour le compteur kWh d'injection et le capteur CHF généré automatiquement par le tableau de bord Énergie.",
+        "description": "Sélectionnez les entités HA et donnez un nom à l'installation.",
         "data": {
           "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
           "rueckliefervergutung_chf": "Rétribution (CHF)",
-          "namenspraefix": "Préfixe de nom"
+          "plant_name": "Nom de l'installation",
+          "namenspraefix": "Préfixe de nom (optionnel)"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe **compteur kWh** qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans le **tableau de bord Énergie** sous *« Retour au réseau »*.",
           "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe **capteur CHF** que le tableau de bord Énergie crée automatiquement quand vous configurez *« Retour au réseau avec un prix »*.\n\nHA y appose le suffixe `_compensation` (généralement `sensor.VOTRE_INJECTION_compensation`). Cette intégration écrit dans ses **statistiques à long terme**.",
-          "namenspraefix": "## Préfixe de nom\nPréfixe pour les **capteurs de diagnostic** et **boutons d'action** de cette intégration. *À modifier uniquement* si la valeur par défaut entre en collision."
+          "plant_name": "## Nom de l'installation\nNom d'affichage stable de cette installation PV — ex. `Toit Sud`, `Carport Garage`. Utilisé comme titre de l'intégration dans **Paramètres → Appareils & services** et comme valeur par défaut du préfixe de nom ci-dessous.\n\n**Reste identique même en cas de changement de fournisseur** (les changements de fournisseur passent par *Configurer → Appliquer un changement de configuration*).",
+          "namenspraefix": "## Préfixe de nom\nPréfixe des **capteurs de diagnostic** de cette intégration (ex. `sensor.PREFIXE_basisverguetung`).\n\n**Laisser vide** pour dériver du nom de l'installation (ex. `toit_sud_rueckliefertarif`). *À définir explicitement* uniquement pour une valeur personnalisée ou en cas de collision."
         }
       }
     },
@@ -117,16 +119,18 @@
       },
       "entities": {
         "title": "Reconfigurer les entités Home Assistant",
-        "description": "Sélectionnez les entités HA pour le compteur kWh d'injection et le capteur CHF.",
+        "description": "Reconfigurer les entités et renommer cette entrée.",
         "data": {
           "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
           "rueckliefervergutung_chf": "Rétribution (CHF)",
+          "plant_name": "Nom de l'installation",
           "namenspraefix": "Préfixe de nom"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh d'injection.",
           "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF du tableau de bord Énergie.",
-          "namenspraefix": "## Préfixe de nom\nPréfixe pour les capteurs et boutons. À modifier uniquement si collision."
+          "plant_name": "## Nom de l'installation\nNom d'affichage de cette entrée — visible dans **Paramètres → Appareils & services**. Modifier ce champ met à jour le titre de l'intégration.",
+          "namenspraefix": "## Préfixe de nom\nPréfixe des **capteurs de diagnostic** de cette intégration (ex. `sensor.PREFIXE_basisverguetung`).\n\n⚠ **Modifier ce champ orphelinise les statistiques à long terme liées à l'ancien préfixe** — à modifier seulement en connaissance de cause."
         }
       }
     },
