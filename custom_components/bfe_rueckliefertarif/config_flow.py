@@ -1,14 +1,19 @@
-"""Config flow for BFE Rückliefertarif (v0.5).
+"""Config flow for BFE Rückliefertarif (v0.9.0+).
 
-Three-step flow:
-1. ``user`` — clickable menu of utilities (one click advances). Utility list
-   comes from ``data/tariffs.json`` so adding a utility is a JSON-only change.
-2. ``tariff`` — 4 personal-input fields (kW, Eigenverbrauch, HKN opt-in,
-   Abrechnungs-Rhythmus). Utility-published values (HKN rate, cap_mode,
-   fixed price) come from JSON and are NOT user-editable.
+Initial 3-step flow (unchanged):
+1. ``user`` — menu of utilities (data/tariffs.json driven).
+2. ``tariff`` — kW, Eigenverbrauch, HKN opt-in, billing rhythm.
 3. ``entities`` — 3 entity-wiring fields.
 
-Plus an Options Flow that re-exposes the tariff step.
+OptionsFlow menu (v0.9.0 lean redesign):
+- Apply config change (wizard — utility/HKN/kW/billing change effective from a date)
+- Manage configuration history (full CRUD on records)
+- Recompute full history (rewrites all LTS for published quarters + current-quarter estimate)
+- Refresh prices from BFE
+- Re-wire HA entities
+
+After v0.9.0, ``OPT_CONFIG_HISTORY`` is the sole source of truth for versioned
+tariff fields. ``entry.data`` only carries entity-wiring (no sync needed).
 """
 
 from __future__ import annotations
@@ -229,49 +234,6 @@ def _normalize_history(records: list[dict]) -> list[dict]:
     return sorted_recs
 
 
-def _sync_entry_data_from_history(history: list[dict], current_data: dict) -> dict:
-    """Return a new entry.data dict where versioned fields reflect the
-    open-ended history record. Non-versioned fields (entity wiring, prefix)
-    are preserved as-is.
-    """
-    if not history:
-        return dict(current_data)
-    open_recs = [r for r in history if r.get("valid_to") is None]
-    if open_recs:
-        winning = open_recs[0]
-    else:
-        winning = max(history, key=lambda r: r["valid_from"])
-    new_data = dict(current_data)
-    for k in CONFIG_HISTORY_FIELDS:
-        if k in winning["config"]:
-            new_data[k] = winning["config"][k]
-    return new_data
-
-
-def _apply_config_change(
-    *, new_config: dict, valid_from_date: str, old_options: dict
-) -> dict:
-    """Add or overwrite a record in OPT_CONFIG_HISTORY and return new options.
-
-    If a record with the same valid_from already exists, its config is
-    overwritten (treats re-saving the same date as an edit). Otherwise the
-    record is appended. ``_normalize_history`` re-chains valid_to.
-    """
-    new_options = {**old_options}
-    history = list(new_options.get(OPT_CONFIG_HISTORY) or [])
-    # Strip any existing record with the same valid_from so the new one wins.
-    history = [r for r in history if r.get("valid_from") != valid_from_date]
-    history.append(
-        {
-            "valid_from": valid_from_date,
-            "valid_to": None,
-            "config": {k: new_config.get(k) for k in CONFIG_HISTORY_FIELDS},
-        }
-    )
-    new_options[OPT_CONFIG_HISTORY] = _normalize_history(history)
-    return new_options
-
-
 def _format_config_summary(config: dict) -> str:
     """Compact one-line summary used for menu labels."""
     utility = config.get(CONF_ENERGIEVERSORGER) or "—"
@@ -411,53 +373,154 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     ) -> "FlowResult":
         return self.async_show_menu(
             step_id="init",
-            menu_options=["tariff", "manage_history", "reimport_quarter", "entities"],
+            menu_options=[
+                "apply_change",
+                "manage_history",
+                "recompute_history",
+                "refresh_prices",
+                "entities",
+            ],
         )
 
-    # ----- Sub-step: edit tariff settings ------------------------------------
+    # ----- Sub-step: apply config change (wizard) ----------------------------
 
-    async def async_step_tariff(
+    async def async_step_apply_change(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
+        """Wizard for applying any config change effective from a given date.
+
+        Single-step form covering utility / kW / EV / HKN / billing all at once.
+        Defaults inherited from the current open record. Effective date defaults
+        to today's quarter-start. Submit appends a new record to
+        ``OPT_CONFIG_HISTORY``; OptionsFlowWithReload reloads the entry.
+        """
+        await _async_warm_cache(self.hass)
+        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        open_rec = next((r for r in history if r.get("valid_to") is None), None)
+        open_cfg = (open_rec or {}).get("config") or {}
+
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = _validate_tariff(user_input)
-            if not errors:
-                # Compose the new full config from current entry.data + form input.
-                new_full = {**self.config_entry.data, **user_input}
-                new_config = {k: new_full.get(k) for k in CONFIG_HISTORY_FIELDS}
+            try:
+                effective_from = _parse_valid_from(user_input.get("effective_date", ""))
+            except ValueError:
+                errors["effective_date"] = "invalid_valid_from"
 
-                # Skip recording a no-op (no field actually changed).
-                history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
-                open_rec = next((r for r in history if r.get("valid_to") is None), None)
-                if open_rec and open_rec["config"] == new_config:
+            tariff_errs = _validate_tariff(user_input)
+            errors.update(tariff_errs)
+
+            if not errors:
+                new_config = {
+                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
+                    CONF_INSTALLIERTE_LEISTUNG_KW: float(
+                        user_input[CONF_INSTALLIERTE_LEISTUNG_KW]
+                    ),
+                    CONF_EIGENVERBRAUCH_AKTIVIERT: bool(
+                        user_input[CONF_EIGENVERBRAUCH_AKTIVIERT]
+                    ),
+                    CONF_HKN_AKTIVIERT: bool(user_input[CONF_HKN_AKTIVIERT]),
+                    CONF_ABRECHNUNGS_RHYTHMUS: user_input[CONF_ABRECHNUNGS_RHYTHMUS],
+                }
+                # No-op detection — if effective_from matches the open record's
+                # valid_from AND the config is identical, skip the write.
+                if (
+                    open_rec
+                    and open_rec["valid_from"] == effective_from
+                    and open_rec["config"] == new_config
+                ):
                     return self.async_create_entry(
                         title="", data=dict(self.config_entry.options or {})
                     )
 
-                new_options = _apply_config_change(
-                    new_config=new_config,
-                    valid_from_date=_quarter_start_today(),
-                    old_options=dict(self.config_entry.options or {}),
+                new_record = {
+                    "valid_from": effective_from,
+                    "valid_to": None,
+                    "config": new_config,
+                }
+                # Strip any existing record at the same date so this one wins.
+                history = [r for r in history if r.get("valid_from") != effective_from]
+                history = _append_history_record(
+                    history, new_record, dict(self.config_entry.data)
                 )
-                new_data = _sync_entry_data_from_history(
-                    new_options[OPT_CONFIG_HISTORY], dict(self.config_entry.data)
-                )
-                # Update entry.data only — options is committed by HA via the
-                # ``async_create_entry(data=new_options)`` return below. Mixing
-                # both writes (here AND via the flow result) used to wipe
-                # options when the flow result carried ``data={}``.
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data
-                )
+                normalized = _normalize_history(history)
+                new_options = {
+                    **dict(self.config_entry.options or {}),
+                    OPT_CONFIG_HISTORY: normalized,
+                }
                 return self.async_create_entry(title="", data=new_options)
 
-        defaults = user_input if user_input is not None else dict(self.config_entry.data)
+        defaults_cfg = (
+            user_input
+            if user_input is not None
+            else (open_cfg or {k: self.config_entry.data.get(k) for k in CONFIG_HISTORY_FIELDS})
+        )
+        default_effective_date = (
+            user_input.get("effective_date", _quarter_start_today())
+            if user_input is not None
+            else _quarter_start_today()
+        )
+
+        utility_keys = list_utility_keys()
+        schema = vol.Schema(
+            {
+                vol.Required("effective_date", default=default_effective_date): str,
+                vol.Required(
+                    CONF_ENERGIEVERSORGER,
+                    default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value=k, label=_utility_display_name(k)
+                            )
+                            for k in utility_keys
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_INSTALLIERTE_LEISTUNG_KW,
+                    default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0, max=10000, step=0.1,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="kW",
+                    )
+                ),
+                vol.Required(
+                    CONF_EIGENVERBRAUCH_AKTIVIERT,
+                    default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
+                ): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_HKN_AKTIVIERT,
+                    default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
+                ): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_ABRECHNUNGS_RHYTHMUS,
+                    default=defaults_cfg.get(
+                        CONF_ABRECHNUNGS_RHYTHMUS, ABRECHNUNGS_RHYTHMUS_QUARTAL
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                            ABRECHNUNGS_RHYTHMUS_MONAT,
+                        ],
+                        translation_key=CONF_ABRECHNUNGS_RHYTHMUS,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            }
+        )
         return self.async_show_form(
-            step_id="tariff",
-            data_schema=_tariff_schema(defaults),
+            step_id="apply_change",
+            data_schema=schema,
             errors=errors,
-            description_placeholders=_source_links(self.hass),
+            description_placeholders={
+                "current_summary": _format_config_summary(open_cfg) if open_cfg else "—",
+                **_source_links(self.hass),
+            },
         )
 
     # ----- Sub-step: manage configuration history ----------------------------
@@ -551,11 +614,8 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         **dict(self.config_entry.options or {}),
                         OPT_CONFIG_HISTORY: normalized,
                     }
-                    new_data = _sync_entry_data_from_history(
-                        normalized, dict(self.config_entry.data)
-                    )
                     self.hass.config_entries.async_update_entry(
-                        self.config_entry, data=new_data, options=new_options
+                        self.config_entry, options=new_options
                     )
                     return await self.async_step_manage_history()
 
@@ -605,11 +665,8 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     **dict(self.config_entry.options or {}),
                     OPT_CONFIG_HISTORY: normalized,
                 }
-                new_data = _sync_entry_data_from_history(
-                    normalized, dict(self.config_entry.data)
-                )
                 self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=new_data, options=new_options
+                    self.config_entry, options=new_options
                 )
                 return await self.async_step_manage_history()
 
@@ -694,49 +751,117 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             errors=errors,
         )
 
-    # ----- Sub-step: re-import a specific past quarter -----------------------
+    # ----- Sub-step: recompute full history ----------------------------------
 
-    async def async_step_reimport_quarter(
+    async def async_step_recompute_history(
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
-        from .bfe import PriceNotYetPublished
-        from .quarters import Quarter
+        """Confirm + run full-history recompute (published quarters + current Q estimate)."""
+        from homeassistant.components.persistent_notification import async_create
+
         from .services import (
             _build_recompute_report,
             _notify_recompute,
-            _reimport_quarter,
+            _reimport_all_history,
         )
 
         errors: dict[str, str] = {}
-        if user_input is not None:
-            quarter_str = (user_input.get("quarter") or "").strip()
+        if user_input is not None and user_input.get("confirm"):
             try:
-                q = Quarter.parse(quarter_str)
-            except ValueError:
-                errors["quarter"] = "invalid_quarter"
-                q = None
-            if q is not None:
-                try:
-                    await _reimport_quarter(self.hass, q)
-                except PriceNotYetPublished:
-                    errors["quarter"] = "price_not_yet_published"
-                except Exception:  # noqa: BLE001
-                    errors["base"] = "reimport_failed"
-                else:
-                    report = _build_recompute_report(self.hass, [q])
+                result = await _reimport_all_history(self.hass)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.exception("Recompute full history failed")
+                async_create(
+                    self.hass,
+                    f"Recompute failed: {exc}",
+                    title="BFE Rückliefertarif",
+                    notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_recompute_history",
+                )
+                errors["base"] = "reimport_failed"
+            else:
+                quarters_for_report = list(result["imported"]) + list(result["estimated"])
+                if quarters_for_report:
+                    report = _build_recompute_report(self.hass, quarters_for_report)
                     _notify_recompute(self.hass, self.config_entry.entry_id, report)
-                    return self.async_create_entry(
-                        title="", data=dict(self.config_entry.options or {})
+                else:
+                    skipped = result.get("skipped") or []
+                    failed = result.get("failed") or []
+                    lines = ["0 quarters recomputed."]
+                    if skipped:
+                        lines.append(
+                            f"{len(skipped)} skipped (not yet published by BFE)."
+                        )
+                    if failed:
+                        lines.append(
+                            f"{len(failed)} errors — see logs."
+                        )
+                    async_create(
+                        self.hass,
+                        "\n".join(lines),
+                        title="BFE Rückliefertarif",
+                        notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_recompute_history",
                     )
+                return self.async_create_entry(
+                    title="", data=dict(self.config_entry.options or {})
+                )
 
-        default = (
-            user_input.get("quarter", "")
-            if user_input
-            else ""
+        schema = vol.Schema(
+            {vol.Required("confirm", default=False): selector.BooleanSelector()}
         )
-        schema = vol.Schema({vol.Required("quarter", default=default): str})
         return self.async_show_form(
-            step_id="reimport_quarter",
+            step_id="recompute_history",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    # ----- Sub-step: refresh prices from BFE ---------------------------------
+
+    async def async_step_refresh_prices(
+        self, user_input: dict[str, Any] | None = None
+    ) -> "FlowResult":
+        """Confirm + force a fresh BFE price poll (auto-imports new quarters)."""
+        from homeassistant.components.persistent_notification import async_create
+
+        from .services import _refresh_coordinator
+
+        errors: dict[str, str] = {}
+        if user_input is not None and user_input.get("confirm"):
+            try:
+                result = await _refresh_coordinator(self.hass)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.exception("Refresh prices failed")
+                async_create(
+                    self.hass,
+                    f"Refresh failed: {exc}",
+                    title="BFE Rückliefertarif",
+                    notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_refresh",
+                )
+                errors["base"] = "reimport_failed"
+            else:
+                avail = result["available"]
+                new = result["newly_imported"]
+                line = f"BFE poll OK — {len(avail)} quarter(s) available"
+                if avail:
+                    line += f" (latest: {max(avail)})"
+                if new:
+                    line += f"; newly imported: {', '.join(str(q) for q in new)}"
+                else:
+                    line += "; no new quarters since last import."
+                async_create(
+                    self.hass,
+                    line,
+                    title="BFE Rückliefertarif",
+                    notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_refresh",
+                )
+                return self.async_create_entry(
+                    title="", data=dict(self.config_entry.options or {})
+                )
+
+        schema = vol.Schema(
+            {vol.Required("confirm", default=False): selector.BooleanSelector()}
+        )
+        return self.async_show_form(
+            step_id="refresh_prices",
             data_schema=schema,
             errors=errors,
         )

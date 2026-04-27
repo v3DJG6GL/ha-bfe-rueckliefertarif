@@ -46,9 +46,10 @@
         "title": "BFE Rückliefertarif options",
         "description": "What would you like to do?",
         "menu_options": {
-          "tariff": "Adjust tariff settings",
+          "apply_change": "Apply config change (utility / kW / HKN / billing)",
           "manage_history": "Manage configuration history",
-          "reimport_quarter": "Re-import a specific quarter",
+          "recompute_history": "Recompute full history",
+          "refresh_prices": "Refresh prices from BFE",
           "entities": "Re-wire Home Assistant entities"
         }
       },
@@ -81,30 +82,37 @@
           "delete": "Delete this record"
         }
       },
-      "tariff": {
-        "title": "Adjust tariff settings",
-        "description": "Adjust your plant settings. Utility-published values come from the bundled tariff database and aren't editable here.",
+      "apply_change": {
+        "title": "Apply configuration change",
+        "description": "Record a config change effective from a date or quarter — covers utility switches, kW expansion, HKN opt-in/out, billing rhythm. All fields are pre-filled from your current config; adjust whatever changed.\n\n**Currently active:** {current_summary}",
         "data": {
+          "effective_date": "Effective from (YYYY-MM-DD or YYYYQN)",
+          "energieversorger": "Utility",
           "installierte_leistung_kw": "Installed power (kW)",
-          "eigenverbrauch_aktiviert": "Self-consumption enabled",
-          "hkn_aktiviert": "Sell HKN to your utility?",
+          "eigenverbrauch_aktiviert": "Self-consumption",
+          "hkn_aktiviert": "HKN opt-in",
           "abrechnungs_rhythmus": "Billing period"
         },
         "data_description": {
-          "installierte_leistung_kw": "## Installed peak power\nThe DC peak rating of your PV plant in kilowatts. Used to look up the federal **Mindestvergütung** floor ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
-          "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** for typical residential / commercial setups; **No** for full feed-in (Volleinspeisung) plants.",
-          "hkn_aktiviert": "## HKN opt-in\n**Yes** if you sell *Herkunftsnachweise* to your utility. Rate is set by the utility, not editable here.",
+          "effective_date": "## When this change takes effect\nDefault is the current quarter's start. For utility switches mid-quarter, pick the actual switch date — the recompute path will use the new utility for any quarter starting on or after that date.",
+          "installierte_leistung_kw": "## Installed peak power\nDC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
+          "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** for typical residential / commercial setups; **No** for full feed-in (Volleinspeisung).",
+          "hkn_aktiviert": "## HKN opt-in\n**Yes** if you sell *Herkunftsnachweise* to your utility. Rate is utility-published.",
           "abrechnungs_rhythmus": "## Invoice cycle\nMatch your utility's invoice cycle. Most settle quarterly."
         }
       },
-      "reimport_quarter": {
-        "title": "Re-import a specific quarter",
-        "description": "Recompute the feed-in remuneration in CHF/h for a specific past quarter. Use this after fixing tariff settings to update an already-published quarter (e.g. correct a wrong HKN setting that was used for `2026Q1`).",
+      "recompute_history": {
+        "title": "Recompute full history",
+        "description": "Rewrites all Long-Term Statistics for every BFE-published quarter using your current configuration history (per-quarter utility / HKN / kW). Also writes a conservative **estimate** for the in-progress quarter using the active utility's effective floor (HKN, fixed price, or federal minimum).\n\nIdempotent and safe to re-run.",
         "data": {
-          "quarter": "Quarter"
-        },
-        "data_description": {
-          "quarter": "## Quarter identifier\n**Format:** `YYYYQN` (e.g. `2026Q1`, `2025Q4`).\n\nThe quarter must already be published by SFOE — typically about **2 weeks after quarter end**."
+          "confirm": "Yes, recompute now"
+        }
+      },
+      "refresh_prices": {
+        "title": "Refresh prices from BFE",
+        "description": "Force a fresh poll of the BFE reference market prices (skips the 6-hour scheduled tick). Auto-imports any quarter BFE has published since the last successful poll.",
+        "data": {
+          "confirm": "Yes, refresh now"
         }
       },
       "entities": {
@@ -124,10 +132,8 @@
     },
     "error": {
       "kw_required": "Installed power (kW) must be greater than 0.",
-      "invalid_quarter": "Invalid format. Expected YYYYQN (e.g. 2026Q1).",
       "invalid_valid_from": "Invalid date or quarter — expected YYYY-MM-DD (e.g. 2024-08-15) or YYYYQN (e.g. 2024Q3).",
-      "price_not_yet_published": "SFOE has not yet published this quarter. Try again about 2 weeks after quarter end.",
-      "reimport_failed": "Re-import failed unexpectedly. Check Settings → System → Logs.",
+      "reimport_failed": "Operation failed unexpectedly. Check Settings → System → Logs.",
       "cannot_delete_last_record": "Cannot delete the only history record — at least one must remain. Edit it instead."
     }
   },
@@ -161,20 +167,6 @@
       },
       "tariffs_last_remote_update": {
         "name": "Tariff database — last remote update"
-      }
-    },
-    "button": {
-      "reload_daten": {
-        "name": "Reload data"
-      },
-      "recompute_letztes_publiziertes_quartal": {
-        "name": "Recompute most recent published quarter"
-      },
-      "recompute_aktuelles_quartal_estimate": {
-        "name": "Recompute running quarter (estimate)"
-      },
-      "recompute_historie": {
-        "name": "Recompute full history"
       }
     }
   }

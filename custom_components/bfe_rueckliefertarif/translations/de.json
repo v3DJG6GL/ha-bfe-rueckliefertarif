@@ -46,9 +46,10 @@
         "title": "BFE Rückliefertarif — Optionen",
         "description": "Was möchtest du tun?",
         "menu_options": {
-          "tariff": "Tarif-Einstellungen anpassen",
+          "apply_change": "Konfigurationsänderung anwenden (Versorger / kW / HKN / Abrechnung)",
           "manage_history": "Konfigurationsverlauf verwalten",
-          "reimport_quarter": "Spezifisches Quartal neu importieren",
+          "recompute_history": "Gesamte Historie neu berechnen",
+          "refresh_prices": "Preise vom BFE neu laden",
           "entities": "Home-Assistant-Entitäten neu verbinden"
         }
       },
@@ -81,30 +82,37 @@
           "delete": "Diesen Eintrag löschen"
         }
       },
-      "tariff": {
-        "title": "Tarif-Einstellungen anpassen",
-        "description": "Anlage-Daten anpassen. Versorgerseiten (HKN, Cap, Fixpreise) kommen aus der Tarif-Datenbank und sind nicht editierbar.",
+      "apply_change": {
+        "title": "Konfigurationsänderung anwenden",
+        "description": "Eine Konfigurationsänderung ab einem Datum oder Quartal erfassen — deckt Versorgerwechsel, kW-Erweiterung, HKN-Opt-in/-out, Abrechnungs-Rhythmus ab. Felder sind aus deiner aktuellen Konfiguration vorausgefüllt; ändere, was sich geändert hat.\n\n**Aktuell aktiv:** {current_summary}",
         "data": {
+          "effective_date": "Gültig ab (JJJJ-MM-TT oder JJJJQN)",
+          "energieversorger": "Energieversorger",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
-          "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
-          "hkn_aktiviert": "HKN an Versorger verkaufen?",
+          "eigenverbrauch_aktiviert": "Eigenverbrauch",
+          "hkn_aktiviert": "HKN-Opt-in",
           "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
         },
         "data_description": {
-          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in kW. Bestimmt die **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
+          "effective_date": "## Wann die Änderung greift\nStandardmässig der Beginn des aktuellen Quartals. Bei Versorgerwechsel mitten im Quartal das tatsächliche Wechseldatum eintragen — der Recompute nutzt den neuen Versorger ab dem Quartal, das an oder nach diesem Datum beginnt.",
+          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung in kW. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
           "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** für typische Wohn-/Gewerbeanlagen; **Nein** für Volleinspeisung.",
           "hkn_aktiviert": "## HKN-Opt-in\n**Ja** wenn du *Herkunftsnachweise* an den Versorger verkaufst. Satz wird vom Versorger gesetzt.",
           "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus des Versorgers. Die meisten rechnen quartalsweise ab."
         }
       },
-      "reimport_quarter": {
-        "title": "Spezifisches Quartal neu importieren",
-        "description": "Die Rückliefervergütung in CHF/h für ein spezifisches Quartal neu berechnen. Z. B. nach Korrektur einer falschen Tarif-Einstellung, die für `2026Q1` verwendet wurde.",
+      "recompute_history": {
+        "title": "Gesamte Historie neu berechnen",
+        "description": "Schreibt die Long-Term-Statistics für jedes vom BFE publizierte Quartal mit deinem Konfigurationsverlauf neu (Versorger / HKN / kW pro Quartal). Schreibt zusätzlich eine konservative **Schätzung** für das laufende Quartal mit dem effektiven Floor des aktiven Versorgers (HKN, Fixpreis oder gesetzliche Mindestvergütung).\n\nIdempotent und sicher mehrfach ausführbar.",
         "data": {
-          "quarter": "Quartal"
-        },
-        "data_description": {
-          "quarter": "## Quartal-Bezeichner\n**Format:** `JJJJQN` (z. B. `2026Q1`, `2025Q4`).\n\nDas Quartal muss bereits vom BFE publiziert sein — typischerweise **ca. 2 Wochen nach Quartalsende**."
+          "confirm": "Ja, jetzt neu berechnen"
+        }
+      },
+      "refresh_prices": {
+        "title": "Preise vom BFE neu laden",
+        "description": "Erzwingt einen frischen Abruf der Referenz-Marktpreise vom BFE (überspringt den 6-Stunden-Tick). Importiert automatisch jedes seit dem letzten Abruf vom BFE publizierte Quartal.",
+        "data": {
+          "confirm": "Ja, jetzt neu laden"
         }
       },
       "entities": {
@@ -124,10 +132,8 @@
     },
     "error": {
       "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein.",
-      "invalid_quarter": "Ungültiges Format. Erwartet: JJJJQN (z. B. 2026Q1).",
       "invalid_valid_from": "Ungültiges Datum oder Quartal — erwartet JJJJ-MM-TT (z. B. 2024-08-15) oder JJJJQN (z. B. 2024Q3).",
-      "price_not_yet_published": "BFE hat dieses Quartal noch nicht publiziert. Versuch's ca. 2 Wochen nach Quartalsende erneut.",
-      "reimport_failed": "Re-Import unerwartet fehlgeschlagen. Prüfe Einstellungen → System → Logs.",
+      "reimport_failed": "Vorgang unerwartet fehlgeschlagen. Prüfe Einstellungen → System → Logs.",
       "cannot_delete_last_record": "Der letzte Verlaufseintrag kann nicht gelöscht werden — mindestens einer muss bleiben. Stattdessen bearbeiten."
     }
   },
@@ -161,20 +167,6 @@
       },
       "tariffs_last_remote_update": {
         "name": "Tarif-Datenbank — letztes Remote-Update"
-      }
-    },
-    "button": {
-      "reload_daten": {
-        "name": "Daten neu laden"
-      },
-      "recompute_letztes_publiziertes_quartal": {
-        "name": "Letztes publiziertes Quartal neu berechnen"
-      },
-      "recompute_aktuelles_quartal_estimate": {
-        "name": "Aktuelles Quartal neu berechnen (Schätzung)"
-      },
-      "recompute_historie": {
-        "name": "Gesamte Historie neu berechnen"
       }
     }
   }

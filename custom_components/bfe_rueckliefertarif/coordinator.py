@@ -56,17 +56,22 @@ class BfeCoordinator(DataUpdateCoordinator):
 
     @property
     def _config(self) -> dict:
-        """Live read of ``entry.data``.
+        """Live merge of entity-wiring (entry.data) + today's resolved versioned fields.
 
-        v0.8.5: was a cached ``dict(entry.data)`` set in __init__ and never
-        refreshed, so the tariff-breakdown sensor + skipped-quarter
-        notification rendered stale utility/kw/EV/HKN values after any
-        OptionsFlow change that didn't trigger an entry reload (and
-        OptionsFlowWithReload silently skips the reload when _edit_row
-        pre-writes options). Reading live trades a tiny dict() each access
-        for never showing stale state.
+        v0.9.0 (Option A+): versioned fields (utility, kW, EV, HKN, billing)
+        live exclusively in ``entry.options[OPT_CONFIG_HISTORY]`` — the open
+        record IS today's config. Entity-wiring fields (export sensor,
+        compensation sensor, name prefix) stay in ``entry.data``. This merge
+        gives consumers a single dict identical in shape to pre-A+ but with
+        history as the source of truth for everything that varies over time.
         """
-        return dict(self.entry.data)
+        from datetime import date
+
+        from .services import _resolve_config_at
+
+        data = dict(self.entry.data)
+        versioned = _resolve_config_at(self.entry.options or {}, date.today(), {})
+        return {**data, **versioned}
 
     def _make_store(self):
         from homeassistant.helpers.storage import Store

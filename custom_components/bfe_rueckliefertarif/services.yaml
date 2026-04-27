@@ -1,36 +1,3 @@
-reimport_quarter:
-  name: Re-import quarter
-  description: >
-    Re-runs BFE fetch + tariff compute + compensation-LTS rewrite for a single quarter.
-    Idempotent — safe to call repeatedly.
-  fields:
-    quarter:
-      name: Quarter
-      description: Quarter identifier like "2026Q1".
-      required: true
-      example: "2026Q1"
-      selector:
-        text:
-
-reimport_range:
-  name: Re-import range
-  description: Re-import every quarter in a range (inclusive).
-  fields:
-    start_quarter:
-      name: Start quarter
-      description: First quarter to import, e.g. "2026Q1".
-      required: true
-      example: "2026Q1"
-      selector:
-        text:
-    end_quarter:
-      name: End quarter
-      description: Last quarter to import, e.g. "2026Q4".
-      required: true
-      example: "2026Q4"
-      selector:
-        text:
-
 reimport_all_history:
   name: Re-import all history
   description: >

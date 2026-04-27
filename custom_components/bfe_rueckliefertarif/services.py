@@ -1,4 +1,4 @@
-"""Service handlers: reimport_quarter, reimport_range, reimport_all_history, refresh."""
+"""Service handlers: reimport_all_history, refresh, refresh_tariffs."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-import voluptuous as vol
 
 from .bfe import PriceNotYetPublished, fetch_monthly, fetch_quarterly
 from .const import (
@@ -46,26 +44,9 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_register_services(hass: "HomeAssistant") -> None:
     """Register services on first integration setup."""
-    if hass.services.has_service(DOMAIN, "reimport_quarter"):
+    if hass.services.has_service(DOMAIN, "reimport_all_history"):
         return
 
-    hass.services.async_register(
-        DOMAIN,
-        "reimport_quarter",
-        _handle_reimport_quarter,
-        schema=vol.Schema({vol.Required("quarter"): str}),
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "reimport_range",
-        _handle_reimport_range,
-        schema=vol.Schema(
-            {
-                vol.Required("start_quarter"): str,
-                vol.Required("end_quarter"): str,
-            }
-        ),
-    )
     hass.services.async_register(
         DOMAIN, "reimport_all_history", _handle_reimport_all_history
     )
@@ -107,16 +88,17 @@ def _cfg_for_entry(
 ) -> tuple[dict, TariffConfig]:
     """Build the TariffConfig for a config entry, optionally as-of a quarter.
 
-    When ``for_quarter`` is given, the per-entry config history (in
-    ``entry.options[OPT_CONFIG_HISTORY]``) is consulted at the quarter's
-    start date, so past quarters get the utility / kW / EV / HKN /
-    billing-rhythm values that were active back then. When omitted,
-    today's date is used.
+    The returned ``cfg`` dict merges entity-wiring fields from ``entry.data``
+    (export sensor, compensation sensor, name prefix) with the historically-
+    resolved versioned fields from ``OPT_CONFIG_HISTORY`` at ``for_quarter``'s
+    start date (or today). Versioned fields in ``entry.data`` are intentionally
+    overridden by the resolved record — post-A+ the history is the source of
+    truth and ``entry.data`` versioned fields, if present, are stale.
     """
     from datetime import date
 
     entry_data = _first_entry_data(hass)
-    cfg = entry_data["config"]
+    raw_data = entry_data["config"]
     options = entry_data.get("options") or {}
 
     if for_quarter is not None:
@@ -124,7 +106,9 @@ def _cfg_for_entry(
     else:
         at_date = date.today()
 
-    resolved_cfg = _resolve_config_at(options, at_date, cfg)
+    resolved_cfg = _resolve_config_at(options, at_date, {})
+    cfg = {**raw_data, **resolved_cfg}
+
     utility_key = resolved_cfg.get(CONF_ENERGIEVERSORGER)
     kw = float(resolved_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
     eigenverbrauch = bool(resolved_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT))
@@ -148,13 +132,11 @@ def _cfg_for_entry(
 def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
     """Pick the full config dict active at ``at_date``.
 
-    Reads ``OPT_CONFIG_HISTORY``; falls back to ``fallback_cfg`` (entry.data)
-    when the history list is empty (shouldn't happen post-setup since
-    ``async_setup_entry`` synthesizes an initial sentinel record) OR when
-    ``at_date`` predates every record's ``valid_from``. The latter signals
-    the 1970 sentinel went missing — refuse to extrapolate the *current*
-    open-ended tariff backward in time, fall back to ``entry.data``, and
-    log a warning so the degenerate state is observable.
+    Reads ``OPT_CONFIG_HISTORY``; falls back to ``fallback_cfg`` (typically
+    ``{}``) when the history list is empty or when ``at_date`` predates every
+    record's ``valid_from``. Both branches are unreachable in normal operation
+    — ``async_setup_entry`` synthesizes a 1970 sentinel that always matches
+    — but the warning makes the degenerate state observable if it ever happens.
     """
     history = options.get(OPT_CONFIG_HISTORY) or []
     if not history:
@@ -163,8 +145,8 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
     if rec is not None:
         return rec["config"]
     _LOGGER.warning(
-        "config-history: %s predates earliest record (%s); using entry.data "
-        "fallback. This usually means the 1970 sentinel is missing — check "
+        "config-history: %s predates earliest record (%s); using fallback. "
+        "This usually means the 1970 sentinel is missing — check "
         "OPT_CONFIG_HISTORY in the config entry options.",
         at_date, history[0]["valid_from"],
     )
@@ -411,33 +393,20 @@ def _one_hour() -> "timedelta":
     return timedelta(hours=1)
 
 
-async def _handle_reimport_quarter(call: "ServiceCall") -> None:
-    q = Quarter.parse(call.data["quarter"])
-    await _reimport_quarter(call.hass, q)
-
-
-async def _handle_reimport_range(call: "ServiceCall") -> None:
-    start = Quarter.parse(call.data["start_quarter"])
-    end = Quarter.parse(call.data["end_quarter"])
-    q = start
-    while q <= end:
-        try:
-            await _reimport_quarter(call.hass, q)
-        except PriceNotYetPublished as exc:
-            _LOGGER.warning("Skipping %s: %s", q, exc)
-        q = q.next()
-
-
 async def _reimport_all_history(hass: "HomeAssistant") -> dict:
-    """Re-import every quarter BFE has published. Returns a result summary.
+    """Re-import every quarter BFE has published, then estimate the running quarter.
 
     Result dict keys:
     - ``available``: sorted list of all Quarters BFE has published
-    - ``imported``: list of Quarters successfully recomputed
+    - ``imported``: list of Quarters successfully recomputed from BFE prices
     - ``skipped``: list of Quarters skipped because BFE has not yet published them
     - ``failed``: list of Quarters that errored unexpectedly
+    - ``estimated``: list of Quarters written via the running-quarter estimate
+      (typically the current in-progress quarter; empty if BFE already published it
+      or the estimate failed)
     """
     import aiohttp
+    from datetime import datetime, timezone
 
     async with aiohttp.ClientSession() as session:
         quarterly = await fetch_quarterly(session)
@@ -456,11 +425,25 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
             _LOGGER.error("Failed importing %s: %s", q, exc)
             failed.append(q)
 
+    # Append the running quarter as a conservative estimate when BFE hasn't
+    # published it yet — uses the active utility's tariff settings (fixed
+    # price, HKN, federal floor, or previous-quarter reference) so the user
+    # sees realistic CHF in the Energy Dashboard immediately.
+    estimated: list = []
+    running_q = quarter_of(datetime.now(timezone.utc))
+    if running_q not in imported:
+        try:
+            await _import_running_quarter_estimate(hass)
+            estimated.append(running_q)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Running-quarter estimate failed: %s", exc)
+
     return {
         "available": sorted(quarterly.keys()),
         "imported": imported,
         "skipped": skipped,
         "failed": failed,
+        "estimated": estimated,
     }
 
 
@@ -485,15 +468,16 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     """
     from datetime import datetime, timezone
 
-    cfg, _tariff_cfg = _cfg_for_entry(hass)
+    cfg, tariff_cfg = _cfg_for_entry(hass)
     export_id = cfg[CONF_STROMNETZEINSPEISUNG_KWH]
     comp_id = cfg[CONF_RUECKLIEFERVERGUETUNG_CHF]
+    billing = cfg.get(CONF_ABRECHNUNGS_RHYTHMUS)
 
     entry_data = _first_entry_data(hass)
     coordinator = entry_data.get("coordinator")
     if coordinator is None or not coordinator.data:
         raise RuntimeError(
-            "Coordinator not ready — run 'Reload data' first"
+            "Coordinator not ready — run 'Refresh prices from BFE' first"
         )
     breakdown = coordinator.data.get("tariff_breakdown")
     if not breakdown:
@@ -527,8 +511,10 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     rate_chf_kwh = rate_rp_kwh / 100.0
     running_sum = anchor
     records: list[tuple] = []
+    total_kwh = 0.0
     for h in hours_in_range(q_start_utc, last_full_hour):
         kwh = hourly_kwh.get(h, 0.0)
+        total_kwh += kwh
         running_sum += kwh * rate_chf_kwh
         records.append((h, running_sum))
 
@@ -540,6 +526,51 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         )
 
     chf_total = running_sum - anchor
+
+    # Snapshot so _build_recompute_report can render this quarter as an
+    # "(estimate)" row alongside the published-quarter rows. Rate/HKN
+    # decomposition isn't available from the breakdown — store rate as the
+    # total and leave Base/HKN cells empty in the renderer.
+    rt = tariff_cfg.resolved
+    snapshot = {
+        "rate_rp_kwh": round(rate_rp_kwh, 4),
+        "kw": tariff_cfg.installierte_leistung_kw,
+        "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
+        "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
+        "hkn_optin": tariff_cfg.hkn_aktiviert,
+        "cap_mode": rt.cap_mode,
+        "cap_rp_kwh": rt.cap_rp_kwh,
+        "cap_applied": False,
+        "total_kwh": round(total_kwh, 3),
+        "total_chf": round(chf_total, 4),
+        "periods": [
+            {
+                "period": str(q),
+                "kwh": round(total_kwh, 3),
+                "chf": round(chf_total, 4),
+                "rate_rp_kwh_avg": round(rate_rp_kwh, 4),
+                "base_rp_kwh_avg": None,
+                "hkn_rp_kwh_avg": None,
+                "intended_hkn_rp_kwh": None,
+            }
+        ],
+        "utility_key": rt.utility_key,
+        "base_model": rt.base_model,
+        "billing": billing,
+        "floor_label": rt.federal_floor_label,
+        "floor_rp_kwh": rt.federal_floor_rp_kwh,
+        "tariffs_json_version": rt.tariffs_json_version,
+        "tariffs_json_source": rt.tariffs_json_source,
+        "is_current_estimate": True,
+        "estimate_basis": estimate_basis,
+    }
+    coordinator._imported[str(q)] = {
+        "q_price_chf_mwh": None,
+        "imported_at": datetime.now(timezone.utc).isoformat(),
+        "snapshot": snapshot,
+    }
+    hass.async_create_task(coordinator._async_save_state())
+
     _LOGGER.info(
         "Imported running %s estimate: rate=%.4f Rp/kWh, hours=%d, total=%.4f CHF (estimate=%s, basis=%s)",
         q, rate_rp_kwh, len(records), chf_total, is_estimate, estimate_basis,
@@ -638,6 +669,10 @@ class _RecomputeReportRow:
     floor_rp_kwh_at_period: float | None = None
     tariffs_version_at_period: str | None = None
     tariffs_source_at_period: str | None = None
+    # v0.9.0: marks rows from the running-quarter estimate (BFE not yet
+    # published; rate is the active utility's effective floor).
+    is_current_estimate: bool = False
+    estimate_basis: str | None = None
 
 
 @dataclass(frozen=True)
@@ -708,6 +743,8 @@ def _build_recompute_report(
                 "floor_rp_kwh_at_period": snap.get("floor_rp_kwh"),
                 "tariffs_version_at_period": snap.get("tariffs_json_version"),
                 "tariffs_source_at_period": snap.get("tariffs_json_source"),
+                "is_current_estimate": bool(snap.get("is_current_estimate", False)),
+                "estimate_basis": snap.get("estimate_basis"),
             }
             # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
@@ -893,7 +930,12 @@ def _render_period_table(
         rate = f"{r.rate_rp_kwh_avg:.3f}" if r.rate_rp_kwh_avg is not None else "—"
         kwh = f"{r.total_kwh:,.2f}" if r.total_kwh is not None else "—"
         chf = f"{r.total_chf:,.2f}" if r.total_chf is not None else "—"
-        lines.append(f"| {r.period} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
+        if r.is_current_estimate:
+            basis = r.estimate_basis or "active utility floor"
+            period_cell = f"{r.period} *(estimate · {basis})*"
+        else:
+            period_cell = r.period
+        lines.append(f"| {period_cell} | {base} | {hkn} | {rate} | {kwh} | {chf} |")
     return lines, forfeit_rows
 
 

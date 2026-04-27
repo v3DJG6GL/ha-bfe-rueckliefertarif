@@ -1,12 +1,15 @@
-"""Tests for v0.8.0: unified config-history timeline.
+"""Tests for v0.8.0+: unified config-history timeline (post-A+ refactor).
 
 Covers:
 - ``_resolve_config_at`` picks the correct full-config dict per ``at_date``,
   honoring half-open ``[valid_from, valid_to)`` semantics.
-- ``_apply_config_change`` appends new records and overwrites same-date ones.
 - ``_normalize_history`` sorts by valid_from and chains valid_to.
-- ``_sync_entry_data_from_history`` pulls the open-ended record into entry.data.
 - ``_parse_valid_from`` accepts both ISO-date and YYYYQN inputs.
+
+Note (v0.9.0): ``_apply_config_change`` and ``_sync_entry_data_from_history``
+are removed — the wizard inlines history mutation and entry.data no longer
+mirrors versioned fields. The ``apply_change`` wizard's persistence path is
+covered by tests/test_setup_and_options_flow.py.
 """
 
 from __future__ import annotations
@@ -15,12 +18,10 @@ from datetime import date
 
 from custom_components.bfe_rueckliefertarif.config_flow import (
     _append_history_record,
-    _apply_config_change,
     _format_config_summary,
     _make_sentinel_record,
     _normalize_history,
     _parse_valid_from,
-    _sync_entry_data_from_history,
 )
 from custom_components.bfe_rueckliefertarif.const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
@@ -169,53 +170,6 @@ class TestAppendHistoryRecord:
         assert len(existing) == 1
 
 
-class TestApplyConfigChange:
-    def test_append_new_record(self):
-        old_opts = {
-            OPT_CONFIG_HISTORY: [
-                {"valid_from": "1970-01-01", "valid_to": None,
-                 "config": _cfg(utility="ekz", hkn=False)},
-            ]
-        }
-        new_opts = _apply_config_change(
-            new_config=_cfg(utility="ekz", hkn=True),
-            valid_from_date="2024-07-01",
-            old_options=old_opts,
-        )
-        hist = new_opts[OPT_CONFIG_HISTORY]
-        assert len(hist) == 2
-        assert hist[0]["valid_from"] == "1970-01-01"
-        assert hist[0]["valid_to"] == "2024-07-01"  # auto-chained
-        assert hist[1]["valid_from"] == "2024-07-01"
-        assert hist[1]["valid_to"] is None
-        assert hist[1]["config"][CONF_HKN_AKTIVIERT] is True
-
-    def test_overwrites_same_valid_from(self):
-        old_opts = {
-            OPT_CONFIG_HISTORY: [
-                {"valid_from": "2024-07-01", "valid_to": None,
-                 "config": _cfg(hkn=True)},
-            ]
-        }
-        new_opts = _apply_config_change(
-            new_config=_cfg(hkn=False, kw=99.0),
-            valid_from_date="2024-07-01",
-            old_options=old_opts,
-        )
-        hist = new_opts[OPT_CONFIG_HISTORY]
-        assert len(hist) == 1
-        assert hist[0]["config"][CONF_HKN_AKTIVIERT] is False
-        assert hist[0]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 99.0
-
-    def test_handles_empty_history(self):
-        new_opts = _apply_config_change(
-            new_config=_cfg(),
-            valid_from_date="2024-01-01",
-            old_options={},
-        )
-        assert len(new_opts[OPT_CONFIG_HISTORY]) == 1
-
-
 class TestNormalizeHistory:
     def test_sorts_by_valid_from(self):
         records = [
@@ -247,38 +201,6 @@ class TestNormalizeHistory:
         out = _normalize_history(records)
         assert len(out) == 1
         assert out[0]["config"][CONF_ENERGIEVERSORGER] == "bkw"
-
-
-class TestSyncEntryData:
-    def test_pulls_open_ended_record(self):
-        history = [
-            {"valid_from": "1970-01-01", "valid_to": "2025-04-01",
-             "config": _cfg(utility="ekz", kw=8.0)},
-            {"valid_from": "2025-04-01", "valid_to": None,
-             "config": _cfg(utility="ewz", kw=35.0)},
-        ]
-        new_data = _sync_entry_data_from_history(
-            history, {"stromnetzeinspeisung_kwh": "sensor.foo"}
-        )
-        assert new_data[CONF_ENERGIEVERSORGER] == "ewz"
-        assert new_data[CONF_INSTALLIERTE_LEISTUNG_KW] == 35.0
-        # Non-versioned field preserved.
-        assert new_data["stromnetzeinspeisung_kwh"] == "sensor.foo"
-
-    def test_falls_back_to_max_valid_from_when_all_closed(self):
-        history = [
-            {"valid_from": "2024-01-01", "valid_to": "2024-07-01",
-             "config": _cfg(utility="ekz")},
-            {"valid_from": "2024-07-01", "valid_to": "2025-01-01",
-             "config": _cfg(utility="bkw")},
-        ]
-        new_data = _sync_entry_data_from_history(history, {})
-        assert new_data[CONF_ENERGIEVERSORGER] == "bkw"
-
-    def test_empty_history_returns_current_data_unchanged(self):
-        original = {"stromnetzeinspeisung_kwh": "sensor.foo"}
-        out = _sync_entry_data_from_history([], original)
-        assert out == original
 
 
 class TestParseValidFrom:

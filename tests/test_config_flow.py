@@ -176,34 +176,42 @@ class TestStringsAndTranslations:
             assert key in d["entity"]["sensor"]
             assert "name" in d["entity"]["sensor"][key]
 
-    @pytest.mark.parametrize(
-        "key",
-        [
-            "reload_daten",
-            "recompute_letztes_publiziertes_quartal",
-            "recompute_aktuelles_quartal_estimate",
-            "recompute_historie",
-        ],
-    )
-    def test_button_translations_present(self, en_strings, de_translations, key):
+    def test_button_platform_strings_removed(self, en_strings, de_translations):
+        # v0.9.0: button.py is gone entirely. There must be no entity.button
+        # block left over in any locale.
         for d in (en_strings, de_translations):
-            assert key in d["entity"]["button"]
-            assert "name" in d["entity"]["button"][key]
+            assert "button" not in d.get("entity", {}), (
+                "entity.button block must be removed after v0.9.0"
+            )
 
     def test_options_step_init_is_menu(self, en_strings, de_translations):
         for d in (en_strings, de_translations):
             assert "init" in d["options"]["step"]
             assert "menu_options" in d["options"]["step"]["init"]
             menu = d["options"]["step"]["init"]["menu_options"]
-            assert "tariff" in menu
-            assert "reimport_quarter" in menu
-            assert "entities" in menu
+            # v0.9.0: lean menu — no more tariff or reimport_quarter steps.
+            assert set(menu.keys()) == {
+                "apply_change",
+                "manage_history",
+                "recompute_history",
+                "refresh_prices",
+                "entities",
+            }
 
-    @pytest.mark.parametrize("sub_step", ["tariff", "reimport_quarter", "entities"])
+    @pytest.mark.parametrize(
+        "sub_step",
+        ["apply_change", "recompute_history", "refresh_prices", "entities"],
+    )
     def test_options_substeps_present(self, en_strings, de_translations, sub_step):
         for d in (en_strings, de_translations):
             assert sub_step in d["options"]["step"]
             assert "data" in d["options"]["step"][sub_step]
+
+    def test_old_options_steps_removed(self, en_strings, de_translations):
+        # v0.9.0: tariff and reimport_quarter step blocks must be gone.
+        for d in (en_strings, de_translations):
+            assert "tariff" not in d["options"]["step"]
+            assert "reimport_quarter" not in d["options"]["step"]
 
     def test_fr_translations_minimum_keys(self, fr_translations):
         # French has the essentials but may skip detailed help text.

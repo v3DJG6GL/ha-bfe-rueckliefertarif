@@ -46,9 +46,10 @@
         "title": "Options BFE Rückliefertarif",
         "description": "Que souhaitez-vous faire ?",
         "menu_options": {
-          "tariff": "Modifier les paramètres tarifaires",
+          "apply_change": "Appliquer un changement de configuration (fournisseur / kW / GO / facturation)",
           "manage_history": "Gérer l'historique de configuration",
-          "reimport_quarter": "Réimporter un trimestre spécifique",
+          "recompute_history": "Recalculer tout l'historique",
+          "refresh_prices": "Rafraîchir les prix depuis l'OFEN",
           "entities": "Reconfigurer les entités Home Assistant"
         }
       },
@@ -81,30 +82,37 @@
           "delete": "Supprimer cet enregistrement"
         }
       },
-      "tariff": {
-        "title": "Modifier les paramètres tarifaires",
-        "description": "Modifier les paramètres de l'installation.",
+      "apply_change": {
+        "title": "Appliquer un changement de configuration",
+        "description": "Enregistre un changement de configuration à partir d'une date ou d'un trimestre — couvre changement de fournisseur, extension kW, opt-in/out GO, fréquence de facturation. Tous les champs sont pré-remplis depuis votre configuration actuelle ; modifiez ce qui a changé.\n\n**Actuellement actif :** {current_summary}",
         "data": {
+          "effective_date": "Effectif depuis (AAAA-MM-JJ ou AAAATN)",
+          "energieversorger": "Fournisseur",
           "installierte_leistung_kw": "Puissance installée (kW)",
-          "eigenverbrauch_aktiviert": "Autoconsommation activée",
-          "hkn_aktiviert": "Vendre les GO au fournisseur ?",
+          "eigenverbrauch_aktiviert": "Autoconsommation",
+          "hkn_aktiviert": "Opt-in GO",
           "abrechnungs_rhythmus": "Fréquence de facturation"
         },
         "data_description": {
-          "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
+          "effective_date": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
+          "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale fédérale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place.",
           "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur.",
           "abrechnungs_rhythmus": "## Cycle de facturation\nLa plupart des fournisseurs suisses facturent trimestriellement."
         }
       },
-      "reimport_quarter": {
-        "title": "Réimporter un trimestre spécifique",
-        "description": "Recalculer la rétribution en CHF/h pour un trimestre spécifique.",
+      "recompute_history": {
+        "title": "Recalculer tout l'historique",
+        "description": "Réécrit les Long-Term Statistics pour chaque trimestre publié par l'OFEN en utilisant votre historique de configuration (fournisseur / GO / kW par trimestre). Écrit également une **estimation** conservative pour le trimestre en cours, basée sur le plancher effectif du fournisseur actif (GO, prix fixe ou minimum fédéral).\n\nIdempotent et sûr à relancer.",
         "data": {
-          "quarter": "Trimestre"
-        },
-        "data_description": {
-          "quarter": "## Identifiant de trimestre\n**Format :** `AAAATN` (ex. `2026Q1`)."
+          "confirm": "Oui, recalculer maintenant"
+        }
+      },
+      "refresh_prices": {
+        "title": "Rafraîchir les prix depuis l'OFEN",
+        "description": "Force un nouveau sondage des prix de référence du marché publiés par l'OFEN (saute le tick programmé de 6 heures). Importe automatiquement tout trimestre publié depuis le dernier sondage.",
+        "data": {
+          "confirm": "Oui, rafraîchir maintenant"
         }
       },
       "entities": {
@@ -124,10 +132,8 @@
     },
     "error": {
       "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
-      "invalid_quarter": "Format invalide. Attendu : AAAATN (ex. 2026Q1).",
       "invalid_valid_from": "Date ou trimestre invalide — attendu AAAA-MM-JJ (ex. 2024-08-15) ou AAAATN (ex. 2024Q3).",
-      "price_not_yet_published": "L'OFEN n'a pas encore publié ce trimestre. Réessayez environ 2 semaines après la fin du trimestre.",
-      "reimport_failed": "Échec inattendu du ré-import. Consultez Paramètres → Système → Journaux.",
+      "reimport_failed": "Échec inattendu de l'opération. Consultez Paramètres → Système → Journaux.",
       "cannot_delete_last_record": "Impossible de supprimer le seul enregistrement de l'historique — au moins un doit rester. Modifiez-le à la place."
     }
   },
@@ -161,20 +167,6 @@
       },
       "tariffs_last_remote_update": {
         "name": "Base de tarifs — dernière mise à jour distante"
-      }
-    },
-    "button": {
-      "reload_daten": {
-        "name": "Recharger les données"
-      },
-      "recompute_letztes_publiziertes_quartal": {
-        "name": "Recalculer le dernier trimestre publié"
-      },
-      "recompute_aktuelles_quartal_estimate": {
-        "name": "Recalculer le trimestre courant (estimation)"
-      },
-      "recompute_historie": {
-        "name": "Recalculer tout l'historique"
       }
     }
   }
