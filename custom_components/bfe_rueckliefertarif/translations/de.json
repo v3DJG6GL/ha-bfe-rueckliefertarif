@@ -7,20 +7,18 @@
       },
       "tariff": {
         "title": "Tarif konfigurieren ({utility_name})",
-        "description": "Trag deine Anlagedaten ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.",
+        "description": "Trag deine Anlagedaten ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}",
         "data": {
           "valid_from": "Aktiv seit",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
-          "hkn_aktiviert": "HKN an Versorger verkaufen?",
-          "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
+          "hkn_aktiviert": "HKN an Versorger verkaufen?"
         },
         "data_description": {
           "valid_from": "## Inbetriebnahme-Datum\nDatum, ab dem deine PV-Anlage am Netz ist (oder ab dem diese Konfiguration gilt). Verankert die Konfigurations-Historie — Quartale vor diesem Datum werden bei einer Neuberechnung still übersprungen, weil keine Tarif-Konfiguration sie abdeckt.\n\nStandardwert: heute. Setze das tatsächliche Inbetriebnahme-Datum für eine saubere Import-Historie.",
           "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |",
           "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** wenn ein Teil deiner PV-Produktion vor Ort verbraucht wird (typische Wohn- / Gewerbeanlage). **Nein** für Volleinspeisung (gesamte Produktion ins Netz).\n\nBeeinflusst das Mindestvergütungsband — bei 30–<150 kW ist der Unterschied erheblich (degressiv 180÷kW mit Eigenverbrauch vs. flat 6.20 Rp/kWh ohne).",
-          "hkn_aktiviert": "## HKN-Opt-in (Herkunftsnachweis)\n**Ja** wenn du *Herkunftsnachweise* an deinen Versorger verkaufst. Die meisten Versorger bieten das als Opt-in über das Kundenportal an.\n\nDer Satz ist vom Versorger fixiert und in der Tarif-Datenbank hinterlegt — keine Eingabe nötig. **Nein** wenn du keine HKN verkaufst oder die Anlage anderweitig zertifiziert hast (z. B. *naturemade star*) und HKN auf dem freien Markt verkaufst.",
-          "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus deines Versorgers. **Die meisten Schweizer Versorger rechnen quartalsweise ab.** Bei monatlicher Abrechnung verwendet die Integration die BFE-Monatspreise für M1/M2 und einen abgeleiteten Satz für M3, sodass die Quartalssumme exakt Q_kWh × Q_Quartalsrate entspricht."
+          "hkn_aktiviert": "## HKN-Opt-in (Herkunftsnachweis)\n**Ja** wenn du *Herkunftsnachweise* an deinen Versorger verkaufst. Die meisten Versorger bieten das als Opt-in über das Kundenportal an.\n\nDer Satz ist vom Versorger fixiert und in der Tarif-Datenbank hinterlegt — keine Eingabe nötig. **Nein** wenn du keine HKN verkaufst oder die Anlage anderweitig zertifiziert hast (z. B. *naturemade star*) und HKN auf dem freien Markt verkaufst."
         }
       },
       "entities": {
@@ -41,7 +39,9 @@
       }
     },
     "error": {
-      "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein."
+      "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein.",
+      "no_active_rate": "Der gewählte Versorger hat für dieses Datum kein aktives Tarif-Fenster.",
+      "settlement_period_unsupported": "Der gewählte Versorger nutzt stündliche Day-Ahead-Abrechnung (Vernehmlassung 2025/59), die noch nicht unterstützt wird."
     }
   },
   "options": {
@@ -63,46 +63,42 @@
       },
       "add_new_row": {
         "title": "Übergang hinzufügen",
-        "description": "Eine Konfigurationsänderung ab einem bestimmten Datum oder Quartal erfassen.",
+        "description": "Eine Konfigurationsänderung ab einem bestimmten Datum erfassen.\n\n{hkn_gate_note}",
         "data": {
-          "valid_from": "Aktiv ab (JJJJ-MM-TT oder JJJJQN)",
+          "valid_from": "Aktiv ab",
           "energieversorger": "Energieversorger",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in",
-          "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
+          "hkn_aktiviert": "HKN-Opt-in"
         }
       },
       "edit_row": {
         "title": "Übergang bearbeiten",
-        "description": "Aktualisiere oder lösche diesen Konfigurationsübergang. **Diesen Eintrag löschen** ankreuzen, um zu entfernen.",
+        "description": "Aktualisiere oder lösche diesen Konfigurationsübergang. **Diesen Eintrag löschen** ankreuzen, um zu entfernen.\n\n{hkn_gate_note}",
         "data": {
-          "valid_from": "Aktiv ab (JJJJ-MM-TT oder JJJJQN)",
+          "valid_from": "Aktiv ab",
           "energieversorger": "Energieversorger",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
           "hkn_aktiviert": "HKN-Opt-in",
-          "abrechnungs_rhythmus": "Abrechnungs-Rhythmus",
           "delete": "Diesen Eintrag löschen"
         }
       },
       "apply_change": {
         "title": "Konfigurationsänderung anwenden",
-        "description": "Eine Konfigurationsänderung ab einem Datum oder Quartal erfassen — deckt Versorgerwechsel, kW-Erweiterung, HKN-Opt-in/-out, Abrechnungs-Rhythmus ab. Felder sind aus deiner aktuellen Konfiguration vorausgefüllt; ändere, was sich geändert hat.\n\n**Aktuell aktiv:** {current_summary}",
+        "description": "Eine Konfigurationsänderung ab einem Datum erfassen — deckt Versorgerwechsel, kW-Erweiterung, HKN-Opt-in/-out ab. Felder sind aus deiner aktuellen Konfiguration vorausgefüllt; ändere, was sich geändert hat. Der Abrechnungs-Rhythmus wird aus dem publizierten Settlement-Period des gewählten Versorgers abgeleitet.\n\n**Aktuell aktiv:** {current_summary}\n\n{hkn_gate_note}",
         "data": {
-          "effective_date": "Gültig ab (JJJJ-MM-TT oder JJJJQN)",
+          "valid_from": "Gültig ab",
           "energieversorger": "Energieversorger",
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in",
-          "abrechnungs_rhythmus": "Abrechnungs-Rhythmus"
+          "hkn_aktiviert": "HKN-Opt-in"
         },
         "data_description": {
-          "effective_date": "## Wann die Änderung greift\nStandardmässig der Beginn des aktuellen Quartals. Bei Versorgerwechsel mitten im Quartal das tatsächliche Wechseldatum eintragen — der Recompute nutzt den neuen Versorger ab dem Quartal, das an oder nach diesem Datum beginnt.",
+          "valid_from": "## Wann die Änderung greift\nStandardmässig der Beginn des aktuellen Quartals. Bei Versorgerwechsel mitten im Quartal das tatsächliche Wechseldatum eintragen — der Recompute nutzt den neuen Versorger ab dem Quartal, das an oder nach diesem Datum beginnt.",
           "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung in kW. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
           "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** für typische Wohn-/Gewerbeanlagen; **Nein** für Volleinspeisung.",
-          "hkn_aktiviert": "## HKN-Opt-in\n**Ja** wenn du *Herkunftsnachweise* an den Versorger verkaufst. Satz wird vom Versorger gesetzt.",
-          "abrechnungs_rhythmus": "## Rechnungszyklus\nPassend zum Rechnungsrhythmus des Versorgers. Die meisten rechnen quartalsweise ab."
+          "hkn_aktiviert": "## HKN-Opt-in\n**Ja** wenn du *Herkunftsnachweise* an den Versorger verkaufst. Satz wird vom Versorger gesetzt."
         }
       },
       "recompute_history": {
@@ -138,19 +134,14 @@
     },
     "error": {
       "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein.",
-      "invalid_valid_from": "Ungültiges Datum oder Quartal — erwartet JJJJ-MM-TT (z. B. 2024-08-15) oder JJJJQN (z. B. 2024Q3).",
+      "invalid_valid_from": "Ungültiges Datum — erwartet JJJJ-MM-TT (z. B. 2024-08-15).",
       "reimport_failed": "Vorgang unerwartet fehlgeschlagen. Prüfe Einstellungen → System → Logs.",
-      "cannot_delete_last_record": "Der letzte Verlaufseintrag kann nicht gelöscht werden — mindestens einer muss bleiben. Stattdessen bearbeiten."
+      "cannot_delete_last_record": "Der letzte Verlaufseintrag kann nicht gelöscht werden — mindestens einer muss bleiben. Stattdessen bearbeiten.",
+      "no_active_rate": "Der gewählte Versorger hat für dieses Datum kein aktives Tarif-Fenster.",
+      "settlement_period_unsupported": "Der gewählte Versorger nutzt stündliche Day-Ahead-Abrechnung (Vernehmlassung 2025/59), die noch nicht unterstützt wird."
     }
   },
-  "selector": {
-    "abrechnungs_rhythmus": {
-      "options": {
-        "quartal": "Quartalsweise",
-        "monat": "Monatlich"
-      }
-    }
-  },
+  "selector": {},
   "entity": {
     "sensor": {
       "basisverguetung": {

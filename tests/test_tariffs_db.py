@@ -334,3 +334,101 @@ class TestResolveTariffAt:
                 "ekz", date(2025, 6, 1), kw=25.0,
                 eigenverbrauch=True, data=db,
             )
+
+
+def _synthetic_db(utility_key: str, rates: list[dict]) -> dict:
+    return {
+        "schema_version": "1.0.0",
+        "last_updated": "2026-01-01",
+        "federal_minimum": [
+            {
+                "valid_from": "2026-01-01",
+                "valid_to": None,
+                "rules": [
+                    {"kw_min": 0, "kw_max": 30, "self_consumption": None, "min_rp_kwh": 6.0},
+                    {"kw_min": 30, "kw_max": 150, "self_consumption": True,
+                     "formula": "180/kw",
+                     "min_rp_kwh_at_kw_min": 6.0, "min_rp_kwh_at_kw_max": 1.2},
+                    {"kw_min": 30, "kw_max": 150, "self_consumption": False, "min_rp_kwh": 6.2},
+                    {"kw_min": 150, "kw_max": None, "self_consumption": None, "min_rp_kwh": None},
+                ],
+            }
+        ],
+        "utilities": {utility_key: {"name_de": utility_key, "rates": rates}},
+    }
+
+
+class TestResolveSettlementPeriodStunde:
+    """#6b Phase 1 — refuse hourly Day-Ahead until Vernehmlassung 2025/59 lands."""
+
+    def test_resolve_raises_on_settlement_period_stunde(self):
+        db = _synthetic_db(
+            "futurix",
+            [
+                {
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "stunde",
+                    "power_tiers": [
+                        {"kw_min": 0, "kw_max": None, "base_model": "rmp_quartal",
+                         "hkn_rp_kwh": 2.0, "hkn_structure": "additive_optin"}
+                    ],
+                    "cap_mode": False, "cap_rules": None,
+                }
+            ],
+        )
+        with pytest.raises(NotImplementedError) as exc:
+            resolve_tariff_at(
+                "futurix", date(2026, 4, 1), kw=10.0,
+                eigenverbrauch=True, data=db,
+            )
+        msg = str(exc.value)
+        assert "stunde" in msg
+        assert "futurix" in msg
+
+
+class TestPerTierBaseModelVariation:
+    """#14 — endigo case: kW threshold drives base_model selection."""
+
+    @pytest.fixture
+    def endigo_db(self):
+        return _synthetic_db(
+            "endigo_2026",
+            [
+                {
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal",
+                    "power_tiers": [
+                        {"kw_min": 0, "kw_max": 150, "base_model": "fixed_flat",
+                         "fixed_rp_kwh": 9.5, "hkn_rp_kwh": 2.0,
+                         "hkn_structure": "additive_optin"},
+                        {"kw_min": 150, "kw_max": None, "base_model": "rmp_quartal",
+                         "hkn_rp_kwh": 2.0, "hkn_structure": "additive_optin"},
+                    ],
+                    "cap_mode": False, "cap_rules": None,
+                }
+            ],
+        )
+
+    def test_small_plant_uses_fixed_flat(self, endigo_db):
+        rt = resolve_tariff_at(
+            "endigo_2026", date(2026, 6, 1), kw=50.0,
+            eigenverbrauch=True, data=endigo_db,
+        )
+        assert rt.base_model == "fixed_flat"
+        assert rt.fixed_rp_kwh == 9.5
+
+    def test_large_plant_uses_rmp_quartal(self, endigo_db):
+        rt = resolve_tariff_at(
+            "endigo_2026", date(2026, 6, 1), kw=200.0,
+            eigenverbrauch=True, data=endigo_db,
+        )
+        assert rt.base_model == "rmp_quartal"
+        assert rt.fixed_rp_kwh is None
+
+    def test_threshold_belongs_to_upper_tier(self, endigo_db):
+        # 150 kW boundary → upper tier (kw_max exclusive on lower).
+        rt = resolve_tariff_at(
+            "endigo_2026", date(2026, 6, 1), kw=150.0,
+            eigenverbrauch=True, data=endigo_db,
+        )
+        assert rt.base_model == "rmp_quartal"

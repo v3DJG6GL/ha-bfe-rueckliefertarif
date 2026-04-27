@@ -45,7 +45,7 @@ from .const import (
     CONFIG_HISTORY_FIELDS,
     OPT_CONFIG_HISTORY,
 )
-from .tariffs_db import list_utility_keys, load_tariffs
+from .tariffs_db import find_active, list_utility_keys, load_tariffs
 
 
 async def _async_warm_cache(hass) -> None:
@@ -123,61 +123,112 @@ def _utility_display_name(key: str, db: dict | None = None) -> str:
     return u.get("name_de") or u.get("name_fr") or key
 
 
-def _tariff_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Build the v0.5 tariff-step schema with optional pre-filled defaults.
+def _tariff_schema(
+    defaults: dict[str, Any] | None = None,
+    *,
+    hkn_structure: str | None = None,
+) -> vol.Schema:
+    """Build the tariff-step schema with optional pre-filled defaults.
 
-    Only personal inputs: installed kW, Eigenverbrauch yes/no, HKN opt-in
-    yes/no, Abrechnungs-Rhythmus. All utility-published values come from
-    ``data/tariffs.json`` looked up by the utility chosen in step 1.
+    Personal inputs: installed kW, Eigenverbrauch yes/no, HKN opt-in
+    yes/no. Billing rhythm is no longer collected (#9 — derived from
+    utility's ``settlement_period``).
 
-    v0.9.2: also collects ``valid_from`` (the plant install date), which
-    becomes the first OPT_CONFIG_HISTORY record's valid_from anchor and
-    gates pre-install quarter import-skipping.
+    v0.9.8 #1 — ``hkn_structure`` (when known from the active utility)
+    gates the HKN opt-in toggle:
+    - ``additive_optin`` / ``None`` (legacy) → toggle rendered.
+    - ``bundled`` / ``none`` → toggle omitted; the form's
+      description_placeholders explain why and the save site forces a
+      math-correct value.
     """
     from datetime import date
 
     d = defaults or {}
-    return vol.Schema(
-        {
-            vol.Required(
-                CONF_VALID_FROM,
-                default=d.get(CONF_VALID_FROM, date.today().isoformat()),
-            ): selector.DateSelector(),
-            vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW,
-                default=d.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=10000,
-                    step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kW",
-                )
-            ),
-            vol.Required(
-                CONF_EIGENVERBRAUCH_AKTIVIERT,
-                default=d.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True),
-            ): selector.BooleanSelector(),
+    schema_dict: dict[Any, Any] = {
+        vol.Required(
+            CONF_VALID_FROM,
+            default=d.get(CONF_VALID_FROM, date.today().isoformat()),
+        ): selector.DateSelector(),
+        vol.Required(
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+            default=d.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0,
+                max=10000,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+                unit_of_measurement="kW",
+            )
+        ),
+        vol.Required(
+            CONF_EIGENVERBRAUCH_AKTIVIERT,
+            default=d.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True),
+        ): selector.BooleanSelector(),
+    }
+    if hkn_structure not in ("bundled", "none"):
+        schema_dict[
             vol.Required(
                 CONF_HKN_AKTIVIERT,
                 default=d.get(CONF_HKN_AKTIVIERT, False),
-            ): selector.BooleanSelector(),
-            vol.Required(
-                CONF_ABRECHNUNGS_RHYTHMUS,
-                default=d.get(CONF_ABRECHNUNGS_RHYTHMUS, ABRECHNUNGS_RHYTHMUS_QUARTAL),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                        ABRECHNUNGS_RHYTHMUS_MONAT,
-                    ],
-                    translation_key=CONF_ABRECHNUNGS_RHYTHMUS,
-                    mode=selector.SelectSelectorMode.LIST,
-                )
-            ),
-        }
-    )
+            )
+        ] = selector.BooleanSelector()
+    return vol.Schema(schema_dict)
+
+
+_HKN_GATE_NOTES: dict[str, dict[str, str]] = {
+    "bundled": {
+        "de": (
+            "**HKN:** Im Tarif des Versorgers bereits enthalten — kein "
+            "separates Opt-in nötig. Die Auswahl ist ausgeblendet, weil "
+            "Aktivieren den HKN doppelt zählen würde."
+        ),
+        "en": (
+            "**HKN:** Included in the utility's base rate — no separate "
+            "opt-in needed. The toggle is hidden because activating it "
+            "would double-count."
+        ),
+        "fr": (
+            "**GO :** Déjà incluse dans le tarif du fournisseur — aucun "
+            "opt-in séparé. Le bouton est masqué car l'activer ferait "
+            "compter la GO en double."
+        ),
+    },
+    "none": {
+        "de": (
+            "**HKN:** Dieser Versorger zahlt keine separate HKN-Vergütung. "
+            "Anlagenbetreiber, die ihre HKN vermarkten möchten, tun das "
+            "üblicherweise über Pronovo oder einen Dritten. Die Auswahl "
+            "ist ausgeblendet, weil die versorgereigene Option entfällt."
+        ),
+        "en": (
+            "**HKN:** This utility does not pay separately for HKN. "
+            "Operators wishing to monetise HKN typically market it via "
+            "Pronovo or a third party. The toggle is hidden because "
+            "the utility-side option does not apply."
+        ),
+        "fr": (
+            "**GO :** Ce fournisseur ne rémunère pas la GO séparément. "
+            "Les exploitants qui souhaitent monétiser leurs GO passent "
+            "généralement par Pronovo ou un tiers. Le bouton est masqué "
+            "car l'option côté fournisseur ne s'applique pas."
+        ),
+    },
+}
+
+
+def _hkn_gate_note(hkn_structure: str | None, hass=None) -> str:
+    """Localized note rendered when the HKN toggle is hidden because the
+    active utility's ``hkn_structure`` is ``"bundled"`` or ``"none"``.
+    Returns an empty string for ``additive_optin`` / ``None`` (legacy) so
+    the description placeholder stays unobtrusive when the toggle is shown.
+    """
+    if hkn_structure not in ("bundled", "none"):
+        return ""
+    lang = "en"
+    if hass is not None:
+        lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+    return _HKN_GATE_NOTES[hkn_structure].get(lang) or _HKN_GATE_NOTES[hkn_structure]["en"]
 
 
 def _validate_tariff(user_input: dict[str, Any]) -> dict[str, str]:
@@ -204,23 +255,95 @@ def _quarter_start_today() -> str:
 
 
 def _parse_valid_from(s: str) -> str:
-    """Accept YYYY-MM-DD or YYYYQN; return ISO date string. Raises ValueError."""
-    from datetime import date
+    """Validate ``s`` as an ISO YYYY-MM-DD date string and return the canonical
+    form. Raises ValueError on invalid input or empty string.
 
-    from .quarters import Quarter
+    All forms now use HA's DateSelector, which always emits ISO dates — the
+    quarter shorthand (YYYYQN) was dropped in v0.9.8 along with the raw
+    text inputs.
+    """
+    from datetime import date
 
     s = (s or "").strip()
     if not s:
         raise ValueError("empty valid_from")
-    # Quarter form first (it doesn't match a date regex).
-    try:
-        q = Quarter.parse(s)
-    except ValueError:
-        pass
-    else:
-        return date(q.year, q.start_month(), 1).isoformat()
-    # Fall back to ISO date.
     return date.fromisoformat(s).isoformat()
+
+
+def _active_hkn_structure(utility_key: str, valid_from_iso: str) -> str | None:
+    """Return the active rate window's first power-tier ``hkn_structure``,
+    or ``None`` on lookup failure / legacy data without the field.
+
+    v0.9.8 #1 — used to gate the ``hkn_aktiviert`` form toggle. The gate
+    is per *rate window* (settlement_period level) but ``hkn_structure``
+    lives on each ``power_tier``. We use the first tier as a safe heuristic:
+    the dominant case is a single tier, and bundled/none utilities today
+    have a uniform ``hkn_structure`` across tiers. If a future utility
+    splits hkn_structure across tiers, the resolver still produces the
+    correct math at compute-time; the UI gate would just be slightly
+    inaccurate for the user's specific kW band (they'd see the toggle
+    even though their tier is bundled, or vice versa).
+    """
+    try:
+        db = load_tariffs()
+        utility = db["utilities"].get(utility_key)
+        if utility is None:
+            return None
+        rate = find_active(utility["rates"], date.fromisoformat(valid_from_iso))
+        if rate is None or not rate.get("power_tiers"):
+            return None
+        return rate["power_tiers"][0].get("hkn_structure")
+    except (KeyError, ValueError, LookupError):
+        return None
+
+
+def _force_hkn_for_save(hkn_structure: str | None, user_hkn: bool) -> bool:
+    """Pick the persisted ``hkn_aktiviert`` value given the gate.
+
+    - ``additive_optin`` / ``None`` (legacy) → preserve the user's choice.
+    - ``bundled`` → force ``False``: HKN is already inside the utility's
+      fixed/base rate; persisting ``True`` would let the resolver double-add.
+    - ``none`` → force ``False``: utility doesn't pay HKN at all.
+
+    The form hides the toggle for bundled/none and renders an inline note,
+    so the user isn't surprised by the override.
+    """
+    if hkn_structure in ("bundled", "none"):
+        return False
+    return bool(user_hkn)
+
+
+def _derive_billing(utility_key: str, valid_from_iso: str) -> str:
+    """Return the user-side billing constant matching the utility's
+    ``settlement_period`` at ``valid_from_iso``.
+
+    v0.9.8 — the user no longer chooses billing rhythm; it's derived from
+    the utility's published settlement_period. Raises ``NotImplementedError``
+    if the active rate window declares ``"stunde"`` (Vernehmlassung 2025/59
+    hourly Day-Ahead, not yet implemented). Raises ``LookupError`` if no
+    active rate window exists for the date, ``KeyError`` for an unknown
+    utility.
+    """
+    db = load_tariffs()
+    utility = db["utilities"].get(utility_key)
+    if utility is None:
+        raise KeyError(f"unknown utility {utility_key!r}")
+    rate = find_active(utility["rates"], date.fromisoformat(valid_from_iso))
+    if rate is None:
+        raise LookupError(
+            f"no active rate for {utility_key!r} on {valid_from_iso}"
+        )
+    sp = rate["settlement_period"]
+    if sp == "quartal":
+        return ABRECHNUNGS_RHYTHMUS_QUARTAL
+    if sp == "monat":
+        return ABRECHNUNGS_RHYTHMUS_MONAT
+    if sp == "stunde":
+        raise NotImplementedError(
+            f"utility {utility_key!r} uses hourly Day-Ahead settlement "
+            f"(Vernehmlassung 2025/59); not yet supported."
+        )
+    raise ValueError(f"unknown settlement_period {sp!r}")
 
 
 def _make_sentinel_record(entry_data: dict) -> dict:
@@ -329,20 +452,43 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> "FlowResult":
         errors: dict[str, str] = {}
+        utility_key = self._data[CONF_ENERGIEVERSORGER]
 
         if user_input is not None:
             errors = _validate_tariff(user_input)
             if not errors:
-                self._data.update(user_input)
-                return await self.async_step_entities()
+                hkn_structure = _active_hkn_structure(
+                    utility_key, user_input[CONF_VALID_FROM]
+                )
+                user_input[CONF_HKN_AKTIVIERT] = _force_hkn_for_save(
+                    hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
+                )
+                try:
+                    user_input[CONF_ABRECHNUNGS_RHYTHMUS] = _derive_billing(
+                        utility_key, user_input[CONF_VALID_FROM]
+                    )
+                except NotImplementedError:
+                    errors["base"] = "settlement_period_unsupported"
+                except (KeyError, LookupError):
+                    errors["base"] = "no_active_rate"
+                else:
+                    self._data.update(user_input)
+                    return await self.async_step_entities()
 
         defaults = user_input if user_input is not None else self._data
+        # Gate the HKN toggle on the chosen utility's hkn_structure.
+        gate_valid_from = (
+            (user_input or defaults or {}).get(CONF_VALID_FROM)
+            or date.today().isoformat()
+        )
+        hkn_structure = _active_hkn_structure(utility_key, gate_valid_from)
         return self.async_show_form(
             step_id="tariff",
-            data_schema=_tariff_schema(defaults),
+            data_schema=_tariff_schema(defaults, hkn_structure=hkn_structure),
             errors=errors,
             description_placeholders={
-                "utility_name": _utility_display_name(self._data[CONF_ENERGIEVERSORGER]),
+                "utility_name": _utility_display_name(utility_key),
+                "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 **_source_links(self.hass),
             },
         )
@@ -424,10 +570,13 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     ) -> "FlowResult":
         """Wizard for applying any config change effective from a given date.
 
-        Single-step form covering utility / kW / EV / HKN / billing all at once.
-        Defaults inherited from the current open record. Effective date defaults
-        to today's quarter-start. Submit appends a new record to
-        ``OPT_CONFIG_HISTORY``; OptionsFlowWithReload reloads the entry.
+        Single-step form covering utility / kW / EV / HKN all at once.
+        Billing rhythm is no longer user-input as of v0.9.8 — it's derived
+        from the chosen utility's published ``settlement_period`` at the
+        ``valid_from`` date. Defaults inherited from the current open record.
+        Effective date defaults to today's quarter-start. Submit appends a
+        new record to ``OPT_CONFIG_HISTORY``; OptionsFlowWithReload reloads
+        the entry.
         """
         await _async_warm_cache(self.hass)
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
@@ -437,14 +586,28 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                effective_from = _parse_valid_from(user_input.get("effective_date", ""))
+                effective_from = _parse_valid_from(user_input.get("valid_from", ""))
             except ValueError:
-                errors["effective_date"] = "invalid_valid_from"
+                errors["valid_from"] = "invalid_valid_from"
 
             tariff_errs = _validate_tariff(user_input)
             errors.update(tariff_errs)
 
+            derived_billing: str | None = None
             if not errors:
+                try:
+                    derived_billing = _derive_billing(
+                        user_input[CONF_ENERGIEVERSORGER], effective_from
+                    )
+                except NotImplementedError:
+                    errors["base"] = "settlement_period_unsupported"
+                except (KeyError, LookupError):
+                    errors["base"] = "no_active_rate"
+
+            if not errors:
+                hkn_structure = _active_hkn_structure(
+                    user_input[CONF_ENERGIEVERSORGER], effective_from
+                )
                 new_config = {
                     CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     CONF_INSTALLIERTE_LEISTUNG_KW: float(
@@ -453,8 +616,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     CONF_EIGENVERBRAUCH_AKTIVIERT: bool(
                         user_input[CONF_EIGENVERBRAUCH_AKTIVIERT]
                     ),
-                    CONF_HKN_AKTIVIERT: bool(user_input[CONF_HKN_AKTIVIERT]),
-                    CONF_ABRECHNUNGS_RHYTHMUS: user_input[CONF_ABRECHNUNGS_RHYTHMUS],
+                    CONF_HKN_AKTIVIERT: _force_hkn_for_save(
+                        hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
+                    ),
+                    CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
                 }
                 # No-op detection — if effective_from matches the open record's
                 # valid_from AND the config is identical, skip the write.
@@ -489,71 +654,65 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             if user_input is not None
             else (open_cfg or {k: self.config_entry.data.get(k) for k in CONFIG_HISTORY_FIELDS})
         )
-        default_effective_date = (
-            user_input.get("effective_date", _quarter_start_today())
+        default_valid_from = (
+            user_input.get("valid_from", _quarter_start_today())
             if user_input is not None
             else _quarter_start_today()
         )
 
         utility_keys = list_utility_keys()
-        schema = vol.Schema(
-            {
-                vol.Required("effective_date", default=default_effective_date): str,
-                vol.Required(
-                    CONF_ENERGIEVERSORGER,
-                    default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            selector.SelectOptionDict(
-                                value=k, label=_utility_display_name(k)
-                            )
-                            for k in utility_keys
-                        ],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
-                    CONF_INSTALLIERTE_LEISTUNG_KW,
-                    default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0, max=10000, step=0.1,
-                        mode=selector.NumberSelectorMode.BOX,
-                        unit_of_measurement="kW",
-                    )
-                ),
-                vol.Required(
-                    CONF_EIGENVERBRAUCH_AKTIVIERT,
-                    default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
-                ): selector.BooleanSelector(),
+        gate_utility = defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0]
+        gate_valid_from = default_valid_from or _quarter_start_today()
+        hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
+
+        schema_dict: dict[Any, Any] = {
+            vol.Required(
+                "valid_from", default=default_valid_from
+            ): selector.DateSelector(),
+            vol.Required(
+                CONF_ENERGIEVERSORGER,
+                default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(
+                            value=k, label=_utility_display_name(k)
+                        )
+                        for k in utility_keys
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_INSTALLIERTE_LEISTUNG_KW,
+                default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=10000, step=0.1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kW",
+                )
+            ),
+            vol.Required(
+                CONF_EIGENVERBRAUCH_AKTIVIERT,
+                default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
+            ): selector.BooleanSelector(),
+        }
+        if hkn_structure not in ("bundled", "none"):
+            schema_dict[
                 vol.Required(
                     CONF_HKN_AKTIVIERT,
                     default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
-                ): selector.BooleanSelector(),
-                vol.Required(
-                    CONF_ABRECHNUNGS_RHYTHMUS,
-                    default=defaults_cfg.get(
-                        CONF_ABRECHNUNGS_RHYTHMUS, ABRECHNUNGS_RHYTHMUS_QUARTAL
-                    ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                            ABRECHNUNGS_RHYTHMUS_MONAT,
-                        ],
-                        translation_key=CONF_ABRECHNUNGS_RHYTHMUS,
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                ),
-            }
-        )
+                )
+            ] = selector.BooleanSelector()
+        schema = vol.Schema(schema_dict)
         return self.async_show_form(
             step_id="apply_change",
             data_schema=schema,
             errors=errors,
             description_placeholders={
                 "current_summary": _format_config_summary(open_cfg) if open_cfg else "—",
+                "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 **_source_links(self.hass),
             },
         )
@@ -668,7 +827,21 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["valid_from"] = "invalid_valid_from"
 
+            derived_billing: str | None = None
             if not errors:
+                try:
+                    derived_billing = _derive_billing(
+                        user_input[CONF_ENERGIEVERSORGER], valid_from
+                    )
+                except NotImplementedError:
+                    errors["base"] = "settlement_period_unsupported"
+                except (KeyError, LookupError):
+                    errors["base"] = "no_active_rate"
+
+            if not errors:
+                hkn_structure = _active_hkn_structure(
+                    user_input[CONF_ENERGIEVERSORGER], valid_from
+                )
                 new_config = {
                     CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     CONF_INSTALLIERTE_LEISTUNG_KW: float(
@@ -677,8 +850,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     CONF_EIGENVERBRAUCH_AKTIVIERT: bool(
                         user_input[CONF_EIGENVERBRAUCH_AKTIVIERT]
                     ),
-                    CONF_HKN_AKTIVIERT: bool(user_input[CONF_HKN_AKTIVIERT]),
-                    CONF_ABRECHNUNGS_RHYTHMUS: user_input[CONF_ABRECHNUNGS_RHYTHMUS],
+                    CONF_HKN_AKTIVIERT: _force_hkn_for_save(
+                        hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
+                    ),
+                    CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
                 }
                 # Replace at idx (edit) or append (add). The normalize step
                 # de-duplicates by valid_from, so editing an existing row's
@@ -732,10 +907,14 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             default_valid_from = _quarter_start_today()
 
         utility_keys = list_utility_keys()
+        gate_utility = defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0]
+        gate_valid_from = default_valid_from or _quarter_start_today()
+        hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
+
         schema_dict: dict[Any, Any] = {
             vol.Required(
                 "valid_from", default=default_valid_from
-            ): str,
+            ): selector.DateSelector(),
             vol.Required(
                 CONF_ENERGIEVERSORGER,
                 default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
@@ -764,24 +943,14 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 CONF_EIGENVERBRAUCH_AKTIVIERT,
                 default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
             ): selector.BooleanSelector(),
-            vol.Required(
-                CONF_HKN_AKTIVIERT,
-                default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
-            ): selector.BooleanSelector(),
-            vol.Required(
-                CONF_ABRECHNUNGS_RHYTHMUS,
-                default=defaults_cfg.get(CONF_ABRECHNUNGS_RHYTHMUS, ABRECHNUNGS_RHYTHMUS_QUARTAL),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                        ABRECHNUNGS_RHYTHMUS_MONAT,
-                    ],
-                    translation_key=CONF_ABRECHNUNGS_RHYTHMUS,
-                    mode=selector.SelectSelectorMode.LIST,
-                )
-            ),
         }
+        if hkn_structure not in ("bundled", "none"):
+            schema_dict[
+                vol.Required(
+                    CONF_HKN_AKTIVIERT,
+                    default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
+                )
+            ] = selector.BooleanSelector()
         if is_edit:
             schema_dict[vol.Optional("delete", default=False)] = selector.BooleanSelector()
 
@@ -792,6 +961,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             step_id=step_id,
             data_schema=vol.Schema(schema_dict),
             errors=errors,
+            description_placeholders={
+                "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
+            },
         )
 
     # ----- Sub-step: recompute full history ----------------------------------

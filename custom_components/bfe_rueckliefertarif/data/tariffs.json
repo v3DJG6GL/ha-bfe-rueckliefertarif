@@ -43,7 +43,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "quarterly",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -79,7 +78,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": true,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -110,7 +108,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -141,7 +138,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -177,7 +173,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -213,7 +208,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -244,7 +238,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -275,7 +268,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -307,7 +299,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -339,7 +330,6 @@
               "hkn_structure": "bundled"
             }
           ],
-          "hkn_switch_cadence": "contract",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -371,7 +361,6 @@
               "hkn_structure": "additive_optin"
             }
           ],
-          "hkn_switch_cadence": "annual",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -403,7 +392,6 @@
               "hkn_structure": "bundled"
             }
           ],
-          "hkn_switch_cadence": "contract",
           "requires_naturemade_star": true,
           "price_floor_rp_kwh": null,
           "bonuses": [],
@@ -434,7 +422,6 @@
               "hkn_structure": "none"
             }
           ],
-          "hkn_switch_cadence": "contract",
           "requires_naturemade_star": false,
           "price_floor_rp_kwh": null,
           "bonuses": [],

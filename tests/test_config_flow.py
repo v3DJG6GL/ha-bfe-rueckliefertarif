@@ -129,13 +129,24 @@ class TestStringsAndTranslations:
             CONF_INSTALLIERTE_LEISTUNG_KW,
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_HKN_AKTIVIERT,
-            CONF_ABRECHNUNGS_RHYTHMUS,
         ],
     )
     def test_tariff_field_label_and_help(self, en_strings, de_translations, field):
         for d in (en_strings, de_translations):
             assert field in d["config"]["step"]["tariff"]["data"]
             assert field in d["config"]["step"]["tariff"]["data_description"]
+
+    def test_abrechnungs_rhythmus_form_field_dropped(
+        self, en_strings, de_translations
+    ):
+        """v0.9.8 — billing toggle is gone from every form (#9). Translations
+        must not still ship the field labels or selector options."""
+        for d in (en_strings, de_translations):
+            for step in ("tariff",):
+                assert CONF_ABRECHNUNGS_RHYTHMUS not in d["config"]["step"][step]["data"]
+            for step in ("apply_change", "add_new_row", "edit_row"):
+                assert CONF_ABRECHNUNGS_RHYTHMUS not in d["options"]["step"][step]["data"]
+            assert CONF_ABRECHNUNGS_RHYTHMUS not in d.get("selector", {})
 
     @pytest.mark.parametrize(
         "field",
@@ -156,13 +167,14 @@ class TestStringsAndTranslations:
         # nothing should still be referencing the deleted dropdown.
         assert "anlagenkategorie" not in en_strings.get("selector", {})
 
-    def test_selector_options_abrechnungs_rhythmus(
+    def test_selector_options_block_is_empty(
         self, en_strings, de_translations
     ):
+        # v0.9.8: abrechnungs_rhythmus selector dropped (#9). The "selector"
+        # block is currently empty until the next batch reintroduces a
+        # selector-based field.
         for d in (en_strings, de_translations):
-            opts = d["selector"]["abrechnungs_rhythmus"]["options"]
-            assert ABRECHNUNGS_RHYTHMUS_QUARTAL in opts
-            assert ABRECHNUNGS_RHYTHMUS_MONAT in opts
+            assert d.get("selector", {}) == {}
 
     @pytest.mark.parametrize(
         "key",

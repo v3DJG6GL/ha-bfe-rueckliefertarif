@@ -368,7 +368,7 @@ class TestApplyChangeWizard:
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
         result = await flow.async_step_apply_change(
             {
-                "effective_date": "2026-04-01",
+                "valid_from": "2026-04-01",
                 CONF_ENERGIEVERSORGER: "ekz",
                 CONF_INSTALLIERTE_LEISTUNG_KW: 12.5,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
@@ -391,7 +391,7 @@ class TestApplyChangeWizard:
         assert history[1]["config"][CONF_HKN_AKTIVIERT] is True
 
     @pytest.mark.asyncio
-    async def test_invalid_effective_date_re_renders_form(self):
+    async def test_invalid_valid_from_re_renders_form(self):
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
@@ -399,7 +399,7 @@ class TestApplyChangeWizard:
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
         result = await flow.async_step_apply_change(
             {
-                "effective_date": "garbage",
+                "valid_from": "garbage",
                 CONF_ENERGIEVERSORGER: "ekz",
                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
@@ -409,7 +409,7 @@ class TestApplyChangeWizard:
         )
         # Form re-renders with the error.
         assert result["type"].name in ("FORM", "form")
-        assert result["errors"] == {"effective_date": "invalid_valid_from"}
+        assert result["errors"] == {"valid_from": "invalid_valid_from"}
 
     @pytest.mark.asyncio
     async def test_kw_zero_re_renders_form(self):
@@ -420,7 +420,7 @@ class TestApplyChangeWizard:
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
         result = await flow.async_step_apply_change(
             {
-                "effective_date": "2026-04-01",
+                "valid_from": "2026-04-01",
                 CONF_ENERGIEVERSORGER: "ekz",
                 CONF_INSTALLIERTE_LEISTUNG_KW: 0.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
@@ -442,7 +442,7 @@ class TestApplyChangeWizard:
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
         result = await flow.async_step_apply_change(
             {
-                "effective_date": "2026-01-01",
+                "valid_from": "2026-01-01",
                 CONF_ENERGIEVERSORGER: "ekz",
                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,

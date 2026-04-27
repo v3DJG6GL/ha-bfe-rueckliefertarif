@@ -441,6 +441,38 @@ class TestFormatRecomputeNotification:
         _, body = _format_recompute_notification(report)
         assert "**Federal floor (Mindestvergütung):** ≥150 kW (none)" in body
 
+    def test_utility_floor_dominates_renders_utility_line(self):
+        # #2: utility_floor 8.0 > federal 6.0 → render Utility floor line,
+        # cite federal value for context.
+        rows = [_row("2026-01", 10.0, 100.0, 10.0)]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1,
+            config=_config_dict(
+                floor_label="<30 kW", floor_rp_kwh=6.00,
+                utility_floor_rp_kwh=8.00, floor_source="utility",
+            ),
+        )
+        _, body = _format_recompute_notification(report)
+        assert "**Utility floor:** 8.00 Rp/kWh" in body
+        assert "federal 6.00 Rp/kWh" in body
+        # The federal-floor line is suppressed when the utility line is shown.
+        assert "**Federal floor (Mindestvergütung):**" not in body
+
+    def test_federal_floor_dominates_renders_federal_line_only(self):
+        # #2: federal 6.0 ≥ utility 4.0 → existing federal-floor line, no
+        # utility line.
+        rows = [_row("2026-01", 10.0, 100.0, 10.0)]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1,
+            config=_config_dict(
+                floor_label="<30 kW", floor_rp_kwh=6.00,
+                utility_floor_rp_kwh=4.00, floor_source="federal",
+            ),
+        )
+        _, body = _format_recompute_notification(report)
+        assert "**Federal floor (Mindestvergütung):** <30 kW (6.00 Rp/kWh)" in body
+        assert "**Utility floor:**" not in body
+
     def test_missing_rate_renders_dash(self):
         rows = [_row("2026-02", None, None, None)]
         report = _RecomputeReport(

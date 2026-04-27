@@ -122,12 +122,6 @@
           "items": { "$ref": "#/$defs/power_tier" }
         },
 
-        "hkn_switch_cadence": {
-          "oneOf": [
-            { "type": "string", "enum": ["quarterly", "annual", "contract"] },
-            { "type": "null" }
-          ]
-        },
         "requires_naturemade_star": { "type": "boolean" },
         "price_floor_rp_kwh": {
           "oneOf": [{ "type": "number" }, { "type": "null" }]
@@ -183,7 +177,6 @@
         "fixed_rp_kwh":           { "type": "number" },
         "fixed_ht_rp_kwh":        { "type": "number" },
         "fixed_nt_rp_kwh":        { "type": "number" },
-        "fixed_annualized_rp_kwh":{ "type": "number" },
         "ht_window": {
           "type": "object",
           "additionalProperties": true,

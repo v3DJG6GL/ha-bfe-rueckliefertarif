@@ -4,7 +4,7 @@ Covers:
 - ``_resolve_config_at`` picks the correct full-config dict per ``at_date``,
   honoring half-open ``[valid_from, valid_to)`` semantics.
 - ``_normalize_history`` sorts by valid_from and chains valid_to.
-- ``_parse_valid_from`` accepts both ISO-date and YYYYQN inputs.
+- ``_parse_valid_from`` accepts ISO-date inputs (YYYY-MM-DD).
 
 Note (v0.9.0): ``_apply_config_change`` and ``_sync_entry_data_from_history``
 are removed — the wizard inlines history mutation and entry.data no longer
@@ -207,19 +207,110 @@ class TestParseValidFrom:
     def test_iso_date(self):
         assert _parse_valid_from("2024-08-15") == "2024-08-15"
 
-    def test_quarter(self):
-        assert _parse_valid_from("2024Q3") == "2024-07-01"
-        assert _parse_valid_from("2026Q1") == "2026-01-01"
-        assert _parse_valid_from("2025Q4") == "2025-10-01"
-
     def test_rejects_garbage(self):
         import pytest
         with pytest.raises(ValueError):
             _parse_valid_from("foobar")
         with pytest.raises(ValueError):
             _parse_valid_from("")
+        # v0.9.8: quarter shorthand (YYYYQN) no longer accepted; DateSelector
+        # always emits ISO. The parser should reject quarter strings now.
         with pytest.raises(ValueError):
-            _parse_valid_from("2024Q5")  # invalid quarter number
+            _parse_valid_from("2024Q3")
+
+
+class TestDeriveBilling:
+    """v0.9.8 #9 — billing rhythm comes from utility's settlement_period."""
+
+    def test_quartal_utility_yields_quartal(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
+        from custom_components.bfe_rueckliefertarif.const import (
+            ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        )
+
+        # All bundled utilities use settlement_period="quartal" today.
+        assert _derive_billing("ekz", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
+        assert _derive_billing("aew_fixpreis", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
+
+    def test_unknown_utility_raises(self):
+        import pytest
+
+        from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
+
+        with pytest.raises(KeyError):
+            _derive_billing("does_not_exist", "2026-04-01")
+
+    def test_no_active_rate_raises(self):
+        import pytest
+
+        from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
+
+        # Bundled rates start 2026-01-01.
+        with pytest.raises(LookupError):
+            _derive_billing("ekz", "2025-06-01")
+
+
+class TestHknGate:
+    """v0.9.8 #1 — gate ``hkn_aktiviert`` toggle on the utility's
+    ``hkn_structure``."""
+
+    def test_active_hkn_structure_resolves_for_known_utility(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _active_hkn_structure,
+        )
+
+        # ekz has hkn_structure="additive_optin" in bundled data.
+        assert _active_hkn_structure("ekz", "2026-04-01") == "additive_optin"
+        # aew_fixpreis has hkn_structure="bundled".
+        assert _active_hkn_structure("aew_fixpreis", "2026-04-01") == "bundled"
+        # aew_rmp has hkn_structure="none".
+        assert _active_hkn_structure("aew_rmp", "2026-04-01") == "none"
+
+    def test_active_hkn_structure_returns_none_on_lookup_failure(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _active_hkn_structure,
+        )
+
+        # Unknown utility → None (graceful degradation; UI shows toggle).
+        assert _active_hkn_structure("does_not_exist", "2026-04-01") is None
+        # Date before any rate window → None.
+        assert _active_hkn_structure("ekz", "2020-01-01") is None
+        # Garbage date → None (caught by ValueError).
+        assert _active_hkn_structure("ekz", "garbage") is None
+
+    def test_force_hkn_for_save_additive_optin_preserves_choice(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _force_hkn_for_save,
+        )
+
+        assert _force_hkn_for_save("additive_optin", True) is True
+        assert _force_hkn_for_save("additive_optin", False) is False
+
+    def test_force_hkn_for_save_bundled_forces_false(self):
+        # Math-correct: HKN already in base rate, don't double-add.
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _force_hkn_for_save,
+        )
+
+        assert _force_hkn_for_save("bundled", True) is False
+        assert _force_hkn_for_save("bundled", False) is False
+
+    def test_force_hkn_for_save_none_forces_false(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _force_hkn_for_save,
+        )
+
+        assert _force_hkn_for_save("none", True) is False
+        assert _force_hkn_for_save("none", False) is False
+
+    def test_force_hkn_for_save_null_preserves_choice(self):
+        # Legacy / missing field → preserve user choice (don't force).
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _force_hkn_for_save,
+        )
+
+        assert _force_hkn_for_save(None, True) is True
+        assert _force_hkn_for_save(None, False) is False
 
 
 class TestFormatConfigSummary:

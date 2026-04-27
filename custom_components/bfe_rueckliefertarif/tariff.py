@@ -78,6 +78,11 @@ def effective_rp_kwh_breakdown(
     Same math as ``effective_rp_kwh`` but exposes the components so callers
     can show the user where the total came from. Invariant:
     ``rate == base_after_floor + applied_hkn``.
+
+    ``federal_floor_rp_kwh`` is the *effective* floor that the caller has
+    already resolved — typically ``max(federal_floor, utility_floor)``.
+    The name is historical; this function does not distinguish the
+    floor's source.
     """
     floor = federal_floor_rp_kwh or 0.0
     base = max(base_input_rp_kwh, floor)

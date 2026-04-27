@@ -252,6 +252,14 @@ def resolve_tariff_at(
             f"no active rate for {utility_key!r} on {at_date.isoformat()}"
         )
 
+    if rate["settlement_period"] == "stunde":
+        raise NotImplementedError(
+            f"settlement_period='stunde' not yet supported "
+            f"(utility={utility_key!r}, rate window {rate['valid_from']} → "
+            f"{rate.get('valid_to') or 'open'}); hourly Day-Ahead settlement "
+            f"per Vernehmlassung 2025/59 is deferred to a future release."
+        )
+
     tier = find_tier(rate["power_tiers"], kw)
     if tier is None:
         raise LookupError(

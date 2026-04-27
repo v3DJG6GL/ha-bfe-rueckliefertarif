@@ -7,20 +7,18 @@
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",
-        "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.",
+        "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}",
         "data": {
           "valid_from": "Actif depuis",
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation activée",
-          "hkn_aktiviert": "Vendre les GO au fournisseur ?",
-          "abrechnungs_rhythmus": "Fréquence de facturation"
+          "hkn_aktiviert": "Vendre les GO au fournisseur ?"
         },
         "data_description": {
           "valid_from": "## Date de mise en service\nDate à laquelle votre installation PV a été connectée au réseau (ou date de début de cette configuration). Sert d'ancre à l'historique de configuration — les trimestres antérieurs à cette date sont silencieusement ignorés lors du recalcul, car aucune configuration tarifaire ne les couvre.\n\nValeur par défaut : aujourd'hui. Indiquez la date réelle de mise en service pour un historique d'import propre.",
           "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026).",
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place. **Non** pour une installation en injection totale (Volleinspeisung).",
-          "hkn_aktiviert": "## Opt-in GO (Garantie d'Origine)\n**Oui** si vous vendez vos *garanties d'origine* à votre fournisseur. Le taux est fixé par le fournisseur et n'est pas modifiable ici.",
-          "abrechnungs_rhythmus": "## Cycle de facturation\nLa plupart des fournisseurs suisses facturent trimestriellement."
+          "hkn_aktiviert": "## Opt-in GO (Garantie d'Origine)\n**Oui** si vous vendez vos *garanties d'origine* à votre fournisseur. Le taux est fixé par le fournisseur et n'est pas modifiable ici."
         }
       },
       "entities": {
@@ -41,7 +39,9 @@
       }
     },
     "error": {
-      "kw_required": "La puissance installée (kW) doit être supérieure à 0."
+      "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
+      "no_active_rate": "Le fournisseur sélectionné n'a pas de fenêtre tarifaire active pour cette date.",
+      "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge."
     }
   },
   "options": {
@@ -63,46 +63,42 @@
       },
       "add_new_row": {
         "title": "Ajouter une transition",
-        "description": "Enregistrer un changement de configuration à partir d'une date ou d'un trimestre.",
+        "description": "Enregistrer un changement de configuration à partir d'une date.\n\n{hkn_gate_note}",
         "data": {
-          "valid_from": "Actif depuis (AAAA-MM-JJ ou AAAATN)",
+          "valid_from": "Actif depuis",
           "energieversorger": "Fournisseur",
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO",
-          "abrechnungs_rhythmus": "Fréquence de facturation"
+          "hkn_aktiviert": "Opt-in GO"
         }
       },
       "edit_row": {
         "title": "Modifier la transition",
-        "description": "Mettre à jour ou supprimer cette transition. Cochez **Supprimer cet enregistrement** pour le retirer.",
+        "description": "Mettre à jour ou supprimer cette transition. Cochez **Supprimer cet enregistrement** pour le retirer.\n\n{hkn_gate_note}",
         "data": {
-          "valid_from": "Actif depuis (AAAA-MM-JJ ou AAAATN)",
+          "valid_from": "Actif depuis",
           "energieversorger": "Fournisseur",
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
           "hkn_aktiviert": "Opt-in GO",
-          "abrechnungs_rhythmus": "Fréquence de facturation",
           "delete": "Supprimer cet enregistrement"
         }
       },
       "apply_change": {
         "title": "Appliquer un changement de configuration",
-        "description": "Enregistre un changement de configuration à partir d'une date ou d'un trimestre — couvre changement de fournisseur, extension kW, opt-in/out GO, fréquence de facturation. Tous les champs sont pré-remplis depuis votre configuration actuelle ; modifiez ce qui a changé.\n\n**Actuellement actif :** {current_summary}",
+        "description": "Enregistre un changement de configuration à partir d'une date — couvre changement de fournisseur, extension kW, opt-in/out GO. Tous les champs sont pré-remplis depuis votre configuration actuelle ; modifiez ce qui a changé. La fréquence de facturation est dérivée de la période de règlement publiée par le fournisseur choisi.\n\n**Actuellement actif :** {current_summary}\n\n{hkn_gate_note}",
         "data": {
-          "effective_date": "Effectif depuis (AAAA-MM-JJ ou AAAATN)",
+          "valid_from": "Effectif depuis",
           "energieversorger": "Fournisseur",
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO",
-          "abrechnungs_rhythmus": "Fréquence de facturation"
+          "hkn_aktiviert": "Opt-in GO"
         },
         "data_description": {
-          "effective_date": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
+          "valid_from": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
           "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale fédérale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place.",
-          "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur.",
-          "abrechnungs_rhythmus": "## Cycle de facturation\nLa plupart des fournisseurs suisses facturent trimestriellement."
+          "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur."
         }
       },
       "recompute_history": {
@@ -138,19 +134,14 @@
     },
     "error": {
       "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
-      "invalid_valid_from": "Date ou trimestre invalide — attendu AAAA-MM-JJ (ex. 2024-08-15) ou AAAATN (ex. 2024Q3).",
+      "invalid_valid_from": "Date invalide — attendu AAAA-MM-JJ (ex. 2024-08-15).",
       "reimport_failed": "Échec inattendu de l'opération. Consultez Paramètres → Système → Journaux.",
-      "cannot_delete_last_record": "Impossible de supprimer le seul enregistrement de l'historique — au moins un doit rester. Modifiez-le à la place."
+      "cannot_delete_last_record": "Impossible de supprimer le seul enregistrement de l'historique — au moins un doit rester. Modifiez-le à la place.",
+      "no_active_rate": "Le fournisseur sélectionné n'a pas de fenêtre tarifaire active pour cette date.",
+      "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge."
     }
   },
-  "selector": {
-    "abrechnungs_rhythmus": {
-      "options": {
-        "quartal": "Trimestrielle",
-        "monat": "Mensuelle"
-      }
-    }
-  },
+  "selector": {},
   "entity": {
     "sensor": {
       "basisverguetung": {

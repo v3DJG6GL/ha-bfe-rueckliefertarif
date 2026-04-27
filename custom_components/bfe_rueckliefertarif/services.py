@@ -313,6 +313,16 @@ def _aggregate_by_period(
     return out
 
 
+def _floor_source(rt) -> str:
+    """``"utility"`` if utility floor binds higher than federal, else
+    ``"federal"`` (or ``"federal"`` when both are absent — federal is the
+    default narrative even when the value is None).
+    """
+    fed = rt.federal_floor_rp_kwh or 0.0
+    utl = rt.price_floor_rp_kwh or 0.0
+    return "utility" if utl > fed else "federal"
+
+
 def _record_snapshot(
     hass: "HomeAssistant",
     q: Quarter,
@@ -378,6 +388,8 @@ def _record_snapshot(
         "billing": billing,
         "floor_label": rt.federal_floor_label,
         "floor_rp_kwh": rt.federal_floor_rp_kwh,
+        "utility_floor_rp_kwh": rt.price_floor_rp_kwh,
+        "floor_source": _floor_source(rt),
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
     }
@@ -652,6 +664,8 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         "billing": billing,
         "floor_label": rt.federal_floor_label,
         "floor_rp_kwh": rt.federal_floor_rp_kwh,
+        "utility_floor_rp_kwh": rt.price_floor_rp_kwh,
+        "floor_source": _floor_source(rt),
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
         "is_current_estimate": True,
@@ -838,6 +852,8 @@ class _RecomputeReportRow:
     cap_rp_kwh_at_period: float | None = None
     floor_label_at_period: str | None = None
     floor_rp_kwh_at_period: float | None = None
+    utility_floor_rp_kwh_at_period: float | None = None
+    floor_source_at_period: str | None = None
     tariffs_version_at_period: str | None = None
     tariffs_source_at_period: str | None = None
     # v0.9.0: marks rows from the running-quarter estimate (BFE not yet
@@ -894,6 +910,8 @@ def _build_recompute_report(
         "billing": cfg.get(CONF_ABRECHNUNGS_RHYTHMUS),
         "floor_label": rt.federal_floor_label,
         "floor_rp_kwh": rt.federal_floor_rp_kwh,
+        "utility_floor_rp_kwh": rt.price_floor_rp_kwh,
+        "floor_source": _floor_source(rt),
         "cap_mode": rt.cap_mode,
         "cap_rp_kwh": rt.cap_rp_kwh,
         "tariffs_version": rt.tariffs_json_version,
@@ -924,6 +942,8 @@ def _build_recompute_report(
                 "cap_rp_kwh_at_period": snap.get("cap_rp_kwh"),
                 "floor_label_at_period": snap.get("floor_label"),
                 "floor_rp_kwh_at_period": snap.get("floor_rp_kwh"),
+                "utility_floor_rp_kwh_at_period": snap.get("utility_floor_rp_kwh"),
+                "floor_source_at_period": snap.get("floor_source"),
                 "tariffs_version_at_period": snap.get("tariffs_json_version"),
                 "tariffs_source_at_period": snap.get("tariffs_json_source"),
                 "is_current_estimate": bool(snap.get("is_current_estimate", False)),
@@ -1047,10 +1067,18 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     billing = c.get("billing")
     lines.append(f"- **Billing period:** {billing or '—'}")
 
+    floor_source = c.get("floor_source")
     floor_label = c.get("floor_label")
-    if floor_label:
-        floor_v = c.get("floor_rp_kwh")
-        suffix = f" ({floor_v:.2f} Rp/kWh)" if floor_v is not None else " (none)"
+    fed_floor = c.get("floor_rp_kwh")
+    utl_floor = c.get("utility_floor_rp_kwh")
+    if floor_source == "utility":
+        fed_str = f"federal {fed_floor:.2f} Rp/kWh" if fed_floor is not None else "no federal floor"
+        lines.append(
+            f"- **Utility floor:** {utl_floor:.2f} Rp/kWh "
+            f"(dominant over {fed_str})"
+        )
+    elif floor_label:
+        suffix = f" ({fed_floor:.2f} Rp/kWh)" if fed_floor is not None else " (none)"
         lines.append(
             f"- **Federal floor (Mindestvergütung):** {floor_label}{suffix}"
         )
@@ -1177,6 +1205,8 @@ def _render_group_heading(
         "billing": billing,
         "floor_label": sample_row.floor_label_at_period,
         "floor_rp_kwh": sample_row.floor_rp_kwh_at_period,
+        "utility_floor_rp_kwh": sample_row.utility_floor_rp_kwh_at_period,
+        "floor_source": sample_row.floor_source_at_period,
         "cap_mode": sample_row.cap_mode_at_period,
         "cap_rp_kwh": sample_row.cap_rp_kwh_at_period,
         "tariffs_version": sample_row.tariffs_version_at_period,

@@ -52,6 +52,7 @@ def _make_resolved(
     cap_mode: bool = False,
     cap_rp_kwh: float | None = None,
     federal_floor_rp_kwh: float | None = 6.00,
+    price_floor_rp_kwh: float | None = None,
 ) -> ResolvedTariff:
     """Build a ResolvedTariff for tests without going through tariffs.json."""
     return ResolvedTariff(
@@ -69,7 +70,7 @@ def _make_resolved(
         federal_floor_rp_kwh=federal_floor_rp_kwh,
         federal_floor_label="<30 kW",
         requires_naturemade_star=False,
-        price_floor_rp_kwh=None,
+        price_floor_rp_kwh=price_floor_rp_kwh,
         tariffs_json_version="1.0.0",
         tariffs_json_source="bundled",
         ht_window=ht_window,
@@ -666,3 +667,69 @@ class TestHourCoverage:
             if i > 0:
                 assert r.start - plan.records[i - 1].start == timedelta(hours=1)
         assert plan.records[0].start == datetime(2025, 12, 31, 23, 0, tzinfo=UTC)
+
+
+class TestEffectiveFloorMaxOfFederalAndUtility:
+    """#2 — utility-level price_floor_rp_kwh wired into the per-hour floor."""
+
+    def _cfg(self, federal: float | None, utility: float | None) -> TariffConfig:
+        return TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=10.0,
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(
+                base_model="rmp_quartal",
+                federal_floor_rp_kwh=federal,
+                price_floor_rp_kwh=utility,
+            ),
+        )
+
+    def test_utility_floor_dominates_when_higher(self):
+        # Federal 6.0, utility 8.0; reference price 4.0 must be lifted to 8.0.
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _apply_floor_cap_hkn,
+        )
+        rp = _apply_floor_cap_hkn(4.0, self._cfg(federal=6.0, utility=8.0))
+        assert rp == pytest.approx(8.0)
+
+    def test_federal_floor_dominates_when_higher(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _apply_floor_cap_hkn,
+        )
+        rp = _apply_floor_cap_hkn(3.0, self._cfg(federal=6.0, utility=4.0))
+        assert rp == pytest.approx(6.0)
+
+    def test_no_floor_at_all_passes_through(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _apply_floor_cap_hkn,
+        )
+        rp = _apply_floor_cap_hkn(3.0, self._cfg(federal=None, utility=None))
+        assert rp == pytest.approx(3.0)
+
+    def test_only_utility_floor_set(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _apply_floor_cap_hkn,
+        )
+        rp = _apply_floor_cap_hkn(3.0, self._cfg(federal=None, utility=7.0))
+        assert rp == pytest.approx(7.0)
+
+
+class TestSnapshotFloorSource:
+    """#2 — snapshot stores floor_source so the report can render the right line."""
+
+    def test_floor_source_reflects_dominant_floor(self):
+        from custom_components.bfe_rueckliefertarif.services import _floor_source
+
+        rt_fed = _make_resolved(federal_floor_rp_kwh=6.0, price_floor_rp_kwh=4.0)
+        assert _floor_source(rt_fed) == "federal"
+
+        rt_utl = _make_resolved(federal_floor_rp_kwh=6.0, price_floor_rp_kwh=8.0)
+        assert _floor_source(rt_utl) == "utility"
+
+        rt_tied = _make_resolved(federal_floor_rp_kwh=6.0, price_floor_rp_kwh=6.0)
+        # Tie → federal (utility doesn't strictly dominate).
+        assert _floor_source(rt_tied) == "federal"
+
+        rt_none = _make_resolved(federal_floor_rp_kwh=None, price_floor_rp_kwh=None)
+        assert _floor_source(rt_none) == "federal"

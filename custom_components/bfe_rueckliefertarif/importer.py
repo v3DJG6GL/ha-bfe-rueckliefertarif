@@ -71,13 +71,28 @@ class QuarterPlan:
     post_quarter_delta_chf: float
 
 
+def _effective_floor(rt: "ResolvedTariff") -> float | None:
+    """``max(federal_floor, utility_floor)`` — whichever binds first.
+
+    Utility-level ``price_floor_rp_kwh`` (per StromVV Art. 4 Abs. 3 Bst. e
+    derivations / supplier T&Cs) is treated equivalently to the federal
+    Mindestvergütung: both clamp the base from below, the higher one wins.
+    Returns None only if both are null.
+    """
+    fed = rt.federal_floor_rp_kwh
+    utl = rt.price_floor_rp_kwh
+    if fed is None and utl is None:
+        return None
+    return max(fed or 0.0, utl or 0.0)
+
+
 def _apply_floor_cap_hkn(base_rp_kwh: float, cfg: TariffConfig) -> float:
-    """Apply federal floor + HKN + Anrechenbarkeitsgrenze cap to a base rate."""
+    """Apply effective floor + HKN + Anrechenbarkeitsgrenze cap to a base rate."""
     rt = cfg.resolved
     return effective_rp_kwh(
         base_rp_kwh,
         cfg.hkn_rp_kwh_resolved,
-        federal_floor_rp_kwh=rt.federal_floor_rp_kwh,
+        federal_floor_rp_kwh=_effective_floor(rt),
         cap_rp_kwh=rt.cap_rp_kwh,
         cap_mode=rt.cap_mode,
     )
@@ -91,7 +106,7 @@ def _apply_floor_cap_hkn_breakdown(
     return effective_rp_kwh_breakdown(
         base_rp_kwh,
         cfg.hkn_rp_kwh_resolved,
-        federal_floor_rp_kwh=rt.federal_floor_rp_kwh,
+        federal_floor_rp_kwh=_effective_floor(rt),
         cap_rp_kwh=rt.cap_rp_kwh,
         cap_mode=rt.cap_mode,
     )
