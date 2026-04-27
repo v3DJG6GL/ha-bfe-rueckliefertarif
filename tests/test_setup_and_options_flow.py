@@ -1185,6 +1185,241 @@ def _async_noop_factory():
     return _f
 
 
+class TestRunningQuarterEstimatePerHourRates:
+    """v0.9.5 — `_import_running_quarter_estimate` resolves the rate per hour
+    via `_effective_rate_breakdown_at_hour` (was: one flat rate for every
+    hour). For HT/NT utilities, the right rate is applied to each hour's
+    kWh based on its Zurich-local time / day. The snapshot's per-period
+    dict comes from `_aggregate_by_period` so Base / HKN / intended_hkn
+    columns are populated with kWh-weighted averages."""
+
+    @pytest.mark.asyncio
+    async def test_ht_nt_utility_applies_correct_rate_per_hour(self):
+        # Synthetic EWZ-shaped fixed_ht_nt config: HT 10.50 / NT 6.45,
+        # HKN 3.00 (opt-in Yes), Mo–Sa 06–22 HT window. Two synthetic
+        # export hours land in 2026Q2 — one in HT (Tue 2026-04-07 09:00
+        # UTC = 11:00 CEST → HT mofr 06–22) and one in NT (Tue 2026-04-07
+        # 21:00 UTC = 23:00 CEST → after 22:00 → NT). Both 2 kWh.
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.importer import TariffConfig
+        from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
+
+        resolved = ResolvedTariff(
+            utility_key="ewz",
+            valid_from="2026-01-01",
+            settlement_period="quartal",
+            base_model="fixed_ht_nt",
+            fixed_rp_kwh=None,
+            fixed_ht_rp_kwh=10.50,
+            fixed_nt_rp_kwh=6.45,
+            hkn_rp_kwh=3.00,
+            hkn_structure="additive_optin",
+            cap_mode=False,
+            cap_rp_kwh=None,
+            federal_floor_rp_kwh=6.00,
+            federal_floor_label="<30 kW",
+            requires_naturemade_star=False,
+            price_floor_rp_kwh=None,
+            tariffs_json_version="1.0.0",
+            tariffs_json_source="remote",
+            ht_window={"mofr": [6, 22], "sa": [6, 22], "su": None},
+            seasonal=None,
+        )
+        tariff_cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=8.0,
+            hkn_aktiviert=True,
+            hkn_rp_kwh_resolved=3.00,
+            resolved=resolved,
+        )
+        cfg = {
+            CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+            CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+            CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        }
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+        # `_import_running_quarter_estimate` only checks `coordinator.data`
+        # is truthy now (the rate logic no longer reads `tariff_breakdown`).
+        coordinator.data = {"current_tariff_rp_kwh": 12.91}
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={**cfg, **_entry_data(utility="ewz")},
+            options={},
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+
+        async def _fake_cfg_for_entry(_hass, **_kw):
+            return cfg, tariff_cfg
+
+        # `_cfg_for_entry` is sync, not async — return a plain tuple.
+        def _sync_cfg(_hass, **_kw):
+            return cfg, tariff_cfg
+
+        # Read-the-export-LTS mock: 2 kWh at HT, 2 kWh at NT.
+        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)   # 11:00 CEST → HT
+        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=timezone.utc)  # 23:00 CEST → NT
+        synthetic_kwh = {ht_hour: 2.0, nt_hour: 2.0}
+
+        async def _fake_read_hourly_export(_hass, _stat_id, _start, _end):
+            # Filter to within the requested window — caller passes
+            # [q_start_utc, last_full_hour). Our two test hours are early
+            # in 2026Q2; if `now` is later they fall inside.
+            return {h: kwh for h, kwh in synthetic_kwh.items() if _start <= h < _end}
+
+        async def _fake_read_anchor(_hass, _stat_id, _at):
+            return 0.0
+
+        async def _fake_import_statistics(*args, **kwargs):
+            return None
+
+        with patch.object(svc, "_cfg_for_entry", new=_sync_cfg), \
+             patch.object(svc, "read_hourly_export", new=_fake_read_hourly_export), \
+             patch.object(svc, "read_compensation_anchor", new=_fake_read_anchor), \
+             patch.object(svc, "import_statistics", new=_fake_import_statistics):
+            result = await svc._import_running_quarter_estimate(hass)
+
+        # Effective per-hour rates:
+        # HT: 10.50 base + 3.00 HKN = 13.50 Rp/kWh → 2 kWh × 13.50 / 100 = 0.27 CHF
+        # NT:  6.45 base + 3.00 HKN =  9.45 Rp/kWh → 2 kWh ×  9.45 / 100 = 0.189 CHF
+        # Total: 0.459 CHF, 4 kWh.
+        assert result["hours_imported"] >= 2
+        assert abs(result["chf_total"] - 0.459) < 1e-3, result
+        # kWh-weighted avg rate = 0.459 × 100 / 4 = 11.475 Rp/kWh.
+        assert abs(result["rate_rp_kwh"] - 11.475) < 1e-3
+
+        # Snapshot's per-period entry now carries Base / HKN / intended_hkn
+        # populated (NOT None like pre-v0.9.5).
+        snap = coordinator._imported["2026Q2"]["snapshot"]
+        period = snap["periods"][0]
+        # Base = kWh-weighted avg of HT 10.50 and NT 6.45 over equal kWh:
+        #   (10.50 + 6.45) / 2 = 8.475
+        assert abs(period["base_rp_kwh_avg"] - 8.475) < 1e-3
+        # HKN is flat 3.00 across both hours.
+        assert abs(period["hkn_rp_kwh_avg"] - 3.000) < 1e-3
+        # Intended HKN = published rate (3.00) since hkn_aktiviert=True.
+        assert abs(period["intended_hkn_rp_kwh"] - 3.000) < 1e-3
+        # Total rate matches kWh-weighted avg.
+        assert abs(period["rate_rp_kwh_avg"] - 11.475) < 1e-3
+        # is_current_estimate flag still set.
+        assert snap["is_current_estimate"] is True
+        # is_estimate=False since fixed_ht_nt produces exact rates (only
+        # rmp_quartal/rmp_monat are real estimates).
+        assert result["is_estimate"] is False
+
+    @pytest.mark.asyncio
+    async def test_fixed_flat_utility_unchanged_behavior(self):
+        # Regression: a fixed_flat utility (no HT/NT split) should produce
+        # constant per-hour rates equal to fixed_rp_kwh + HKN. Base/HKN
+        # cells now light up but with the same value across all hours.
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.importer import TariffConfig
+        from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
+
+        resolved = ResolvedTariff(
+            utility_key="age_sa",
+            valid_from="2026-01-01",
+            settlement_period="quartal",
+            base_model="fixed_flat",
+            fixed_rp_kwh=8.00,
+            fixed_ht_rp_kwh=None,
+            fixed_nt_rp_kwh=None,
+            hkn_rp_kwh=4.00,
+            hkn_structure="additive_optin",
+            cap_mode=False,
+            cap_rp_kwh=None,
+            federal_floor_rp_kwh=6.00,
+            federal_floor_label="<30 kW",
+            requires_naturemade_star=False,
+            price_floor_rp_kwh=None,
+            tariffs_json_version="1.0.0",
+            tariffs_json_source="remote",
+            ht_window=None,
+            seasonal=None,
+        )
+        tariff_cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=8.0,
+            hkn_aktiviert=True,
+            hkn_rp_kwh_resolved=4.00,
+            resolved=resolved,
+        )
+        cfg = {
+            CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+            CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+            CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        }
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+        coordinator.data = {"current_tariff_rp_kwh": 12.0}
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={**cfg, **_entry_data(utility="age_sa")},
+            options={},
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+
+        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)
+        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=timezone.utc)
+        synthetic = {ht_hour: 2.0, nt_hour: 2.0}
+
+        async def _fake_read_hourly_export(_hass, _stat_id, _start, _end):
+            return {h: kwh for h, kwh in synthetic.items() if _start <= h < _end}
+
+        async def _fake_read_anchor(*_args, **_kw):
+            return 0.0
+
+        async def _fake_import_statistics(*args, **kwargs):
+            return None
+
+        def _sync_cfg(_hass, **_kw):
+            return cfg, tariff_cfg
+
+        with patch.object(svc, "_cfg_for_entry", new=_sync_cfg), \
+             patch.object(svc, "read_hourly_export", new=_fake_read_hourly_export), \
+             patch.object(svc, "read_compensation_anchor", new=_fake_read_anchor), \
+             patch.object(svc, "import_statistics", new=_fake_import_statistics):
+            result = await svc._import_running_quarter_estimate(hass)
+
+        # fixed_flat: base = 8.00, HKN = 4.00, total = 12.00 every hour.
+        # 4 kWh × 12.00 / 100 = 0.48 CHF.
+        assert abs(result["chf_total"] - 0.48) < 1e-3
+        snap = coordinator._imported["2026Q2"]["snapshot"]
+        period = snap["periods"][0]
+        assert abs(period["base_rp_kwh_avg"] - 8.000) < 1e-3
+        assert abs(period["hkn_rp_kwh_avg"] - 4.000) < 1e-3
+        assert abs(period["rate_rp_kwh_avg"] - 12.000) < 1e-3
+
+
 class TestRenderConfigBlockShared:
     """v0.9.2 — `_render_config_block` is the shared bullet-list renderer
     used by both the active-today block and each per-group "Configuration in

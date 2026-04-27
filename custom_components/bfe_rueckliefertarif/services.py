@@ -509,25 +509,32 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
 
 
 async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
-    """Write LTS for the running quarter using the current effective-rate estimate.
+    """Write LTS for the running quarter using a per-hour effective-rate estimate.
 
     Used while BFE has not yet published the running quarter so the user
     can see realistic CHF values in the Energy Dashboard immediately
     instead of whatever stale price source was wired before. Iterates
     hours from quarter_start up to the last completed hour and writes
-    ``kWh × effective_rate`` to the compensation LTS.
+    ``kWh × effective_rate(hour)`` to the compensation LTS.
 
-    The rate comes from ``coordinator.data['tariff_breakdown']['effective_rp_kwh']``
-    — for ``basisverguetung = fixpreis`` it's exact; for
-    ``basisverguetung = referenz_marktpreis`` and a quarter BFE has not
-    yet published, it's the most-recently-published BFE quarter's rate
-    (``is_estimate=True`` in the breakdown). Once BFE publishes the
-    running quarter, the regular import path overwrites these LTS values
-    with exact BFE-based numbers.
+    v0.9.5: per-hour rate resolution (was: one flat ``effective_rp_kwh``
+    for every hour). For ``fixed_ht_nt`` utilities this means the right
+    rate is applied to each hour based on its Zurich-local time / day —
+    HT during workday daytime, NT overnight/weekends. For ``fixed_flat``
+    the per-hour rate is constant; for RMP utilities lacking BFE data we
+    fall back to the federal floor as the reference price (mirrors
+    ``coordinator._tariff_breakdown``'s ``is_estimate`` branch).
+
+    The snapshot's ``periods`` entry is built via the same
+    ``_aggregate_by_period`` helper closed quarters use, so Base / HKN /
+    intended_hkn columns now light up in the recompute notification with
+    kWh-weighted averages over the actual export profile.
 
     Returns a result dict for the caller to surface in a notification.
     """
     from datetime import datetime, timezone
+
+    from .importer import HourRecord, _effective_rate_breakdown_at_hour
 
     cfg, tariff_cfg = _cfg_for_entry(hass)
     export_id = cfg[CONF_STROMNETZEINSPEISUNG_KWH]
@@ -540,12 +547,17 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         raise RuntimeError(
             "Coordinator not ready — run 'Refresh prices from BFE' first"
         )
-    breakdown = coordinator.data.get("tariff_breakdown")
-    if not breakdown:
-        raise RuntimeError("Tariff breakdown unavailable")
 
-    rate_rp_kwh = float(breakdown["effective_rp_kwh"])
-    is_estimate = bool(breakdown.get("is_estimate", False))
+    rt = tariff_cfg.resolved
+    # RMP-based utilities (rmp_quartal / rmp_monat) reaching this code path
+    # don't have a published BFE price for the running quarter (otherwise
+    # _reimport_all_history would have imported it via _reimport_quarter
+    # and we'd never be here). Fall back to the federal floor as the
+    # reference — `_effective_rate_breakdown_at_hour` will then compose
+    # floor + HKN + cap correctly. For fixed_flat / fixed_ht_nt utilities
+    # the reference is ignored.
+    fallback_ref_rp_kwh = float(rt.federal_floor_rp_kwh or 0.0)
+    is_estimate = rt.base_model in ("rmp_quartal", "rmp_monat")
 
     now = datetime.now(timezone.utc)
     q = quarter_of(now)
@@ -556,7 +568,7 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         # Quarter has just started — nothing to write yet.
         return {
             "quarter": str(q),
-            "rate_rp_kwh": rate_rp_kwh,
+            "rate_rp_kwh": 0.0,
             "hours_imported": 0,
             "chf_total": 0.0,
             "is_estimate": is_estimate,
@@ -567,32 +579,58 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         hass, comp_id, q_start_utc - _one_hour()
     )
 
-    rate_chf_kwh = rate_rp_kwh / 100.0
+    hour_records: list[HourRecord] = []
     running_sum = anchor
-    records: list[tuple] = []
     total_kwh = 0.0
     for h in hours_in_range(q_start_utc, last_full_hour):
         kwh = hourly_kwh.get(h, 0.0)
+        rate_rp, base_rp, hkn_rp = _effective_rate_breakdown_at_hour(
+            tariff_cfg, fallback_ref_rp_kwh, h
+        )
+        chf = kwh * rate_rp / 100.0
+        running_sum += chf
         total_kwh += kwh
-        running_sum += kwh * rate_chf_kwh
-        records.append((h, running_sum))
+        hour_records.append(
+            HourRecord(
+                start=h,
+                kwh=kwh,
+                rate_rp_kwh=rate_rp,
+                compensation_chf=chf,
+                base_rp_kwh=base_rp,
+                hkn_rp_kwh=hkn_rp,
+            )
+        )
 
-    if records:
+    # Build LTS records (cumulative running sum at each hour).
+    lts_records: list[tuple] = []
+    acc = anchor
+    for r in hour_records:
+        acc += r.compensation_chf
+        lts_records.append((r.start, acc))
+
+    if lts_records:
         await import_statistics(
             hass,
             build_metadata_compensation(comp_id),
-            build_compensation_stats(records),
+            build_compensation_stats(lts_records),
         )
 
     chf_total = running_sum - anchor
+    # kWh-weighted average effective rate over the hours imported so far.
+    avg_rate_rp_kwh = (chf_total * 100.0 / total_kwh) if total_kwh > 0 else 0.0
 
-    # Snapshot so _build_recompute_report can render this quarter as an
-    # "(estimate)" row alongside the published-quarter rows. Rate/HKN
-    # decomposition isn't available from the breakdown — store rate as the
-    # total and leave Base/HKN cells empty in the renderer.
-    rt = tariff_cfg.resolved
+    # Aggregate per period using the same helper closed quarters use, so
+    # Base / HKN / intended_hkn columns are populated with kWh-weighted
+    # averages.
+    intended_hkn = (
+        tariff_cfg.resolved.hkn_rp_kwh if tariff_cfg.hkn_aktiviert else None
+    )
+    periods = _aggregate_by_period(
+        hour_records, billing, intended_hkn_rp_kwh=intended_hkn
+    )
+
     snapshot = {
-        "rate_rp_kwh": round(rate_rp_kwh, 4),
+        "rate_rp_kwh": round(avg_rate_rp_kwh, 4),
         "kw": tariff_cfg.installierte_leistung_kw,
         "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
         "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
@@ -602,17 +640,7 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         "cap_applied": False,
         "total_kwh": round(total_kwh, 3),
         "total_chf": round(chf_total, 4),
-        "periods": [
-            {
-                "period": str(q),
-                "kwh": round(total_kwh, 3),
-                "chf": round(chf_total, 4),
-                "rate_rp_kwh_avg": round(rate_rp_kwh, 4),
-                "base_rp_kwh_avg": None,
-                "hkn_rp_kwh_avg": None,
-                "intended_hkn_rp_kwh": None,
-            }
-        ],
+        "periods": periods,
         "utility_key": rt.utility_key,
         "base_model": rt.base_model,
         "billing": billing,
@@ -630,14 +658,16 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
     hass.async_create_task(coordinator._async_save_state())
 
     _LOGGER.info(
-        "Imported running %s estimate: rate=%.4f Rp/kWh, hours=%d, total=%.4f CHF (estimate=%s)",
-        q, rate_rp_kwh, len(records), chf_total, is_estimate,
+        "Imported running %s estimate: avg_rate=%.4f Rp/kWh, hours=%d, "
+        "total=%.4f CHF (estimate=%s, base_model=%s)",
+        q, avg_rate_rp_kwh, len(lts_records), chf_total, is_estimate,
+        rt.base_model,
     )
 
     return {
         "quarter": str(q),
-        "rate_rp_kwh": rate_rp_kwh,
-        "hours_imported": len(records),
+        "rate_rp_kwh": avg_rate_rp_kwh,
+        "hours_imported": len(lts_records),
         "chf_total": chf_total,
         "is_estimate": is_estimate,
     }
