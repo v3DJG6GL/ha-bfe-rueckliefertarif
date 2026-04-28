@@ -107,13 +107,17 @@ class BfeCoordinator(DataUpdateCoordinator):
         # the entire recorder queue, not just our writes — multi-second
         # on Postgres-backed recorders during cold HA startup).
         # Subsequent ticks (6h tick, refresh_data service) run inline.
+        # v0.9.15 — `is_user_reload` distinguishes cold startup /
+        # apply_change reload (gate the running-quarter estimate on
+        # config-staleness) from 6h tick / refresh_data (keep
+        # unconditional kWh roll-forward).
         if self.data is None:
             self.hass.async_create_background_task(
-                self._auto_import_newly_published(),
+                self._auto_import_newly_published(is_user_reload=True),
                 name=f"{DOMAIN}_initial_auto_import_{self.entry.entry_id}",
             )
         else:
-            await self._auto_import_newly_published()
+            await self._auto_import_newly_published(is_user_reload=False)
         breakdown = self._tariff_breakdown()
         return {
             "quarterly": self.quarterly,
@@ -241,7 +245,9 @@ class BfeCoordinator(DataUpdateCoordinator):
             "estimate_basis": estimate_basis,
         }
 
-    async def _auto_import_newly_published(self) -> None:
+    async def _auto_import_newly_published(
+        self, *, is_user_reload: bool = False
+    ) -> None:
         """Detect quarters needing reimport — BFE-price changes OR config drift.
 
         v0.7: extended from "BFE-price-only" to also reimport when the
@@ -332,35 +338,50 @@ class BfeCoordinator(DataUpdateCoordinator):
             # `async_config_entry_first_refresh`, `refresh_data` service). Skip
             # only when BFE has just published the running quarter — in that
             # case the loop above already imported it via `_reimport_quarter`.
+            # v0.9.15 — gate the estimate on user-reload triggers (cold
+            # startup, apply_change reload) so an edit to a historical
+            # record that doesn't touch the running quarter's resolved
+            # config doesn't list the running quarter in the notification.
+            # 6h tick / refresh_data keep unconditional behavior to
+            # preserve the kWh roll-forward feature.
             running_q = quarter_of(datetime.now(timezone.utc))
             running_q_estimated = False
+            prior_running_snapshot = (
+                self._imported.get(str(running_q)) or {}
+            ).get("snapshot") or {}
+            running_q_config_changed = self._running_q_config_changed(
+                prior_running_snapshot, running_q
+            )
             if running_q not in self.quarterly:
-                try:
-                    if (
-                        last_reimported_q is not None
-                        and last_reimported_q.next() == running_q
-                    ):
-                        await _import_running_quarter_estimate(
-                            self.hass, anchor_override=last_reimported_final
+                should_run = (not is_user_reload) or running_q_config_changed
+                if should_run:
+                    try:
+                        if (
+                            last_reimported_q is not None
+                            and last_reimported_q.next() == running_q
+                        ):
+                            await _import_running_quarter_estimate(
+                                self.hass, anchor_override=last_reimported_final
+                            )
+                        else:
+                            await _import_running_quarter_estimate(self.hass)
+                        running_q_estimated = True
+                    except Exception as exc:  # noqa: BLE001
+                        _LOGGER.warning(
+                            "Running-quarter estimate failed during auto-import: %s",
+                            exc,
                         )
-                    else:
-                        await _import_running_quarter_estimate(self.hass)
-                    running_q_estimated = True
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Running-quarter estimate failed during auto-import: %s",
-                        exc,
-                    )
 
             await self._notify_skipped_quarters(no_data_skipped)
             if reimported:
-                # v0.9.14 — when a notification fires (because something
-                # published was reimported), include the running quarter
-                # so apply_change recomputes show e.g. 2026Q1 + 2026Q2,
-                # not just 2026Q1. Stays gated on `reimported` so quiet
-                # 6h ticks don't spam.
+                # v0.9.15 — only list the running quarter when its
+                # resolved config actually changed (NOT just because
+                # the estimate ran on a kWh-roll-forward tick). Mirrors
+                # `_snapshot_is_stale`'s rule for published quarters:
+                # the recompute notification reflects what changed
+                # because of the user's edit, not all maintenance work.
                 notify_quarters = list(reimported)
-                if running_q_estimated:
+                if running_q_estimated and running_q_config_changed:
                     notify_quarters.append(running_q)
                 report = _build_recompute_report(self.hass, notify_quarters)
                 _notify_recompute(self.hass, self.entry.entry_id, report)
@@ -405,6 +426,45 @@ class BfeCoordinator(DataUpdateCoordinator):
         if snap.get("billing") != cfg.get(CONF_ABRECHNUNGS_RHYTHMUS):
             return True
         if snap.get("tariffs_json_version") != rt.tariffs_json_version:
+            return True
+        return False
+
+    def _running_q_config_changed(
+        self, prior_snapshot: dict, running_q: Quarter
+    ) -> bool:
+        """v0.9.15 — running-quarter analog of `_snapshot_is_stale`, minus the
+        BFE-price field (running quarter has no published price yet).
+
+        Returns True when today's resolved config for ``running_q`` differs
+        from the prior snapshot — or when there is no prior snapshot
+        (first-ever estimate for this quarter, e.g. fresh install or a
+        quarter-boundary crossing).
+
+        Used to gate whether the apply_change-reload / cold-startup path
+        runs the running-quarter estimate at all, AND whether the running
+        quarter is listed in the recompute notification.
+        """
+        if not prior_snapshot:
+            return True
+
+        from .services import _cfg_for_entry
+
+        try:
+            cfg, tariff_cfg = _cfg_for_entry(self.hass, for_quarter=running_q)
+        except (RuntimeError, LookupError):
+            return False
+        rt = tariff_cfg.resolved
+        if prior_snapshot.get("utility_key") != rt.utility_key:
+            return True
+        if prior_snapshot.get("kw") != tariff_cfg.installierte_leistung_kw:
+            return True
+        if prior_snapshot.get("eigenverbrauch_aktiviert") != tariff_cfg.eigenverbrauch_aktiviert:
+            return True
+        if prior_snapshot.get("hkn_optin") != tariff_cfg.hkn_aktiviert:
+            return True
+        if prior_snapshot.get("billing") != cfg.get(CONF_ABRECHNUNGS_RHYTHMUS):
+            return True
+        if prior_snapshot.get("tariffs_json_version") != rt.tariffs_json_version:
             return True
         return False
 

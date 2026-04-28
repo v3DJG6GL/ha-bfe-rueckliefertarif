@@ -1631,7 +1631,7 @@ class TestFirstRefreshDefersAutoImport:
             return {}
 
         # Sentinel: if auto-import ran inline it would call this and fail.
-        async def _fake_auto_import_inline():
+        async def _fake_auto_import_inline(*, is_user_reload=False):
             raise AssertionError("auto-import must NOT run inline on first refresh")
 
         coord._auto_import_newly_published = _fake_auto_import_inline
@@ -1673,7 +1673,7 @@ class TestFirstRefreshDefersAutoImport:
 
         inline_calls = []
 
-        async def _fake_auto_import_inline():
+        async def _fake_auto_import_inline(*, is_user_reload=False):
             inline_calls.append(True)
 
         coord._auto_import_newly_published = _fake_auto_import_inline
@@ -1828,6 +1828,335 @@ class TestApplyChangeNotificationIncludesRunningQuarter:
         assert len(captured_quarters) == 1
         assert stale_published in captured_quarters[0]
         assert running_q in captured_quarters[0]
+
+
+class TestRunningQuarterStalenessGate:
+    """v0.9.15 — apply_change reload (and cold startup) only re-runs the
+    running-quarter estimate when the running quarter's resolved config
+    actually changed. Mirrors `_snapshot_is_stale` for published quarters.
+    Other triggers (6h tick, refresh_data) keep unconditional behavior."""
+
+    def _make_coord(self, *, quarterly: dict, imported: dict | None = None,
+                    history_valid_from: str = "2025-01-01"):
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(utility="ekz"),
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": history_valid_from,
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        coord.quarterly = quarterly
+        coord._imported = imported or {}
+        coord.hass = MagicMock()
+        import asyncio
+        coord._auto_import_lock = asyncio.Lock()
+        coord._notify_skipped_quarters = _async_noop_factory()
+        return coord
+
+    @pytest.mark.asyncio
+    async def test_apply_change_skips_estimate_when_running_q_config_unchanged(self):
+        # User edits a HISTORICAL closed record that doesn't touch the
+        # running quarter's resolved config (e.g. the 2025-01-01 →
+        # 2025-12-31 record). Expected: estimate skipped, running_q NOT
+        # in notification. Reproduces the user's v0.9.14 regression.
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+
+        running_q = quarter_of(datetime.now(timezone.utc))
+        stale_q = Quarter(running_q.year - 1, 1)  # Q1 of last year
+        coord = self._make_coord(
+            quarterly={
+                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            },
+            imported={
+                # Running quarter has a prior snapshot — won't touch it
+                # since `_running_q_config_changed` will be mocked False.
+                str(running_q): {
+                    "q_price_chf_mwh": None,
+                    "snapshot": {"is_current_estimate": True},
+                },
+            },
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+        # Simulate "running quarter's config did NOT change".
+        coord._running_q_config_changed = MagicMock(return_value=False)
+
+        estimate_calls: list = []
+        captured_quarters: list = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 100.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        def _capture_report(_hass, quarters, **_kw):
+            captured_quarters.append(list(quarters))
+            return MagicMock()
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published(is_user_reload=True)
+
+        # Estimate was NOT called.
+        assert estimate_calls == []
+        # Notification fired (a published quarter was reimported)…
+        assert len(captured_quarters) == 1
+        # …but it does NOT include the running quarter.
+        assert stale_q in captured_quarters[0]
+        assert running_q not in captured_quarters[0]
+
+    @pytest.mark.asyncio
+    async def test_apply_change_runs_estimate_when_running_q_config_changed(self):
+        # User edits the OPEN record (covers running quarter), so
+        # `_running_q_config_changed` returns True. Expected: estimate
+        # runs, running_q IS in notification.
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+
+        running_q = quarter_of(datetime.now(timezone.utc))
+        stale_q = Quarter(running_q.year, running_q.q - 1) if running_q.q > 1 \
+            else Quarter(running_q.year - 1, 4)
+        coord = self._make_coord(
+            quarterly={
+                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            },
+            imported={
+                str(running_q): {
+                    "q_price_chf_mwh": None,
+                    "snapshot": {"is_current_estimate": True, "hkn_optin": False},
+                },
+            },
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+        coord._running_q_config_changed = MagicMock(return_value=True)
+
+        estimate_calls: list = []
+        captured_quarters: list = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 100.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        def _capture_report(_hass, quarters, **_kw):
+            captured_quarters.append(list(quarters))
+            return MagicMock()
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published(is_user_reload=True)
+
+        # Estimate ran AND running_q is in notification.
+        assert len(estimate_calls) == 1
+        assert running_q in captured_quarters[0]
+
+    @pytest.mark.asyncio
+    async def test_six_hour_tick_runs_estimate_unconditionally(self):
+        # 6h tick (`is_user_reload=False`) keeps the v0.9.12 behavior:
+        # estimate always runs to roll kWh forward — even when
+        # `_running_q_config_changed` is False. But the notification
+        # gate still excludes running_q because config is unchanged.
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+
+        running_q = quarter_of(datetime.now(timezone.utc))
+        stale_q = Quarter(running_q.year - 1, 1)
+        coord = self._make_coord(
+            quarterly={
+                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            },
+            imported={
+                str(running_q): {
+                    "q_price_chf_mwh": None,
+                    "snapshot": {"is_current_estimate": True},
+                },
+            },
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+        coord._running_q_config_changed = MagicMock(return_value=False)
+
+        estimate_calls: list = []
+        captured_quarters: list = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 100.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        def _capture_report(_hass, quarters, **_kw):
+            captured_quarters.append(list(quarters))
+            return MagicMock()
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published(is_user_reload=False)
+
+        # Estimate DID run (kWh roll-forward semantics for 6h tick).
+        assert len(estimate_calls) == 1
+        # But running_q NOT in notification (config unchanged).
+        assert running_q not in captured_quarters[0]
+
+    @pytest.mark.asyncio
+    async def test_first_ever_estimate_runs_and_lists_running_quarter(self):
+        # Empty `_imported` (fresh install or first run after upgrade).
+        # `_running_q_config_changed` returns True for "no prior snapshot".
+        # Expected: estimate runs AND running_q IS in notification.
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+
+        running_q = quarter_of(datetime.now(timezone.utc))
+        stale_q = Quarter(running_q.year - 1, 1)
+        coord = self._make_coord(
+            quarterly={
+                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            },
+            imported={},  # no prior snapshot for running_q
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+        # Don't mock `_running_q_config_changed` — let the real impl run.
+        # With prior_snapshot={}, it returns True (no prior).
+
+        estimate_calls: list = []
+        captured_quarters: list = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 100.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        def _capture_report(_hass, quarters, **_kw):
+            captured_quarters.append(list(quarters))
+            return MagicMock()
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published(is_user_reload=True)
+
+        assert len(estimate_calls) == 1
+        assert running_q in captured_quarters[0]
+
+
+class TestAsyncUpdateDataPassesIsUserReload:
+    """v0.9.15 — `_async_update_data` passes `is_user_reload=True` to the
+    background-task path (cold startup / apply_change reload) and `False`
+    to the inline path (6h tick / refresh_data)."""
+
+    def _make_coord(self, *, data):
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(utility="ekz"),
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        coord.quarterly = {}
+        coord.monthly = {}
+        coord._imported = {}
+        coord.hass = MagicMock()
+        coord.data = data
+        coord._tariff_breakdown = MagicMock(return_value=None)
+        return coord
+
+    @pytest.mark.asyncio
+    async def test_first_refresh_passes_is_user_reload_true(self):
+        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
+
+        coord = self._make_coord(data=None)
+
+        captured_kwargs: list = []
+
+        async def _noop():
+            return None
+
+        def _fake_auto_import(**kwargs):
+            captured_kwargs.append(kwargs)
+            return _noop()
+
+        coord._auto_import_newly_published = _fake_auto_import
+        coord.hass.async_create_background_task = lambda coro, *, name=None: (coro.close(), MagicMock())[1]
+
+        async def _fake_fetch_quarterly(_session):
+            return {}
+
+        async def _fake_fetch_monthly(_session):
+            return {}
+
+        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
+             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+            await coord._async_update_data()
+
+        assert captured_kwargs == [{"is_user_reload": True}]
+
+    @pytest.mark.asyncio
+    async def test_subsequent_tick_passes_is_user_reload_false(self):
+        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
+
+        coord = self._make_coord(data={"already": "populated"})
+
+        captured_kwargs: list = []
+
+        async def _fake_auto_import(**kwargs):
+            captured_kwargs.append(kwargs)
+
+        coord._auto_import_newly_published = _fake_auto_import
+
+        async def _fake_fetch_quarterly(_session):
+            return {}
+
+        async def _fake_fetch_monthly(_session):
+            return {}
+
+        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
+             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+            await coord._async_update_data()
+
+        assert captured_kwargs == [{"is_user_reload": False}]
 
 
 def _async_return(value):
