@@ -314,8 +314,12 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
 
 
 async def _reimport_quarter(
-    hass: "HomeAssistant", q: Quarter, *, force_fresh: bool = False
-) -> None:
+    hass: "HomeAssistant",
+    q: Quarter,
+    *,
+    anchor_override: float | None = None,
+    force_fresh: bool = False,
+) -> float:
     """Core re-import routine for a single quarter.
 
     Per-customer history (`plant_history` / `hkn_optin_history` in
@@ -325,10 +329,23 @@ async def _reimport_quarter(
     a snapshot of the resolved values is recorded in
     `coordinator._imported[<quarter>]["snapshot"]`.
 
+    `anchor_override` (v0.9.11): when set, skip the LTS anchor read and use
+    the provided value as the plan's ``anchor_sum_chf``. Used by
+    ``_reimport_all_history`` to thread the cumulative chain sum through
+    memory, sidestepping the recorder commit-timer race that otherwise
+    caused the first quarter after an inter-quarter HTTP cache hit to
+    observe a stale (pre-commit) anchor of 0. ``None`` preserves the
+    original behavior (read anchor from LTS), which is correct for the
+    coordinator's stale-detect path where the chain is quiescent.
+
     `force_fresh` is reserved for v0.6: it will signal that the snapshot
     should be ignored and the rate fully recomputed (used after correcting
     a wrong tariff entry). For v0.5 the path is identical either way —
     history-driven recompute is the default.
+
+    Returns ``plan.final_sum_chf`` so callers chaining multiple quarters
+    can pass it as the next quarter's ``anchor_override``. Returns the
+    override unchanged when no records were written (e.g. empty quarter).
     """
     import aiohttp
 
@@ -352,13 +369,20 @@ async def _reimport_quarter(
     q_price = quarterly[q]
 
     hourly_kwh = await read_hourly_export(hass, export_id, q_start, q_end)
-    anchor = await read_compensation_anchor(
-        hass, comp_id, q_start - _one_hour()
-    )
-    post_sums = await read_post_quarter_sums(
-        hass, comp_id, q_end, q_end + _one_hour() * 24 * 365
-    )
-    old_first_post = post_sums[0][1] if post_sums else None
+    if anchor_override is not None:
+        # Cleared-chain path: the chain is empty (or being rewritten);
+        # ``post_sums`` would always be empty too, so skip both reads.
+        anchor = anchor_override
+        post_sums: list = []
+        old_first_post = None
+    else:
+        anchor = await read_compensation_anchor(
+            hass, comp_id, q_start - _one_hour()
+        )
+        post_sums = await read_post_quarter_sums(
+            hass, comp_id, q_end, q_end + _one_hour() * 24 * 365
+        )
+        old_first_post = post_sums[0][1] if post_sums else None
 
     segments = _resolve_quarter_segments(hass, q)
     plan = compute_quarter_plan_segmented(
@@ -401,6 +425,7 @@ async def _reimport_quarter(
     # Snapshot: freeze the resolved tariff state into _imported[q] so future
     # tariffs.json edits don't retroactively change what we wrote to LTS.
     _record_snapshot(hass, q, q_price.chf_per_mwh, plan, tariff_cfg, segments=segments)
+    return plan.final_sum_chf
 
 
 def _aggregate_by_period(
@@ -840,6 +865,13 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     skipped: list = []
     failed: list = []
     before_active: list = []
+    # v0.9.11: thread the cumulative LTS sum through memory rather than
+    # re-reading it between quarters. The recorder's commit timer is
+    # asynchronous (default 1 s), so back-to-back anchor reads can observe
+    # pre-commit state and write the next quarter from anchor=0 — yielding
+    # a "Q1 dashboard = total - prior_quarters" off-by-one in the Energy
+    # Dashboard. Threading in memory eliminates the read-after-write race.
+    cumulative_sum_chf = 0.0
     for q in sorted(quarterly.keys()):
         if earliest_date is not None:
             q_start_local = date(q.year, ((q.q - 1) * 3) + 1, 1)
@@ -847,7 +879,9 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
                 before_active.append(q)
                 continue
         try:
-            await _reimport_quarter(hass, q)
+            cumulative_sum_chf = await _reimport_quarter(
+                hass, q, anchor_override=cumulative_sum_chf
+            )
             imported.append(q)
         except PriceNotYetPublished as exc:
             _LOGGER.warning("Skipping %s: %s", q, exc)
@@ -864,10 +898,20 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     running_q = quarter_of(datetime.now(timezone.utc))
     if running_q not in imported:
         try:
-            await _import_running_quarter_estimate(hass)
+            await _import_running_quarter_estimate(
+                hass, anchor_override=cumulative_sum_chf
+            )
             estimated.append(running_q)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Running-quarter estimate failed: %s", exc)
+
+    # Final flush: ensure all queued imports are committed to disk before
+    # the user sees the recompute notification and navigates to the
+    # Energy Dashboard. Without this, `import_statistics`'s per-call
+    # drain leaves the *last* write subject to the recorder's commit
+    # timer, so a fresh dashboard query immediately after recompute may
+    # still see stale data for ~1 second.
+    await instance.async_block_till_done()
 
     return {
         "available": sorted(quarterly.keys()),
@@ -879,7 +923,9 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     }
 
 
-async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
+async def _import_running_quarter_estimate(
+    hass: "HomeAssistant", *, anchor_override: float | None = None
+) -> dict:
     """Write LTS for the running quarter using a per-hour effective-rate estimate.
 
     Used while BFE has not yet published the running quarter so the user
@@ -946,9 +992,16 @@ async def _import_running_quarter_estimate(hass: "HomeAssistant") -> dict:
         }
 
     hourly_kwh = await read_hourly_export(hass, export_id, q_start_utc, last_full_hour)
-    anchor = await read_compensation_anchor(
-        hass, comp_id, q_start_utc - _one_hour()
-    )
+    if anchor_override is not None:
+        # v0.9.11: skip the LTS read; caller passed the prior quarter's
+        # final cumulative sum directly. Avoids the recorder commit-timer
+        # race that otherwise lets a stale 0 anchor through when the
+        # estimate runs back-to-back with the prior quarter's import.
+        anchor = anchor_override
+    else:
+        anchor = await read_compensation_anchor(
+            hass, comp_id, q_start_utc - _one_hour()
+        )
 
     hour_records: list[HourRecord] = []
     running_sum = anchor

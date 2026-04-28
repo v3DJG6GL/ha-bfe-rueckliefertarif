@@ -1092,10 +1092,11 @@ class TestReimportClearsFirst:
         hass.async_add_executor_job = _wrong_hass_thread
         recorder_instance.async_add_executor_job = _wrong_recorder_executor
 
-        async def _fake_reimport_quarter(_hass, q):
+        async def _fake_reimport_quarter(_hass, q, **_kw):
             order.append(f"quarter:{q}")
+            return 0.0
 
-        async def _fake_estimate(_hass):
+        async def _fake_estimate(_hass, **_kw):
             return {}
 
         with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
@@ -1166,10 +1167,11 @@ class TestReimportClearsFirst:
 
         imported_quarters: list[Quarter] = []
 
-        async def _fake_reimport_quarter(_hass, q):
+        async def _fake_reimport_quarter(_hass, q, **_kw):
             imported_quarters.append(q)
+            return 0.0
 
-        async def _fake_estimate(_hass):
+        async def _fake_estimate(_hass, **_kw):
             return {}
 
         prices = {
@@ -1224,7 +1226,7 @@ class TestReimportClearsFirst:
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
         hass.async_add_executor_job = _async_noop_factory()
 
-        async def _fake_estimate(_hass):
+        async def _fake_estimate(_hass, **_kw):
             return {}
 
         with patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
@@ -1232,6 +1234,163 @@ class TestReimportClearsFirst:
              patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()):
             result = await svc._reimport_all_history(hass)
         assert result["before_active"] == []
+
+
+class TestAnchorThreading:
+    """v0.9.11 — `_reimport_all_history` threads the cumulative LTS sum
+    through memory rather than re-reading from the recorder between
+    quarters. Eliminates a commit-timer race where a back-to-back
+    anchor read could observe pre-commit state and write the next
+    quarter from anchor=0.
+    """
+
+    @pytest.mark.asyncio
+    async def test_threads_returned_anchor_through_quarters(self):
+        # Each `_reimport_quarter` mock returns a prescribed final sum.
+        # The next call must receive that value via `anchor_override`.
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                **_entry_data(utility="ekz"),
+            },
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+        hass.async_add_executor_job = _async_noop_factory()
+
+        # Prescribed per-quarter final sums, in the order they're called.
+        quarter_finals = {
+            Quarter(2025, 3): 14.28,
+            Quarter(2025, 4): 54.53,
+            Quarter(2026, 1): 114.71,
+        }
+        prices = {q: BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0) for q in quarter_finals}
+        observed_overrides: list[tuple[str, float | None]] = []
+
+        async def _fake_reimport_quarter(_hass, q, *, anchor_override=None, force_fresh=False):
+            observed_overrides.append((str(q), anchor_override))
+            return quarter_finals[q]
+
+        estimate_anchor: list[float | None] = []
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_anchor.append(anchor_override)
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "fetch_quarterly", new=_async_return(prices)), \
+             patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()):
+            await svc._reimport_all_history(hass)
+
+        # First quarter starts at 0; each subsequent receives the prior's final.
+        assert observed_overrides[0] == ("2025Q3", 0.0)
+        assert observed_overrides[1] == ("2025Q4", 14.28)
+        assert observed_overrides[2] == ("2026Q1", 54.53)
+        # Estimate path receives the post-loop cumulative sum.
+        assert estimate_anchor == [114.71]
+
+    @pytest.mark.asyncio
+    async def test_failed_quarter_does_not_advance_cumulative(self):
+        # If a quarter raises, the cumulative anchor should NOT advance,
+        # so the next quarter still anchors at the prior good value.
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+                **_entry_data(utility="ekz"),
+            },
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+        hass.async_add_executor_job = _async_noop_factory()
+
+        prices = {
+            Quarter(2025, 3): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+            Quarter(2025, 4): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+        }
+        observed: list[tuple[str, float | None]] = []
+
+        async def _fake_reimport_quarter(_hass, q, *, anchor_override=None, force_fresh=False):
+            observed.append((str(q), anchor_override))
+            if q == Quarter(2025, 3):
+                # Q3 succeeds; advances anchor to 14.28.
+                return 14.28
+            # Q4 raises — anchor for any subsequent quarter (or the
+            # estimate) should remain 14.28.
+            raise RuntimeError("synthetic failure")
+
+        estimate_anchor: list[float | None] = []
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_anchor.append(anchor_override)
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "fetch_quarterly", new=_async_return(prices)), \
+             patch("homeassistant.components.recorder.get_instance", return_value=_recorder_instance_mock()):
+            await svc._reimport_all_history(hass)
+
+        assert observed[0] == ("2025Q3", 0.0)
+        assert observed[1] == ("2025Q4", 14.28)
+        # Estimate sees the last successful cumulative, not the failed Q4.
+        assert estimate_anchor == [14.28]
 
 
 def _async_return(value):
