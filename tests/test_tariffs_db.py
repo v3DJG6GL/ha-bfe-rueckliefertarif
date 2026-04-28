@@ -555,3 +555,72 @@ class TestRateWindowNotes:
             eigenverbrauch=True, data=db,
         )
         assert rt.notes is None
+
+
+class TestRateWindowBonuses:
+    """v0.10.0 #3 Phase 1 (Batch C) — rate-window bonuses loaded into
+    ``ResolvedTariff`` for display-only rendering. No conditional
+    evaluation yet (that's Batch D)."""
+
+    @staticmethod
+    def _bonus_rate(rate_rp_kwh: float, applies_when: str = "always", **extra) -> dict:
+        b = {
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [
+                {"kw_min": 0, "kw_max": None, "base_model": "fixed_flat",
+                 "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 2.0,
+                 "hkn_structure": "additive_optin"}
+            ],
+            "cap_mode": False, "cap_rules": None,
+            "bonuses": [
+                {"name": "Eco", "rate_rp_kwh": rate_rp_kwh,
+                 "applies_when": applies_when, **extra}
+            ],
+        }
+        return b
+
+    def test_bonuses_loaded_when_present(self):
+        db = _synthetic_db("bonusy", [self._bonus_rate(1.5)])
+        rt = resolve_tariff_at(
+            "bonusy", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db
+        )
+        assert rt.bonuses is not None
+        assert len(rt.bonuses) == 1
+        b = rt.bonuses[0]
+        assert b["name"] == "Eco"
+        assert b["rate_rp_kwh"] == 1.5
+        assert b["applies_when"] == "always"
+
+    def test_bonuses_none_when_key_absent(self):
+        rate = self._bonus_rate(1.5)
+        del rate["bonuses"]
+        db = _synthetic_db("bonusy", [rate])
+        rt = resolve_tariff_at(
+            "bonusy", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db
+        )
+        assert rt.bonuses is None
+
+    def test_bonuses_none_when_empty_list(self):
+        rate = self._bonus_rate(1.5)
+        rate["bonuses"] = []
+        db = _synthetic_db("bonusy", [rate])
+        rt = resolve_tariff_at(
+            "bonusy", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db
+        )
+        assert rt.bonuses is None
+
+    def test_bonuses_pass_through_unknown_keys(self):
+        # Phase-2 forward-compat: schema declares additionalProperties=true
+        # so future keys (kind, when) must round-trip through the loader
+        # untouched.
+        rate = self._bonus_rate(1.5)
+        rate["bonuses"][0]["kind"] = "additive_rp_kwh"
+        rate["bonuses"][0]["when"] = {"season": "winter"}
+        db = _synthetic_db("bonusy", [rate])
+        rt = resolve_tariff_at(
+            "bonusy", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db
+        )
+        assert rt.bonuses is not None
+        assert rt.bonuses[0]["kind"] == "additive_rp_kwh"
+        assert rt.bonuses[0]["when"] == {"season": "winter"}

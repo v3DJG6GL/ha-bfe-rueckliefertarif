@@ -586,6 +586,45 @@ def _render_notes_lines(notes, lang: str) -> list[str]:
     return lines
 
 
+def _render_bonuses_lines(bonuses) -> list[str]:
+    """Render rate-window-level bonuses as recompute-block bullets (v0.10.0).
+
+    Phase-1 (Batch C) display-only: no conditional evaluation. Future
+    Phase-2 keys (``kind``, ``when``, locale ``name_*``) are tolerated by
+    ``additionalProperties: true`` and never required here.
+
+    Returns ``[]`` when ``bonuses`` is empty / None. Otherwise emits a
+    parent ``- **Bonuses:**`` line followed by one bullet per entry
+    formatted as ``  - {name}: {rate} Rp/kWh ({always|opt-in}) — {note}``.
+    """
+    if not bonuses:
+        return []
+    lines: list[str] = ["- **Bonuses:**"]
+    for b in bonuses:
+        if not isinstance(b, dict):
+            continue
+        name = b.get("name") or "—"
+        rate = b.get("rate_rp_kwh")
+        rate_str = (
+            f"{rate:.2f} Rp/kWh"
+            if isinstance(rate, (int, float)) and not isinstance(rate, bool)
+            else "—"
+        )
+        applies = b.get("applies_when")
+        if applies == "always":
+            applies_str = "always"
+        elif applies == "opt_in":
+            applies_str = "opt-in"
+        else:
+            applies_str = "—"
+        suffix = ""
+        note = b.get("note")
+        if note:
+            suffix = f" — {note}"
+        lines.append(f"  - {name}: {rate_str} ({applies_str}){suffix}")
+    return lines
+
+
 _MONTH_ABBR_EN = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -1357,6 +1396,10 @@ def _build_recompute_report(
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
         "notes_lang": user_lang,
+        # v0.10.0 — Batch C / Phase 1: display-only bonuses for the
+        # active-today block. Per-period blocks intentionally don't
+        # carry bonuses yet (no real bonus data in tariffs.json today).
+        "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
     }
 
     rows: list[_RecomputeReportRow] = []
@@ -1489,6 +1532,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     - ``floor_label`` (str), ``floor_rp_kwh`` (float)
     - ``cap_mode`` (bool), ``cap_rp_kwh`` (float)
     - ``tariffs_version`` (str), ``tariffs_source`` (str)
+    - ``bonuses_active`` (list[dict] | None) — v0.10.0 display-only
 
     ``is_today=True`` causes the cap line to read "Active — current cap …"
     (today's value); otherwise it reads "Active — cap …" (the snapshot's
@@ -1578,6 +1622,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
 
     notes_lang = c.get("notes_lang") or "en"
     lines.extend(_render_notes_lines(c.get("notes_active"), notes_lang))
+    lines.extend(_render_bonuses_lines(c.get("bonuses_active")))
 
     return lines
 

@@ -774,6 +774,51 @@ class TestNotesAndSeasonalConfigBlock:
         assert "**Seasonal rates:** No" in body
 
 
+class TestBonusesConfigBlock:
+    """v0.10.0 #3 Phase 1 (Batch C) — display-only bonus rendering in the
+    active-today config block. No conditional evaluation yet."""
+
+    def test_config_block_renders_always_and_opt_in_bonuses(self):
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(
+            bonuses_active=[
+                {"name": "Eco", "rate_rp_kwh": 1.50, "applies_when": "always"},
+                {"name": "Winter+", "rate_rp_kwh": 0.80, "applies_when": "opt_in"},
+            ],
+        )
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "- **Bonuses:**" in body
+        assert "Eco: 1.50 Rp/kWh (always)" in body
+        assert "Winter+: 0.80 Rp/kWh (opt-in)" in body
+
+    def test_config_block_omits_bonuses_when_none(self):
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(bonuses_active=None)
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "**Bonuses:**" not in body
+
+    def test_config_block_omits_bonuses_when_empty_list(self):
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(bonuses_active=[])
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "**Bonuses:**" not in body
+
+    def test_config_block_appends_bonus_note_after_em_dash(self):
+        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
+        cfg = _config_dict(
+            bonuses_active=[
+                {"name": "Snow", "rate_rp_kwh": 2.00,
+                 "applies_when": "always", "note": "winter only"},
+            ],
+        )
+        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
+        _, body = _format_recompute_notification(report)
+        assert "Snow: 2.00 Rp/kWh (always) — winter only" in body
+
+
 class TestAggregateBySegment:
     """v0.9.9 — `_aggregate_by_period` emits per-segment sub-buckets when the
     records carry distinct seg_id values."""

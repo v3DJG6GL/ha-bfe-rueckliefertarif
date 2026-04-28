@@ -82,6 +82,15 @@ class ResolvedTariff:
     # outside the ``at_date`` window.
     notes: tuple[dict, ...] | None = None
 
+    # v0.10.0 — rate-window-level bonuses (Batch C / Phase 1: display-only).
+    # Each entry carries at minimum ``{"name": str, "rate_rp_kwh": number,
+    # "applies_when": "always"|"opt_in"}`` and may include ``"note"`` plus
+    # Phase-2 extensions (``kind``, ``when``, locale variants). The
+    # integration does NOT evaluate ``applies_when`` yet; conditional
+    # resolution lands in Batch D. ``None`` for "nothing to show" — both
+    # missing key and empty array collapse to ``None``.
+    bonuses: tuple[dict, ...] | None = None
+
 
 # ----- Loader ---------------------------------------------------------------
 
@@ -313,6 +322,11 @@ def resolve_tariff_at(
     else:
         notes_filtered = tuple(n for n in raw_notes if _note_active_at(n, at_date))
 
+    raw_bonuses = rate.get("bonuses")
+    bonuses_loaded: tuple[dict, ...] | None = (
+        tuple(raw_bonuses) if raw_bonuses else None
+    )
+
     return ResolvedTariff(
         utility_key=utility_key,
         valid_from=rate["valid_from"],
@@ -333,6 +347,7 @@ def resolve_tariff_at(
         ht_window=tier.get("ht_window"),
         seasonal=seasonal,
         notes=notes_filtered,
+        bonuses=bonuses_loaded,
     )
 
 
