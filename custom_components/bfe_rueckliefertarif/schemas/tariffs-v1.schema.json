@@ -122,6 +122,11 @@
           "items": { "$ref": "#/$defs/power_tier" }
         },
 
+        "user_inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/user_input" }
+        },
+
         "price_floor_rp_kwh": {
           "oneOf": [{ "type": "number" }, { "type": "null" }]
         },
@@ -192,7 +197,13 @@
         },
 
         "hkn_rp_kwh":    { "type": "number", "minimum": 0 },
-        "hkn_structure": { "type": "string", "enum": ["additive_optin", "bundled", "none"] }
+        "hkn_structure": { "type": "string", "enum": ["additive_optin", "bundled", "none"] },
+
+        "applies_when": { "$ref": "#/$defs/applies_when_clause" },
+        "hkn_cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hkn_case" }
+        }
       },
 
       "allOf": [
@@ -211,14 +222,102 @@
 
     "bonus": {
       "type": "object",
-      "required": ["name", "rate_rp_kwh", "applies_when"],
+      "required": ["kind", "name", "applies_when"],
       "additionalProperties": true,
       "properties": {
-        "name":         { "type": "string", "minLength": 1 },
-        "rate_rp_kwh":  { "type": "number" },
-        "applies_when": { "type": "string", "enum": ["always", "opt_in"] },
-        "note":         { "type": "string" }
+        "kind":           { "type": "string", "enum": ["additive_rp_kwh", "multiplier_pct"] },
+        "name":           { "type": "string", "minLength": 1 },
+        "applies_when":   { "type": "string", "enum": ["always", "opt_in"] },
+        "rate_rp_kwh":    { "type": "number" },
+        "multiplier_pct": { "type": "number" },
+        "when":           { "$ref": "#/$defs/when_clause" },
+        "note":           { "type": "string" }
+      },
+      "allOf": [
+        {
+          "comment": "additive_rp_kwh kind requires rate_rp_kwh.",
+          "if":   { "properties": { "kind": { "const": "additive_rp_kwh" } }, "required": ["kind"] },
+          "then": { "required": ["rate_rp_kwh"] }
+        },
+        {
+          "comment": "multiplier_pct kind requires multiplier_pct.",
+          "if":   { "properties": { "kind": { "const": "multiplier_pct" } }, "required": ["kind"] },
+          "then": { "required": ["multiplier_pct"] }
+        }
+      ]
+    },
+
+    "hkn_case": {
+      "type": "object",
+      "required": ["when", "rp_kwh"],
+      "additionalProperties": true,
+      "properties": {
+        "when":   { "$ref": "#/$defs/when_clause" },
+        "rp_kwh": { "type": "number", "minimum": 0 },
+        "note":   { "type": "string" }
       }
+    },
+
+    "when_clause": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "season":      { "type": "string", "enum": ["summer", "winter"] },
+        "user_inputs": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "boolean" },
+              { "type": "number" }
+            ]
+          }
+        }
+      }
+    },
+
+    "applies_when_clause": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "boolean" },
+          { "type": "number" }
+        ]
+      }
+    },
+
+    "user_input": {
+      "type": "object",
+      "required": ["key", "type", "default", "label_de"],
+      "additionalProperties": true,
+      "properties": {
+        "key":            { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "type":           { "type": "string", "enum": ["enum", "boolean"] },
+        "values":         { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+        "default":        { "oneOf": [{ "type": "string" }, { "type": "boolean" }] },
+        "label_de":       { "type": "string", "minLength": 1 },
+        "label_fr":       { "type": "string" },
+        "label_en":       { "type": "string" },
+        "description_de": { "type": "string" },
+        "description_fr": { "type": "string" },
+        "description_en": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "comment": "enum type requires values list.",
+          "if":   { "properties": { "type": { "const": "enum" } }, "required": ["type"] },
+          "then": { "required": ["values"], "properties": { "default": { "type": "string" } } }
+        },
+        {
+          "comment": "boolean type requires boolean default.",
+          "if":   { "properties": { "type": { "const": "boolean" } }, "required": ["type"] },
+          "then": { "properties": { "default": { "type": "boolean" } } }
+        }
+      ]
     },
 
     "note": {

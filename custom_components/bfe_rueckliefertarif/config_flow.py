@@ -40,10 +40,11 @@ from .const import (  # noqa: E402  — intentionally below _LOGGER guard
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    CONF_USER_INPUTS,
     CONF_VALID_FROM,
-    CONFIG_HISTORY_FIELDS,
     DOMAIN,
     OPT_CONFIG_HISTORY,
+    build_history_config,
 )
 from .tariffs_db import find_active, list_utility_keys, load_tariffs  # noqa: E402
 
@@ -419,7 +420,7 @@ def _make_sentinel_record(entry_data: dict) -> dict:
     return {
         "valid_from": "1970-01-01",
         "valid_to": None,
-        "config": {k: entry_data.get(k) for k in CONFIG_HISTORY_FIELDS},
+        "config": build_history_config(entry_data),
     }
 
 
@@ -462,6 +463,124 @@ def _format_config_summary(config: dict) -> str:
     hkn = "HKN" if config.get(CONF_HKN_AKTIVIERT) else "no-HKN"
     billing = config.get(CONF_ABRECHNUNGS_RHYTHMUS) or "—"
     return f"{utility} · {kw_s} · {ev} · {hkn} · {billing}"
+
+
+# v0.11.0 (Batch D) — declared user_inputs helpers ----------------------------
+
+
+def _resolve_user_inputs_decl(
+    utility_key: str, valid_from: str
+) -> tuple[dict, ...]:
+    """Resolve the rate window's ``user_inputs[]`` declarations active at
+    ``valid_from`` for the given utility. Returns ``()`` when the utility
+    doesn't exist, no rate window covers the date, or the rate window
+    declares nothing.
+
+    Bypasses ``resolve_tariff_at`` so the lookup doesn't depend on a kW
+    band — declarations live at rate-window scope, not power_tier scope.
+    """
+    if not utility_key or not valid_from:
+        return ()
+    try:
+        d = date.fromisoformat(valid_from)
+    except ValueError:
+        return ()
+    db = load_tariffs()
+    utility = db.get("utilities", {}).get(utility_key)
+    if utility is None:
+        return ()
+    rate = find_active(utility.get("rates", []), d)
+    if rate is None:
+        return ()
+    return tuple(rate.get("user_inputs") or ())
+
+
+def _user_input_label(decl: dict, lang: str) -> str:
+    """Pick the localized label for a user_input declaration. Falls back
+    to ``label_de`` (schema-required), then ``label_en``, then the key.
+    """
+    return (
+        decl.get(f"label_{lang}")
+        or decl.get("label_de")
+        or decl.get("label_en")
+        or decl.get("key", "—")
+    )
+
+
+def _add_user_input_fields(
+    schema_dict: dict,
+    decl_list: tuple[dict, ...],
+    defaults_user_inputs: dict,
+    lang: str,
+) -> None:
+    """Append one ``vol.Required`` selector per declared user_input.
+
+    ``type="enum"`` → dropdown; values list comes from the declaration.
+    ``type="boolean"`` → toggle.
+
+    Defaults: existing record's value if present, else ``decl["default"]``.
+    Labels read from the schema (``label_<lang>``) — translations/*.json
+    are NOT consulted for declared user inputs.
+    """
+    for decl in decl_list:
+        key = decl["key"]
+        decl_default = decl.get("default")
+        chosen = defaults_user_inputs.get(key, decl_default)
+        if decl["type"] == "enum":
+            values = decl.get("values", []) or []
+            options = [
+                selector.SelectOptionDict(value=str(v), label=str(v))
+                for v in values
+            ]
+            schema_dict[
+                vol.Required(key, default=chosen)
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+        elif decl["type"] == "boolean":
+            schema_dict[
+                vol.Required(key, default=bool(chosen))
+            ] = selector.BooleanSelector()
+
+
+def _validate_user_inputs(
+    decl_list: tuple[dict, ...], user_input: dict
+) -> dict[str, str]:
+    """Validate user-supplied values against declarations. Returns a dict
+    of ``{field_key: error_code}`` (empty when all valid). Schema-side
+    JSON validation already ran on the data file; this only guards against
+    user form submissions that don't match the active declarations.
+    """
+    errors: dict[str, str] = {}
+    for decl in decl_list:
+        key = decl["key"]
+        if key not in user_input:
+            continue  # voluptuous's vol.Required raises before we see this
+        val = user_input[key]
+        if decl["type"] == "enum":
+            values = decl.get("values", []) or []
+            if val not in values:
+                errors[key] = "invalid_choice"
+        elif decl["type"] == "boolean":
+            if not isinstance(val, bool):
+                errors[key] = "invalid_type"
+    return errors
+
+
+def _user_inputs_payload(
+    decl_list: tuple[dict, ...], user_input: dict
+) -> dict:
+    """Project ``user_input`` to just the declared keys. Missing keys
+    fall back to the declaration's ``default`` so the stored record
+    always carries a complete dict."""
+    out: dict = {}
+    for decl in decl_list:
+        key = decl["key"]
+        out[key] = user_input.get(key, decl.get("default"))
+    return out
 
 
 class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -662,6 +781,17 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             tariff_errs = _validate_tariff(user_input)
             errors.update(tariff_errs)
 
+            # Validate declared user_inputs against the rate window active
+            # at the chosen utility/date. Re-resolved on submit so a
+            # mid-form utility change is picked up.
+            decl_list_submit: tuple[dict, ...] = ()
+            if "valid_from" not in errors and CONF_ENERGIEVERSORGER not in errors:
+                decl_list_submit = _resolve_user_inputs_decl(
+                    user_input.get(CONF_ENERGIEVERSORGER),
+                    user_input.get("valid_from", ""),
+                )
+                errors.update(_validate_user_inputs(decl_list_submit, user_input))
+
             derived_billing: str | None = None
             if not errors:
                 try:
@@ -689,13 +819,23 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
                     ),
                     CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
+                    CONF_USER_INPUTS: _user_inputs_payload(
+                        decl_list_submit, user_input
+                    ),
                 }
                 # No-op detection — if effective_from matches the open record's
                 # valid_from AND the config is identical, skip the write.
+                # Normalize: treat absent / None user_inputs as empty dict so
+                # records from before v0.11.0 compare equal to a fresh save
+                # that has no declarations to fill in.
+                def _eq_cfg(a: dict, b: dict) -> bool:
+                    a2 = {**a, CONF_USER_INPUTS: a.get(CONF_USER_INPUTS) or {}}
+                    b2 = {**b, CONF_USER_INPUTS: b.get(CONF_USER_INPUTS) or {}}
+                    return a2 == b2
                 if (
                     open_rec
                     and open_rec["valid_from"] == effective_from
-                    and open_rec["config"] == new_config
+                    and _eq_cfg(open_rec["config"], new_config)
                 ):
                     return self.async_create_entry(
                         title="", data=dict(self.config_entry.options or {})
@@ -721,7 +861,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         defaults_cfg = (
             user_input
             if user_input is not None
-            else (open_cfg or {k: self.config_entry.data.get(k) for k in CONFIG_HISTORY_FIELDS})
+            else (open_cfg or build_history_config(self.config_entry.data))
         )
         default_valid_from = (
             user_input.get("valid_from", _quarter_start_today())
@@ -774,6 +914,19 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
                 )
             ] = selector.BooleanSelector()
+
+        # v0.11.0 (Batch D) — dynamic per-utility user_inputs declared on
+        # the rate window active at the chosen utility/date. Read on every
+        # form render so a mid-form utility change updates which fields
+        # appear on the next render. Defaults from existing record's
+        # user_inputs sub-dict, falling back to the declaration's default.
+        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+        decl_defaults = (defaults_cfg.get(CONF_USER_INPUTS) or {})
+        lang = (
+            getattr(self.hass.config, "language", None) or "de"
+        ).split("-")[0].lower()
+        _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
+
         schema = vol.Schema(schema_dict)
         return self.async_show_form(
             step_id="apply_change",
@@ -897,6 +1050,14 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["valid_from"] = "invalid_valid_from"
 
+            decl_list_submit: tuple[dict, ...] = ()
+            if "valid_from" not in errors and CONF_ENERGIEVERSORGER in user_input:
+                decl_list_submit = _resolve_user_inputs_decl(
+                    user_input[CONF_ENERGIEVERSORGER],
+                    user_input.get("valid_from", ""),
+                )
+                errors.update(_validate_user_inputs(decl_list_submit, user_input))
+
             derived_billing: str | None = None
             if not errors:
                 try:
@@ -924,6 +1085,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
                     ),
                     CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
+                    CONF_USER_INPUTS: _user_inputs_payload(
+                        decl_list_submit, user_input
+                    ),
                 }
                 # Replace at idx (edit) or append (add). The normalize step
                 # de-duplicates by valid_from, so editing an existing row's
@@ -960,7 +1124,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
         # Build form defaults: prior submission > existing record > open record.
         if user_input is not None:
-            defaults_cfg = {k: user_input.get(k) for k in CONFIG_HISTORY_FIELDS}
+            defaults_cfg = build_history_config(user_input)
             default_valid_from = user_input.get("valid_from", "")
         elif existing is not None:
             defaults_cfg = dict(existing["config"])
@@ -972,7 +1136,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             )
             defaults_cfg = (
                 dict(open_rec["config"]) if open_rec
-                else {k: self.config_entry.data.get(k) for k in CONFIG_HISTORY_FIELDS}
+                else build_history_config(self.config_entry.data)
             )
             default_valid_from = _quarter_start_today()
 
@@ -1021,6 +1185,15 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
                 )
             ] = selector.BooleanSelector()
+
+        # v0.11.0 (Batch D) — dynamic per-utility user_inputs.
+        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+        decl_defaults = (defaults_cfg.get(CONF_USER_INPUTS) or {})
+        lang = (
+            getattr(self.hass.config, "language", None) or "de"
+        ).split("-")[0].lower()
+        _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
+
         if is_edit:
             schema_dict[vol.Optional("delete", default=False)] = selector.BooleanSelector()
 

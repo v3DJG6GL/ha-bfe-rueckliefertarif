@@ -19,9 +19,9 @@ from .const import (
     CONF_INSTALLIERTE_LEISTUNG_KW,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
-    CONFIG_HISTORY_FIELDS,
     DOMAIN,
     OPT_CONFIG_HISTORY,
+    build_history_config,
 )
 from .ha_recorder import (
     build_compensation_stats,
@@ -134,9 +134,17 @@ def _cfg_for_entry_at_date(
     kw = float(resolved_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
     eigenverbrauch = bool(resolved_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT))
     hkn_aktiviert = bool(resolved_cfg.get(CONF_HKN_AKTIVIERT))
+    # v0.11.0 (Batch D) — declared user_inputs from the active history
+    # record. Empty dict when the rate window declares nothing or the
+    # record predates Batch D.
+    user_inputs = dict(resolved_cfg.get("user_inputs") or {})
 
     resolved = resolve_tariff_at(
-        utility_key, at_date, kw=kw, eigenverbrauch=eigenverbrauch
+        utility_key,
+        at_date,
+        kw=kw,
+        eigenverbrauch=eigenverbrauch,
+        user_inputs=user_inputs,
     )
     hkn_resolved = resolved.hkn_rp_kwh if hkn_aktiviert else 0.0
 
@@ -146,6 +154,7 @@ def _cfg_for_entry_at_date(
         hkn_aktiviert=hkn_aktiviert,
         hkn_rp_kwh_resolved=hkn_resolved,
         resolved=resolved,
+        user_inputs=user_inputs,
     )
     return cfg, tariff_cfg
 
@@ -299,7 +308,7 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
     """
     history = options.get(OPT_CONFIG_HISTORY) or []
     if not history:
-        return {k: fallback_cfg.get(k) for k in CONFIG_HISTORY_FIELDS}
+        return build_history_config(fallback_cfg)
     rec = find_active(history, at_date)
     if rec is not None:
         return rec["config"]
@@ -309,7 +318,7 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
         "OPT_CONFIG_HISTORY in the config entry options.",
         at_date, history[0]["valid_from"],
     )
-    return {k: fallback_cfg.get(k) for k in CONFIG_HISTORY_FIELDS}
+    return build_history_config(fallback_cfg)
 
 
 async def _reimport_quarter(
@@ -453,7 +462,13 @@ def _aggregate_by_period(
     z = ZoneInfo("Europe/Zurich")
     quarterly = rhythm == ABRECHNUNGS_RHYTHMUS_QUARTAL
     buckets: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"kwh": 0.0, "chf": 0.0, "base_chf": 0.0, "hkn_chf": 0.0}
+        lambda: {
+            "kwh": 0.0,
+            "chf": 0.0,
+            "base_chf": 0.0,
+            "hkn_chf": 0.0,
+            "bonus_chf": 0.0,
+        }
     )
     # Sub-bucket per (period, seg_id) for sub-row rendering. Keyed by seg_id
     # (insertion-order preserved since Python 3.7), so the rendered sub-rows
@@ -470,23 +485,33 @@ def _aggregate_by_period(
         b["chf"] += r.compensation_chf
         base_rp = getattr(r, "base_rp_kwh", None)
         hkn_rp = getattr(r, "hkn_rp_kwh", None)
+        bonus_rp = getattr(r, "bonus_rp_kwh", 0.0) or 0.0
         base_chf_inc = r.kwh * base_rp / 100.0 if base_rp is not None else 0.0
         hkn_chf_inc = r.kwh * hkn_rp / 100.0 if hkn_rp is not None else 0.0
+        bonus_chf_inc = r.kwh * bonus_rp / 100.0
         if base_rp is not None and hkn_rp is not None:
             b["base_chf"] += base_chf_inc
             b["hkn_chf"] += hkn_chf_inc
+        b["bonus_chf"] += bonus_chf_inc
 
         seg_id = getattr(r, "seg_id", None)
         if seg_id is not None:
             sb = sub_buckets[key].setdefault(
                 seg_id,
-                {"kwh": 0.0, "chf": 0.0, "base_chf": 0.0, "hkn_chf": 0.0},
+                {
+                    "kwh": 0.0,
+                    "chf": 0.0,
+                    "base_chf": 0.0,
+                    "hkn_chf": 0.0,
+                    "bonus_chf": 0.0,
+                },
             )
             sb["kwh"] += r.kwh
             sb["chf"] += r.compensation_chf
             if base_rp is not None and hkn_rp is not None:
                 sb["base_chf"] += base_chf_inc
                 sb["hkn_chf"] += hkn_chf_inc
+            sb["bonus_chf"] += bonus_chf_inc
 
     out: list[dict] = []
     for key in sorted(buckets):
@@ -495,6 +520,7 @@ def _aggregate_by_period(
         avg_rate = (b["chf"] * 100.0 / kwh) if kwh > 0 else None
         avg_base = (b["base_chf"] * 100.0 / kwh) if kwh > 0 else None
         avg_hkn = (b["hkn_chf"] * 100.0 / kwh) if kwh > 0 else None
+        avg_bonus = (b["bonus_chf"] * 100.0 / kwh) if kwh > 0 else None
         period_dict: dict = {
             "period": key,
             "kwh": round(kwh, 3),
@@ -502,6 +528,7 @@ def _aggregate_by_period(
             "rate_rp_kwh_avg": round(avg_rate, 4) if avg_rate is not None else None,
             "base_rp_kwh_avg": round(avg_base, 4) if avg_base is not None else None,
             "hkn_rp_kwh_avg": round(avg_hkn, 4) if avg_hkn is not None else None,
+            "bonus_rp_kwh_avg": round(avg_bonus, 4) if avg_bonus is not None else None,
             "intended_hkn_rp_kwh": (
                 round(intended_hkn_rp_kwh, 4)
                 if intended_hkn_rp_kwh is not None
@@ -521,6 +548,7 @@ def _aggregate_by_period(
                 s_avg_rate = (s_chf * 100.0 / s_kwh) if s_kwh > 0 else None
                 s_avg_base = (sb["base_chf"] * 100.0 / s_kwh) if s_kwh > 0 else None
                 s_avg_hkn = (sb["hkn_chf"] * 100.0 / s_kwh) if s_kwh > 0 else None
+                s_avg_bonus = (sb["bonus_chf"] * 100.0 / s_kwh) if s_kwh > 0 else None
                 sub_rows.append(
                     {
                         "seg_id": seg_id,
@@ -529,6 +557,7 @@ def _aggregate_by_period(
                         "rate_rp_kwh_avg": round(s_avg_rate, 4) if s_avg_rate is not None else None,
                         "base_rp_kwh_avg": round(s_avg_base, 4) if s_avg_base is not None else None,
                         "hkn_rp_kwh_avg": round(s_avg_hkn, 4) if s_avg_hkn is not None else None,
+                        "bonus_rp_kwh_avg": round(s_avg_bonus, 4) if s_avg_bonus is not None else None,
                     }
                 )
             period_dict["sub_rows"] = sub_rows
@@ -585,16 +614,36 @@ def _render_notes_lines(notes, lang: str) -> list[str]:
     return lines
 
 
+def _render_when_summary(clause: dict | None) -> str:
+    """Compact one-line summary of a ``when_clause`` for display in the
+    recompute config block. Returns ``""`` when the clause is empty/None.
+
+    Schema vocabulary (v1.1.0): ``season`` and/or ``user_inputs``. Output
+    examples: ``season=winter``; ``tariff_model=ht``;
+    ``season=winter, supply_product=eco``.
+    """
+    if not clause:
+        return ""
+    parts: list[str] = []
+    season = clause.get("season")
+    if season:
+        parts.append(f"season={season}")
+    sub = clause.get("user_inputs") or {}
+    for k, v in sub.items():
+        parts.append(f"{k}={v}")
+    return ", ".join(parts)
+
+
 def _render_bonuses_lines(bonuses) -> list[str]:
-    """Render rate-window-level bonuses as recompute-block bullets (v0.10.0).
+    """Render rate-window-level bonuses as recompute-block bullets.
 
-    Phase-1 (Batch C) display-only: no conditional evaluation. Future
-    Phase-2 keys (``kind``, ``when``, locale ``name_*``) are tolerated by
-    ``additionalProperties: true`` and never required here.
+    v0.10.0 / Batch C — list of declared bonuses (display-only).
+    v0.11.0 / Batch D — adds the bonus ``kind`` (when not the default
+    ``additive_rp_kwh``) and a ``when={…}`` summary so users can see
+    what conditions gate each bonus. Bullet shape:
+    ``  - {name}: {rate or × pct} Rp/kWh ({always|opt-in})[ when {…}][ — {note}]``.
 
-    Returns ``[]`` when ``bonuses`` is empty / None. Otherwise emits a
-    parent ``- **Bonuses:**`` line followed by one bullet per entry
-    formatted as ``  - {name}: {rate} Rp/kWh ({always|opt-in}) — {note}``.
+    Returns ``[]`` when ``bonuses`` is empty / None.
     """
     if not bonuses:
         return []
@@ -603,12 +652,21 @@ def _render_bonuses_lines(bonuses) -> list[str]:
         if not isinstance(b, dict):
             continue
         name = b.get("name") or "—"
-        rate = b.get("rate_rp_kwh")
-        rate_str = (
-            f"{rate:.2f} Rp/kWh"
-            if isinstance(rate, (int, float)) and not isinstance(rate, bool)
-            else "—"
-        )
+        kind = b.get("kind", "additive_rp_kwh")
+        if kind == "multiplier_pct":
+            mp = b.get("multiplier_pct")
+            value_str = (
+                f"× {mp:.2f}% (multiplier_pct)"
+                if isinstance(mp, (int, float)) and not isinstance(mp, bool)
+                else "—"
+            )
+        else:
+            rate = b.get("rate_rp_kwh")
+            value_str = (
+                f"{rate:.2f} Rp/kWh"
+                if isinstance(rate, (int, float)) and not isinstance(rate, bool)
+                else "—"
+            )
         applies = b.get("applies_when")
         if applies == "always":
             applies_str = "always"
@@ -616,11 +674,15 @@ def _render_bonuses_lines(bonuses) -> list[str]:
             applies_str = "opt-in"
         else:
             applies_str = "—"
+        when_summary = _render_when_summary(b.get("when"))
+        when_part = f" when {when_summary}" if when_summary else ""
         suffix = ""
         note = b.get("note")
         if note:
             suffix = f" — {note}"
-        lines.append(f"  - {name}: {rate_str} ({applies_str}){suffix}")
+        lines.append(
+            f"  - {name}: {value_str} ({applies_str}){when_part}{suffix}"
+        )
     return lines
 
 
@@ -1047,7 +1109,7 @@ async def _import_running_quarter_estimate(
     total_kwh = 0.0
     for h in hours_in_range(q_start_utc, last_full_hour):
         kwh = hourly_kwh.get(h, 0.0)
-        rate_rp, base_rp, hkn_rp = _effective_rate_breakdown_at_hour(
+        rate_rp, base_rp, hkn_rp, bonus_rp = _effective_rate_breakdown_at_hour(
             tariff_cfg, fallback_ref_rp_kwh, h
         )
         chf = kwh * rate_rp / 100.0
@@ -1061,6 +1123,7 @@ async def _import_running_quarter_estimate(
                 compensation_chf=chf,
                 base_rp_kwh=base_rp,
                 hkn_rp_kwh=hkn_rp,
+                bonus_rp_kwh=bonus_rp,
             )
         )
 
@@ -1283,6 +1346,9 @@ class _PeriodSubRow:
     rate_rp_kwh_avg: float | None
     total_kwh: float | None
     total_chf: float | None
+    # v0.11.0 (Batch D) — applied bonus per kWh (kWh-weighted) within this
+    # segment. ``None`` for legacy snapshots predating the field.
+    bonus_rp_kwh_avg: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1337,6 +1403,9 @@ class _RecomputeReportRow:
     # ``None`` keeps legacy single-row rendering; populated when a period
     # spans more than one (config × season) segment.
     sub_rows: tuple = ()
+    # v0.11.0 (Batch D) — applied bonus per kWh (kWh-weighted) for the
+    # period. ``None`` for legacy snapshots predating the field.
+    bonus_rp_kwh_avg: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1457,6 +1526,7 @@ def _build_recompute_report(
                                 rate_rp_kwh_avg=sr.get("rate_rp_kwh_avg"),
                                 total_kwh=sr.get("kwh"),
                                 total_chf=sr.get("chf"),
+                                bonus_rp_kwh_avg=sr.get("bonus_rp_kwh_avg"),
                             )
                         )
                     materialized_sub_rows = tuple(sub_list)
@@ -1470,6 +1540,7 @@ def _build_recompute_report(
                         total_kwh=p.get("kwh"),
                         total_chf=p.get("chf"),
                         sub_rows=materialized_sub_rows,
+                        bonus_rp_kwh_avg=p.get("bonus_rp_kwh_avg"),
                         **row_meta,
                     )
                 )
@@ -1751,13 +1822,39 @@ def _render_period_table(
     instead of the prior wide ``*(estimate · …)*`` decoration. When any row
     in the table is ``is_current_estimate``, a single footnote line is
     appended below the table explaining what the asterisk means.
+
+    v0.11.0 (Batch D): an optional Bonus column appears between HKN and
+    Total when any row in the table has a non-zero applied bonus. When
+    every row has zero/None bonus, the legacy 6-column layout is preserved
+    so notifications for utilities without bonus declarations look
+    bytewise-identical to v0.10.0.
     """
-    lines = [
-        "_Rates in Rp/kWh; energy in kWh; CHF totals._",
-        "",
-        "| Period | Base | HKN | Total | kWh | CHF |",
-        "|---|---|---|---|---|---|",
-    ]
+    # Pre-scan: emit the Bonus column only when at least one row or sub-row
+    # in this group has a non-zero bonus. Threshold mirrors the cap-forfeit
+    # epsilon so rounding noise doesn't inflate the column width.
+    def _nonzero(v: float | None) -> bool:
+        return v is not None and abs(v) > 1e-4
+
+    show_bonus = any(
+        _nonzero(r.bonus_rp_kwh_avg)
+        or any(_nonzero(s.bonus_rp_kwh_avg) for s in (r.sub_rows or ()))
+        for r in rows
+    )
+
+    if show_bonus:
+        lines = [
+            "_Rates in Rp/kWh; energy in kWh; CHF totals._",
+            "",
+            "| Period | Base | HKN | Bonus | Total | kWh | CHF |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    else:
+        lines = [
+            "_Rates in Rp/kWh; energy in kWh; CHF totals._",
+            "",
+            "| Period | Base | HKN | Total | kWh | CHF |",
+            "|---|---|---|---|---|---|",
+        ]
     forfeit_rows: list[_RecomputeReportRow] = []
     has_estimate = False
 
@@ -1769,10 +1866,12 @@ def _render_period_table(
         rate_v: float | None,
         kwh_v: float | None,
         chf_v: float | None,
+        bonus_v: float | None,
     ) -> tuple[str, bool]:
-        """Render one row's six markdown cells. Returns (markdown, is_forfeit).
-        Shared between main rows and sub-rows so both honour the same dash
-        / forfeit conventions.
+        """Render one row's markdown cells. Returns (markdown, is_forfeit).
+        Six columns by default, seven when ``show_bonus`` is True (closure
+        binding via outer scope). Shared between main rows and sub-rows so
+        both honour the same dash / forfeit conventions.
         """
         base_s = f"{base_v:.3f}" if base_v is not None else "—"
         forfeit = (
@@ -1790,6 +1889,13 @@ def _render_period_table(
         rate_s = f"{rate_v:.3f}" if rate_v is not None else "—"
         kwh_s = f"{kwh_v:,.2f}" if kwh_v is not None else "—"
         chf_s = f"{chf_v:,.2f}" if chf_v is not None else "—"
+        if show_bonus:
+            bonus_s = f"{bonus_v:.3f}" if _nonzero(bonus_v) else ""
+            return (
+                f"| {period_cell} | {base_s} | {hkn_s} | {bonus_s} | "
+                f"{rate_s} | {kwh_s} | {chf_s} |",
+                forfeit,
+            )
         return (
             f"| {period_cell} | {base_s} | {hkn_s} | {rate_s} | {kwh_s} | {chf_s} |",
             forfeit,
@@ -1809,6 +1915,7 @@ def _render_period_table(
             r.rate_rp_kwh_avg,
             r.total_kwh,
             r.total_chf,
+            r.bonus_rp_kwh_avg,
         )
         lines.append(markdown)
         if is_forfeit:
@@ -1827,6 +1934,7 @@ def _render_period_table(
                 sub.rate_rp_kwh_avg,
                 sub.total_kwh,
                 sub.total_chf,
+                sub.bonus_rp_kwh_avg,
             )
             lines.append(sub_markdown)
     if has_estimate:

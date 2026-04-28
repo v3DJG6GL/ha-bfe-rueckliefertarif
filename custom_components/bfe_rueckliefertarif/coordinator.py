@@ -153,6 +153,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             CONF_ENERGIEVERSORGER,
             CONF_HKN_AKTIVIERT,
             CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_USER_INPUTS,
         )
         from .tariff import effective_rp_kwh
         from .tariffs_db import resolve_tariff_at
@@ -163,10 +164,18 @@ class BfeCoordinator(DataUpdateCoordinator):
         kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
         eigenverbrauch = bool(self._config.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True))
         hkn_aktiviert = bool(self._config.get(CONF_HKN_AKTIVIERT, False))
+        # v0.11.0 (Batch D) — declared user choices from the active history
+        # record (merged into self._config by _resolve_config_at). Empty
+        # dict when the rate window declares nothing.
+        user_inputs = dict(self._config.get(CONF_USER_INPUTS) or {})
 
         try:
             rt = resolve_tariff_at(
-                utility_key, date.today(), kw=kw, eigenverbrauch=eigenverbrauch
+                utility_key,
+                date.today(),
+                kw=kw,
+                eigenverbrauch=eigenverbrauch,
+                user_inputs=user_inputs,
             )
         except (KeyError, LookupError):
             return None

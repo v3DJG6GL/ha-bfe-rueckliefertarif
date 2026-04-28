@@ -230,7 +230,8 @@ class TestDeriveBilling:
 
         # All bundled utilities use settlement_period="quartal" today.
         assert _derive_billing("ekz", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
-        assert _derive_billing("aew_fixpreis", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
+        # v0.11.0 — AEW unified into one entry with user_inputs.tariff_model.
+        assert _derive_billing("aew", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
 
     def test_unknown_utility_raises(self):
         import pytest
@@ -261,10 +262,11 @@ class TestHknGate:
 
         # ekz has hkn_structure="additive_optin" in bundled data.
         assert _active_hkn_structure("ekz", "2026-04-01") == "additive_optin"
-        # aew_fixpreis has hkn_structure="bundled".
-        assert _active_hkn_structure("aew_fixpreis", "2026-04-01") == "bundled"
-        # aew_rmp has hkn_structure="none".
-        assert _active_hkn_structure("aew_rmp", "2026-04-01") == "none"
+        # v0.11.0 — AEW's first power_tier (applies_when={tariff_model:fixpreis})
+        # has hkn_structure="bundled". The function picks the first tier as a
+        # heuristic; both AEW variants gate the HKN toggle either way (rmp
+        # tier has hkn_structure="none").
+        assert _active_hkn_structure("aew", "2026-04-01") == "bundled"
 
     def test_active_hkn_structure_returns_none_on_lookup_failure(self):
         from custom_components.bfe_rueckliefertarif.config_flow import (

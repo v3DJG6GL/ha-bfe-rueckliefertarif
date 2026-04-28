@@ -343,7 +343,7 @@ the importer in lockstep.
 
 A → B → C → D → E. Batches A and B together close most latent issues and
 remove all ballast (~7 schema/importer fields gone; simpler codebase). C+D
-follow when bonuses become a real-world need. E activates when triggered.
+follow, E activates when triggered.
 
 ---
 

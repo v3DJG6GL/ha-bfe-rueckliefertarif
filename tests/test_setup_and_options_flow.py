@@ -456,6 +456,82 @@ class TestApplyChangeWizard:
         history = result["data"][OPT_CONFIG_HISTORY]
         assert len(history) == 1
 
+    @pytest.mark.asyncio
+    async def test_user_inputs_persist_into_history_record(self):
+        # v0.11.0 (Batch D) — AEW declares user_inputs.tariff_model. Submitting
+        # the wizard with a chosen value persists it into the new record's
+        # config.user_inputs sub-dict.
+        existing = [
+            {"valid_from": "1970-01-01", "valid_to": None,
+             "config": _entry_data(utility="ekz")},
+        ]
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
+        result = await flow.async_step_apply_change(
+            {
+                "valid_from": "2026-04-01",
+                CONF_ENERGIEVERSORGER: "aew",
+                CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+                CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                CONF_HKN_AKTIVIERT: False,
+                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                "tariff_model": "rmp",
+            }
+        )
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        history = result["data"][OPT_CONFIG_HISTORY]
+        new_rec = history[-1]
+        assert new_rec["config"]["energieversorger"] == "aew"
+        # user_inputs sub-dict carries the chosen value.
+        assert new_rec["config"]["user_inputs"] == {"tariff_model": "rmp"}
+
+    @pytest.mark.asyncio
+    async def test_user_inputs_default_used_when_not_provided(self):
+        # When the form submission omits a declared user_input field,
+        # the resolver falls back to the schema's declared default.
+        existing = [
+            {"valid_from": "1970-01-01", "valid_to": None,
+             "config": _entry_data(utility="ekz")},
+        ]
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
+        result = await flow.async_step_apply_change(
+            {
+                "valid_from": "2026-04-01",
+                CONF_ENERGIEVERSORGER: "aew",
+                CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+                CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                CONF_HKN_AKTIVIERT: False,
+                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                # tariff_model intentionally omitted — should default to
+                # decl.default ("fixpreis").
+            }
+        )
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        history = result["data"][OPT_CONFIG_HISTORY]
+        assert history[-1]["config"]["user_inputs"] == {"tariff_model": "fixpreis"}
+
+    @pytest.mark.asyncio
+    async def test_invalid_user_input_choice_re_renders_form(self):
+        # Submitting an enum value not in the declared `values` list
+        # should produce a per-field error and re-render the form.
+        existing = [
+            {"valid_from": "1970-01-01", "valid_to": None,
+             "config": _entry_data(utility="ekz")},
+        ]
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
+        result = await flow.async_step_apply_change(
+            {
+                "valid_from": "2026-04-01",
+                CONF_ENERGIEVERSORGER: "aew",
+                CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+                CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                CONF_HKN_AKTIVIERT: False,
+                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                "tariff_model": "bogus_value_not_in_enum",
+            }
+        )
+        assert result["type"].name in ("FORM", "form")
+        assert result["errors"].get("tariff_model") == "invalid_choice"
+
 
 class TestRecomputeHistoryEstimate:
     """v0.9.0 — _reimport_all_history appends a running-quarter estimate row;

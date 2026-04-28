@@ -82,14 +82,35 @@ class ResolvedTariff:
     # outside the ``at_date`` window.
     notes: tuple[dict, ...] | None = None
 
-    # v0.10.0 — rate-window-level bonuses (Batch C / Phase 1: display-only).
-    # Each entry carries at minimum ``{"name": str, "rate_rp_kwh": number,
-    # "applies_when": "always"|"opt_in"}`` and may include ``"note"`` plus
-    # Phase-2 extensions (``kind``, ``when``, locale variants). The
-    # integration does NOT evaluate ``applies_when`` yet; conditional
-    # resolution lands in Batch D. ``None`` for "nothing to show" — both
-    # missing key and empty array collapse to ``None``.
+    # v0.10.0 — rate-window-level bonuses. Each entry carries
+    # ``{"kind": "additive_rp_kwh"|"multiplier_pct", "name": str,
+    # "applies_when": "always"|"opt_in"}`` plus ``rate_rp_kwh`` (additive)
+    # or ``multiplier_pct`` (multiplier), and may include ``"note"`` and
+    # ``"when"`` (a strict when_clause). v0.11.0 (Batch D) evaluates the
+    # ``when`` clause + ``kind`` per hour. ``None`` for "nothing to show" —
+    # both missing key and empty array collapse to ``None``.
     bonuses: tuple[dict, ...] | None = None
+
+    # v0.11.0 (Batch D) — declarations of user-supplied toggles for the
+    # active rate window. Each entry follows the schema's ``user_input``
+    # shape: ``{"key": str, "type": "enum"|"boolean", "default": str|bool,
+    # "label_de": str, ...}``. Used by config_flow for dynamic form
+    # rendering and by the per-hour resolver to default any user choice
+    # that wasn't supplied. ``None`` when the rate window declares nothing.
+    user_inputs_decl: tuple[dict, ...] | None = None
+
+    # v0.11.0 (Batch D) — power-tier-level conditional HKN overrides.
+    # Each entry carries ``{"when": when_clause, "rp_kwh": float,
+    # "note"?: str}``. First match wins per hour; falls through to the
+    # static ``hkn_rp_kwh`` field. ``None`` when the matched tier
+    # declares no cases.
+    hkn_cases: tuple[dict, ...] | None = None
+
+    # v0.11.0 (Batch D) — the matched tier's ``applies_when`` clause,
+    # retained raw for downstream introspection (e.g. notification
+    # config-block "active because: tariff_model=ht"). ``None`` when the
+    # matched tier has no clause (the unconditional default tier).
+    tier_applies_when: dict | None = None
 
 
 # ----- Loader ---------------------------------------------------------------
@@ -183,6 +204,75 @@ def find_tier(tiers: list[dict], kw: float) -> dict | None:
     return None
 
 
+def find_tier_for(
+    tiers: list[dict], kw: float, user_inputs: dict | None
+) -> dict | None:
+    """kW-range lookup that also filters by ``applies_when``.
+
+    Among tiers covering ``kw`` (kw_min ≤ kw < kw_max), prefers one whose
+    ``applies_when`` clause matches every key in ``user_inputs``. Tiers
+    without an ``applies_when`` clause act as the unconditional fallback —
+    they match any user_inputs but lose to a more-specific clause-match.
+
+    Match semantics for ``applies_when``: every key in the clause must be
+    present in ``user_inputs`` with the same scalar value. Missing keys =
+    no match. ``user_inputs=None`` is treated as an empty dict.
+
+    Returns the most-specific match (clause-match beats no-clause); falls
+    back to the no-clause tier; returns None only if no tier covers ``kw``.
+    """
+    ui = user_inputs or {}
+    fallback: dict | None = None
+    for t in tiers:
+        kw_max = t["kw_max"] if t["kw_max"] is not None else float("inf")
+        if not (t["kw_min"] <= kw < kw_max):
+            continue
+        clause = t.get("applies_when")
+        if clause:
+            if all(ui.get(k) == v for k, v in clause.items()):
+                return t
+        else:
+            # First unconditional tier in this kw band wins as fallback.
+            if fallback is None:
+                fallback = t
+    return fallback
+
+
+def evaluate_when(
+    clause: dict, *, season: str | None, user_inputs: dict | None
+) -> bool:
+    """Evaluate a strict ``when_clause`` against an hour's context.
+
+    Schema vocabulary (v1.1.0): ``season`` ∈ {"summer", "winter"} and/or
+    ``user_inputs`` (a sub-dict of key→scalar). All keys present in the
+    clause must match (logical AND); missing keys in the runtime context
+    count as no-match.
+
+    Returns True iff every key in ``clause`` matches the runtime context.
+    Raises ValueError on unknown clause keys (the schema's
+    ``additionalProperties: false`` already rejects them at validation
+    time, but loud failure here helps if a future schema bump slips
+    through without integration support).
+    """
+    ui = user_inputs or {}
+    for key, expected in clause.items():
+        if key == "season":
+            if season != expected:
+                return False
+        elif key == "user_inputs":
+            if not isinstance(expected, dict):
+                return False
+            for sub_k, sub_v in expected.items():
+                if ui.get(sub_k) != sub_v:
+                    return False
+        else:
+            raise ValueError(
+                f"unknown when_clause key {key!r} — schema is at "
+                f"v1.1.0 (season + user_inputs only)"
+            )
+    return True
+
+
 # ----- Federal-floor evaluation --------------------------------------------
 
 
@@ -258,14 +348,22 @@ def resolve_tariff_at(
     kw: float,
     eigenverbrauch: bool,
     *,
+    user_inputs: dict | None = None,
     data: dict[str, Any] | None = None,
     source: str | None = None,
 ) -> ResolvedTariff:
     """One-call resolver: utility rate window → power tier → caps + floor.
 
-    Composes `find_active` (utility rate window) → `find_tier` (kW band) →
-    `find_rule` (cap_rules + federal_minimum.rules) into a single
-    ``ResolvedTariff`` carrying everything an importer needs.
+    Composes ``find_active`` (utility rate window) → ``find_tier_for``
+    (kW band + tier ``applies_when`` filter on user_inputs) → ``find_rule``
+    (cap_rules + federal_minimum.rules) into a single ``ResolvedTariff``
+    carrying everything an importer needs.
+
+    ``user_inputs`` is the user-supplied dict from the active
+    OPT_CONFIG_HISTORY record (``record["config"]["user_inputs"]``).
+    Missing or None defaults each declared ``user_input.key`` to its
+    schema-declared ``default`` before tier filtering — so a sensor
+    attribute call without a record (sensor.py) still resolves a tier.
     """
     db = data if data is not None else load_tariffs()
 
@@ -287,7 +385,21 @@ def resolve_tariff_at(
             f"per Vernehmlassung 2025/59 is deferred to a future release."
         )
 
-    tier = find_tier(rate["power_tiers"], kw)
+    raw_user_inputs_decl = rate.get("user_inputs")
+    user_inputs_decl: tuple[dict, ...] | None = (
+        tuple(raw_user_inputs_decl) if raw_user_inputs_decl else None
+    )
+
+    # Default any missing user choice from declared `default` before tier
+    # filtering. Empty/missing user_inputs is fine — declarations without
+    # a chosen value fall back to schema defaults; unmatched tiers fall
+    # back to the unconditional one.
+    effective_inputs: dict = dict(user_inputs or {})
+    if user_inputs_decl:
+        for decl in user_inputs_decl:
+            effective_inputs.setdefault(decl["key"], decl["default"])
+
+    tier = find_tier_for(rate["power_tiers"], kw, effective_inputs)
     if tier is None:
         raise LookupError(
             f"{utility_key!r} has no power_tier covering {kw} kW "
@@ -295,11 +407,30 @@ def resolve_tariff_at(
         )
 
     seasonal = rate.get("seasonal")
+    # Batch D: seasonal blocks now serve two purposes — (1) per-season rate
+    # variation for fixed_flat / fixed_ht_nt (legacy), and (2) season
+    # classification for ``hkn_cases[].when.season`` / ``bonuses[].when.season``
+    # in any base_model. A "classification-only" seasonal block carries
+    # ``summer_months`` and ``winter_months`` but no rate keys; that's
+    # always allowed. A seasonal block with rate keys (summer_rp_kwh /
+    # winter_rp_kwh / summer_ht_rp_kwh / etc.) is still incompatible with
+    # rmp_* base_models since rmp uses BFE quarterly prices, not utility
+    # fixed rates.
     if seasonal is not None and tier["base_model"].startswith("rmp_"):
-        raise ValueError(
-            f"{utility_key!r}@{rate['valid_from']}: seasonal block is not "
-            f"supported for base_model {tier['base_model']!r}"
+        rate_keys = (
+            "summer_rp_kwh",
+            "winter_rp_kwh",
+            "summer_ht_rp_kwh",
+            "summer_nt_rp_kwh",
+            "winter_ht_rp_kwh",
+            "winter_nt_rp_kwh",
         )
+        if any(k in seasonal for k in rate_keys):
+            raise ValueError(
+                f"{utility_key!r}@{rate['valid_from']}: seasonal rate "
+                f"overrides are not supported for base_model "
+                f"{tier['base_model']!r}"
+            )
 
     cap_rp_kwh: float | None = None
     if rate.get("cap_mode") and rate.get("cap_rules"):
@@ -327,6 +458,13 @@ def resolve_tariff_at(
         tuple(raw_bonuses) if raw_bonuses else None
     )
 
+    raw_hkn_cases = tier.get("hkn_cases")
+    hkn_cases_loaded: tuple[dict, ...] | None = (
+        tuple(raw_hkn_cases) if raw_hkn_cases else None
+    )
+
+    tier_applies_when = tier.get("applies_when") or None
+
     return ResolvedTariff(
         utility_key=utility_key,
         valid_from=rate["valid_from"],
@@ -348,6 +486,9 @@ def resolve_tariff_at(
         seasonal=seasonal,
         notes=notes_filtered,
         bonuses=bonuses_loaded,
+        user_inputs_decl=user_inputs_decl,
+        hkn_cases=hkn_cases_loaded,
+        tier_applies_when=tier_applies_when,
     )
 
 

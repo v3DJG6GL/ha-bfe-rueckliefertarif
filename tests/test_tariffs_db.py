@@ -13,9 +13,11 @@ from custom_components.bfe_rueckliefertarif.tariffs_db import (
     _BUNDLED_DATA_PATH,
     ResolvedTariff,
     evaluate_federal_floor,
+    evaluate_when,
     find_active,
     find_rule,
     find_tier,
+    find_tier_for,
     floor_label,
     list_utility_keys,
     load_tariffs,
@@ -54,12 +56,13 @@ class TestSchemaConformance:
 
     def test_all_utilities_listed(self, db):
         keys = list_utility_keys(db)
-        # Sanity: 13 entries today (12 utilities; AEW splits into _fixpreis + _rmp).
+        # v0.11.0 (Batch D) — 13+ entries; AEW unified into one key with
+        # ``user_inputs.tariff_model`` enum (was: aew_fixpreis + aew_rmp).
         assert len(keys) >= 13
         assert "ekz" in keys
-        assert "aew_fixpreis" in keys
-        assert "aew_rmp" in keys
-        assert "aew" not in keys  # the unsplit key must be gone
+        assert "aew" in keys
+        assert "aew_fixpreis" not in keys
+        assert "aew_rmp" not in keys
 
     def test_cap_mode_true_implies_cap_rules(self, db):
         for ukey, u in db["utilities"].items():
@@ -128,11 +131,23 @@ class TestSeasonalConsistency:
                                 f"fixed_ht_nt × seasonal requires {k}"
                             )
                     elif bm.startswith("rmp_"):
-                        # rmp_* × seasonal is unsupported; resolve_tariff_at
-                        # raises, but the schema shouldn't even ship it.
-                        raise AssertionError(
+                        # v0.11.0 (Batch D) — rmp_* with seasonal is allowed
+                        # IF the seasonal block carries only summer_months /
+                        # winter_months (classification for hkn_cases.when /
+                        # bonuses.when). Rate-key overrides remain unsupported.
+                        rate_keys = (
+                            "summer_rp_kwh",
+                            "winter_rp_kwh",
+                            "summer_ht_rp_kwh",
+                            "summer_nt_rp_kwh",
+                            "winter_ht_rp_kwh",
+                            "winter_nt_rp_kwh",
+                        )
+                        offending = [k for k in rate_keys if k in seasonal]
+                        assert not offending, (
                             f"{location} tier kw_min={tier['kw_min']}: "
-                            f"rmp_* × seasonal is not supported"
+                            f"rmp_* × seasonal-with-rate-overrides is not "
+                            f"supported (offending keys: {offending})"
                         )
 
 
@@ -284,36 +299,52 @@ class TestResolveTariffAt:
         # cap_rules pin ≥100 kW + ohne EV → 5.40.
         assert rt.cap_rp_kwh == 5.40
 
-    def test_aew_fixpreis(self, db):
+    def test_aew_fixpreis_via_user_inputs(self, db):
+        # v0.11.0 (Batch D) — AEW unified. tariff_model="fixpreis" picks the
+        # fixed_flat tier via power_tier.applies_when.
         rt = resolve_tariff_at(
-            "aew_fixpreis", date(2026, 4, 1), kw=10.0, eigenverbrauch=True, data=db
+            "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True,
+            user_inputs={"tariff_model": "fixpreis"}, data=db,
         )
         assert rt.base_model == "fixed_flat"
         assert rt.fixed_rp_kwh == 8.20
         assert rt.hkn_structure == "bundled"
-        # v0.9.9 — requires_naturemade_star dropped; replaced by a notes[]
-        # entry warning users that the fixed-price tariff is conditional on
-        # naturemade-star certification.
         assert rt.notes is not None and len(rt.notes) >= 1
         assert rt.notes[0]["severity"] == "warning"
         assert "naturemade" in rt.notes[0]["text"]["de"].lower()
         assert rt.cap_mode is False
         assert rt.cap_rp_kwh is None
+        # Tier's applies_when is captured for downstream introspection.
+        assert rt.tier_applies_when == {"tariff_model": "fixpreis"}
 
-    def test_aew_rmp_at_30kw_in_lower_tier(self, db):
-        # AEW Fixpreis caps at kw_max=30 (exclusive); aew_rmp covers any size.
+    def test_aew_rmp_via_user_inputs_at_50kw(self, db):
+        # tariff_model="rmp" picks the RMP-quartal tier; covers any kW.
         rt = resolve_tariff_at(
-            "aew_rmp", date(2026, 4, 1), kw=50.0, eigenverbrauch=True, data=db
+            "aew", date(2026, 4, 1), kw=50.0, eigenverbrauch=True,
+            user_inputs={"tariff_model": "rmp"}, data=db,
         )
         assert rt.base_model == "rmp_quartal"
         assert rt.hkn_structure == "none"
 
-    def test_aew_fixpreis_above_30kw_has_no_tier(self, db):
-        # aew_fixpreis only covers 0–<30 kW; 30 kW or more → LookupError.
-        with pytest.raises(LookupError):
-            resolve_tariff_at(
-                "aew_fixpreis", date(2026, 4, 1), kw=30.0, eigenverbrauch=True, data=db
-            )
+    def test_aew_above_30kw_falls_back_to_rmp(self, db):
+        # At ≥30 kW the tariff_model picker doesn't gate anything — only one
+        # tier (rmp_quartal, no applies_when) covers that band, so it wins
+        # as the unconditional fallback regardless of user choice.
+        rt = resolve_tariff_at(
+            "aew", date(2026, 4, 1), kw=30.0, eigenverbrauch=True,
+            user_inputs={"tariff_model": "fixpreis"}, data=db,
+        )
+        assert rt.base_model == "rmp_quartal"
+        assert rt.tier_applies_when is None
+
+    def test_aew_default_user_input_falls_back_to_declaration_default(self, db):
+        # No user_inputs supplied → resolver defaults from decl.default
+        # ("fixpreis"). Same outcome as test_aew_fixpreis_via_user_inputs.
+        rt = resolve_tariff_at(
+            "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True, data=db,
+        )
+        assert rt.base_model == "fixed_flat"
+        assert rt.tier_applies_when == {"tariff_model": "fixpreis"}
 
     def test_iwb_bundled_hkn(self, db):
         rt = resolve_tariff_at(
@@ -624,3 +655,182 @@ class TestRateWindowBonuses:
         assert rt.bonuses is not None
         assert rt.bonuses[0]["kind"] == "additive_rp_kwh"
         assert rt.bonuses[0]["when"] == {"season": "winter"}
+
+
+class TestFindTierFor:
+    """v0.11.0 (Batch D) — kW-band lookup with applies_when filter."""
+
+    def _tiers(self):
+        return [
+            {
+                "kw_min": 0, "kw_max": 30, "base_model": "fixed_flat",
+                "applies_when": {"tariff_model": "fixpreis"},
+                "fixed_rp_kwh": 8.0, "hkn_rp_kwh": 0.0, "hkn_structure": "bundled",
+            },
+            {
+                "kw_min": 0, "kw_max": 30, "base_model": "rmp_quartal",
+                "applies_when": {"tariff_model": "rmp"},
+                "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+            },
+            {
+                "kw_min": 30, "kw_max": None, "base_model": "rmp_quartal",
+                "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+            },
+        ]
+
+    def test_picks_applies_when_match_over_unconditional(self):
+        tier = find_tier_for(self._tiers(), 10.0, {"tariff_model": "fixpreis"})
+        assert tier is not None
+        assert tier["base_model"] == "fixed_flat"
+
+    def test_picks_other_applies_when_match(self):
+        tier = find_tier_for(self._tiers(), 10.0, {"tariff_model": "rmp"})
+        assert tier is not None
+        assert tier["base_model"] == "rmp_quartal"
+        assert tier["kw_max"] == 30
+
+    def test_falls_back_to_unconditional_above_kw_band(self):
+        # 50 kW: only the unconditional ≥30 tier covers; tariff_model
+        # doesn't gate that band.
+        tier = find_tier_for(self._tiers(), 50.0, {"tariff_model": "fixpreis"})
+        assert tier is not None
+        assert tier["kw_min"] == 30
+        assert tier.get("applies_when") is None
+
+    def test_unmatched_user_input_returns_none_when_no_fallback(self):
+        # Tiers in 0–<30 band all have applies_when. With unknown
+        # tariff_model AND kw inside the conditional band, no tier matches.
+        tier = find_tier_for(self._tiers(), 10.0, {"tariff_model": "unknown"})
+        assert tier is None
+
+
+class TestEvaluateWhen:
+    """v0.11.0 (Batch D) — strict when_clause vocabulary (season + user_inputs)."""
+
+    def test_season_only_match(self):
+        assert evaluate_when(
+            {"season": "winter"}, season="winter", user_inputs={}
+        ) is True
+
+    def test_season_only_no_match(self):
+        assert evaluate_when(
+            {"season": "winter"}, season="summer", user_inputs={}
+        ) is False
+
+    def test_season_none_runtime_no_match(self):
+        # Hour without seasonal classification cannot match a season clause.
+        assert evaluate_when(
+            {"season": "winter"}, season=None, user_inputs={}
+        ) is False
+
+    def test_user_inputs_only_match(self):
+        assert evaluate_when(
+            {"user_inputs": {"supply_product": True}},
+            season=None, user_inputs={"supply_product": True},
+        ) is True
+
+    def test_user_inputs_only_no_match(self):
+        assert evaluate_when(
+            {"user_inputs": {"supply_product": True}},
+            season=None, user_inputs={"supply_product": False},
+        ) is False
+
+    def test_user_inputs_missing_key_no_match(self):
+        # Missing key in runtime ≠ expected value → no match.
+        assert evaluate_when(
+            {"user_inputs": {"supply_product": True}},
+            season=None, user_inputs={},
+        ) is False
+
+    def test_combined_and_match(self):
+        assert evaluate_when(
+            {"season": "winter", "user_inputs": {"supply_product": True}},
+            season="winter", user_inputs={"supply_product": True},
+        ) is True
+
+    def test_combined_and_partial_no_match(self):
+        # Season matches but user_input doesn't.
+        assert evaluate_when(
+            {"season": "winter", "user_inputs": {"supply_product": True}},
+            season="winter", user_inputs={"supply_product": False},
+        ) is False
+
+    def test_unknown_clause_key_raises(self):
+        with pytest.raises(ValueError, match="unknown when_clause key"):
+            evaluate_when(
+                {"kwh_le": 1000}, season=None, user_inputs={}
+            )
+
+
+class TestResolveTariffAtBatchD:
+    """v0.11.0 (Batch D) — user_inputs_decl + hkn_cases + tier_applies_when
+    loaded into ResolvedTariff."""
+
+    def _rate(self, *, with_decl=True, with_hkn_cases=True):
+        rate = {
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "cap_mode": False,
+            "power_tiers": [
+                {
+                    "kw_min": 0, "kw_max": None, "base_model": "fixed_flat",
+                    "fixed_rp_kwh": 5.0,
+                    "hkn_rp_kwh": 1.0, "hkn_structure": "additive_optin",
+                }
+            ],
+        }
+        if with_decl:
+            rate["user_inputs"] = [
+                {
+                    "key": "supply_product", "type": "boolean",
+                    "default": False, "label_de": "Ökostrom-Produkt",
+                }
+            ]
+        if with_hkn_cases:
+            rate["power_tiers"][0]["hkn_cases"] = [
+                {"when": {"user_inputs": {"supply_product": True}}, "rp_kwh": 4.0},
+            ]
+        return rate
+
+    def test_user_inputs_decl_loaded(self):
+        db = _synthetic_db("syn", [self._rate()])
+        rt = resolve_tariff_at(
+            "syn", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db,
+        )
+        assert rt.user_inputs_decl is not None
+        assert rt.user_inputs_decl[0]["key"] == "supply_product"
+        assert rt.user_inputs_decl[0]["type"] == "boolean"
+
+    def test_user_inputs_decl_none_when_absent(self):
+        db = _synthetic_db("syn", [self._rate(with_decl=False)])
+        rt = resolve_tariff_at(
+            "syn", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db,
+        )
+        assert rt.user_inputs_decl is None
+
+    def test_hkn_cases_loaded(self):
+        db = _synthetic_db("syn", [self._rate()])
+        rt = resolve_tariff_at(
+            "syn", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db,
+        )
+        assert rt.hkn_cases is not None
+        assert rt.hkn_cases[0]["rp_kwh"] == 4.0
+
+    def test_hkn_cases_none_when_absent(self):
+        db = _synthetic_db("syn", [self._rate(with_hkn_cases=False)])
+        rt = resolve_tariff_at(
+            "syn", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db,
+        )
+        assert rt.hkn_cases is None
+
+    def test_default_user_input_applied_when_missing(self):
+        # No user_inputs supplied at call time → resolver fills in
+        # decl.default before tier filtering. Here the only tier has no
+        # applies_when, so the choice doesn't gate anything — but the
+        # resolver shouldn't crash.
+        db = _synthetic_db("syn", [self._rate()])
+        rt = resolve_tariff_at(
+            "syn", date(2026, 4, 1), kw=5.0, eigenverbrauch=True, data=db,
+        )
+        assert rt is not None  # didn't raise
+        assert rt.tier_applies_when is None  # tier has no clause

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import CONF_VALID_FROM, CONFIG_HISTORY_FIELDS, DOMAIN, OPT_CONFIG_HISTORY
+from .const import CONF_VALID_FROM, DOMAIN, OPT_CONFIG_HISTORY, build_history_config
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -51,7 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             {
                 "valid_from": entry.data.get(CONF_VALID_FROM, "1970-01-01"),
                 "valid_to": None,
-                "config": {k: entry.data.get(k) for k in CONFIG_HISTORY_FIELDS},
+                "config": build_history_config(entry.data),
             }
         ]
         hass.config_entries.async_update_entry(entry, options=options)

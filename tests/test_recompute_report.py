@@ -931,3 +931,120 @@ class TestPeriodTableSubRowRendering:
         sub_line = next(line for line in lines if "↳" in line)
         # 5 — markers (base, hkn, rate, kwh, chf) — exact 5 dashes.
         assert sub_line.count("—") == 5
+
+
+class TestPeriodTableBonusColumn:
+    """v0.11.0 (Batch D) — optional Bonus column appears between HKN and
+    Total when any row has a non-zero applied bonus. Otherwise the legacy
+    6-column layout is preserved bytewise."""
+
+    def test_bonus_column_collapses_when_all_rows_zero(self):
+        from custom_components.bfe_rueckliefertarif.services import (
+            _render_period_table,
+        )
+
+        # Default rows have bonus_rp_kwh_avg=None → column collapses.
+        rows = [
+            _row("2026-03", 13.27, 100.0, 13.27, base=10.27, hkn=3.00),
+            _row("2026-02", 13.27, 100.0, 13.27, base=10.27, hkn=3.00),
+        ]
+        lines, _ = _render_period_table(rows)
+        header = next(line for line in lines if line.startswith("| Period"))
+        assert "Bonus" not in header
+        # 6-column layout: 5 separators between cells.
+        assert header.count("|") == 7  # leading + 6 separators + trailing
+
+    def test_bonus_column_appears_when_any_row_nonzero(self):
+        from custom_components.bfe_rueckliefertarif.services import (
+            _render_period_table,
+        )
+
+        rows = [
+            _RecomputeReportRow(
+                period="2026-03",
+                rate_rp_kwh_avg=13.77,
+                base_rp_kwh_avg=10.27, hkn_rp_kwh_avg=3.00,
+                intended_hkn_rp_kwh=None,
+                total_kwh=100.0, total_chf=13.77,
+                bonus_rp_kwh_avg=0.50,
+            ),
+            _RecomputeReportRow(
+                period="2026-02",
+                rate_rp_kwh_avg=13.27,
+                base_rp_kwh_avg=10.27, hkn_rp_kwh_avg=3.00,
+                intended_hkn_rp_kwh=None,
+                total_kwh=100.0, total_chf=13.27,
+                bonus_rp_kwh_avg=0.0,
+            ),
+        ]
+        lines, _ = _render_period_table(rows)
+        header = next(line for line in lines if line.startswith("| Period"))
+        assert "Bonus" in header
+        # 7-column layout.
+        assert header.count("|") == 8
+        # Row with nonzero bonus shows the value; row with zero bonus is blank.
+        body_lines = [line for line in lines if line.startswith("| 2026-")]
+        assert "0.500" in body_lines[0]  # 2026-03 row with bonus
+        # 2026-02 row's bonus cell is blank — check that "0.000" doesn't appear.
+        assert "0.000" not in body_lines[1]
+
+    def test_subrow_bonus_triggers_column(self):
+        # When the main row has zero bonus but a sub-row has nonzero, the
+        # column still appears.
+        from custom_components.bfe_rueckliefertarif.services import (
+            _PeriodSubRow,
+            _render_period_table,
+        )
+
+        row = _RecomputeReportRow(
+            period="2026-Q1",
+            rate_rp_kwh_avg=13.27,
+            base_rp_kwh_avg=10.27, hkn_rp_kwh_avg=3.00,
+            intended_hkn_rp_kwh=None,
+            total_kwh=100.0, total_chf=13.27,
+            bonus_rp_kwh_avg=0.0,
+            sub_rows=(
+                _PeriodSubRow(
+                    label="winter",
+                    base_rp_kwh_avg=10.27, hkn_rp_kwh_avg=3.00,
+                    rate_rp_kwh_avg=13.77, total_kwh=50.0, total_chf=6.89,
+                    bonus_rp_kwh_avg=0.50,
+                ),
+                _PeriodSubRow(
+                    label="summer",
+                    base_rp_kwh_avg=10.27, hkn_rp_kwh_avg=3.00,
+                    rate_rp_kwh_avg=13.27, total_kwh=50.0, total_chf=6.64,
+                    bonus_rp_kwh_avg=0.0,
+                ),
+            ),
+        )
+        lines, _ = _render_period_table([row])
+        header = next(line for line in lines if line.startswith("| Period"))
+        assert "Bonus" in header
+
+    def test_bonus_aggregation_kwh_weighted(self):
+        # Two records, kwh-weighted bonus average.
+        from dataclasses import replace
+        records = [
+            _hr(_hour(2026, 1, 15, 10), 10.0, 13.0, base_rp_kwh=10.0, hkn_rp_kwh=3.0),
+            _hr(_hour(2026, 1, 15, 11), 10.0, 13.0, base_rp_kwh=10.0, hkn_rp_kwh=3.0),
+        ]
+        # Stamp bonus + recompute rate_rp_kwh + compensation_chf.
+        records = [
+            replace(
+                records[0],
+                rate_rp_kwh=14.0,
+                compensation_chf=records[0].kwh * 14.0 / 100.0,
+                bonus_rp_kwh=1.0,
+            ),
+            replace(
+                records[1],
+                rate_rp_kwh=15.0,
+                compensation_chf=records[1].kwh * 15.0 / 100.0,
+                bonus_rp_kwh=2.0,
+            ),
+        ]
+        periods = _aggregate_by_period(records, ABRECHNUNGS_RHYTHMUS_QUARTAL)
+        assert len(periods) == 1
+        # bonus = (10 * 1.0 + 10 * 2.0) / 20 = 1.5
+        assert periods[0]["bonus_rp_kwh_avg"] == pytest.approx(1.5)

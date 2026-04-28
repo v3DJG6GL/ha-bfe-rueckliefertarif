@@ -45,6 +45,12 @@ ABRECHNUNGS_RHYTHMUS_MONAT = "monat"
 # lists (clean break — no migration of legacy data).
 OPT_CONFIG_HISTORY = "config_history"
 
+# v0.11.0 (Batch D): per-utility user inputs declared by tariffs.json
+# rate_window.user_inputs[]. Stored as ``dict[str, str|bool|number]`` keyed
+# by the declared user_input.key, mirroring the schema's when.user_inputs
+# shape exactly. Empty dict means "no inputs declared / chosen at this date".
+CONF_USER_INPUTS = "user_inputs"
+
 # Single source of truth for which config keys are time-versioned. Anything
 # in this tuple is stored in each history record's "config" sub-dict.
 CONFIG_HISTORY_FIELDS = (
@@ -53,4 +59,30 @@ CONFIG_HISTORY_FIELDS = (
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_HKN_AKTIVIERT,
     CONF_ABRECHNUNGS_RHYTHMUS,
+    CONF_USER_INPUTS,
 )
+
+
+def _hist_default(key: str):
+    """Default value for a missing or None history field. Dict-typed
+    fields (``user_inputs``) default to ``{}`` so resolver code can do
+    ``record["config"]["user_inputs"][key]`` without a None guard;
+    scalars default to None (historical behavior for the original five).
+    """
+    return {} if key == CONF_USER_INPUTS else None
+
+
+def build_history_config(source: dict) -> dict:
+    """Build a history record's ``config`` sub-dict from a source dict.
+
+    Used at every site that materializes a config snapshot from
+    ``entry.data`` or a form ``user_input`` dict. Per-field defaults so
+    dict-typed fields don't end up as None.
+    """
+    out: dict = {}
+    for k in CONFIG_HISTORY_FIELDS:
+        v = source.get(k)
+        if v is None:
+            v = _hist_default(k)
+        out[k] = v
+    return out

@@ -819,3 +819,212 @@ class TestSegmentedQuarterPlan:
                 anchor_sum_chf=0.0,
                 old_post_quarter_first_sum_chf=None,
             )
+
+
+class TestBatchDPerHourBonusesAndHknCases:
+    """v0.11.0 (Batch D) — per-hour bonus + hkn_cases evaluation by the
+    decomposed `_effective_rate_breakdown_at_hour` helper. Asserts the
+    4-tuple (rate, base, hkn, bonus) where rate = base + hkn + bonus.
+    """
+
+    def _hour_winter(self):
+        # 2026-01-15 14:00 UTC — January is winter under standard
+        # summer=[4..9]/winter=[10..3] split.
+        return datetime(2026, 1, 15, 14, tzinfo=UTC)
+
+    def _hour_summer(self):
+        return datetime(2026, 7, 15, 14, tzinfo=UTC)
+
+    def _seasonal_classify_only(self):
+        # Seasonal block with NO rate keys — purely month classification
+        # for hkn_cases.when.season / bonuses.when.season.
+        return {
+            "summer_months": [4, 5, 6, 7, 8, 9],
+            "winter_months": [10, 11, 12, 1, 2, 3],
+        }
+
+    def _cfg(self, *, rt, hkn_aktiviert=True, user_inputs=None):
+        return TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=10.0,
+            hkn_aktiviert=hkn_aktiviert,
+            hkn_rp_kwh_resolved=rt.hkn_rp_kwh if hkn_aktiviert else 0.0,
+            resolved=rt,
+            user_inputs=user_inputs or {},
+        )
+
+    def test_static_hkn_unchanged_when_no_hkn_cases(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=8.0,
+            hkn_rp_kwh=2.0, federal_floor_rp_kwh=6.0,
+        )
+        cfg = self._cfg(rt=rt)
+        rate, base, hkn, bonus = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_winter()
+        )
+        assert hkn == pytest.approx(2.0)
+        assert bonus == 0.0
+        assert rate == pytest.approx(base + hkn)
+
+    def test_hkn_cases_first_match_wins_per_season(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=8.0,
+            hkn_rp_kwh=1.0, federal_floor_rp_kwh=6.0,
+            seasonal=self._seasonal_classify_only(),
+        )
+        # Patch in hkn_cases (frozen dataclass — recreate with replace).
+        from dataclasses import replace
+        rt = replace(rt, hkn_cases=(
+            {"when": {"season": "winter"}, "rp_kwh": 4.0},
+            {"when": {"season": "summer"}, "rp_kwh": 1.5},
+        ))
+        cfg = self._cfg(rt=rt)
+        # Winter hour → 4.0
+        _, _, hkn_w, _ = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_winter()
+        )
+        # Summer hour → 1.5
+        _, _, hkn_s, _ = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_summer()
+        )
+        assert hkn_w == pytest.approx(4.0)
+        assert hkn_s == pytest.approx(1.5)
+
+    def test_hkn_cases_falls_through_to_static_on_no_match(self):
+        from dataclasses import replace
+
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=8.0,
+            hkn_rp_kwh=1.0, federal_floor_rp_kwh=6.0,
+            seasonal=self._seasonal_classify_only(),
+        )
+        rt = replace(rt, hkn_cases=(
+            {"when": {"user_inputs": {"supply_product": True}}, "rp_kwh": 4.0},
+        ))
+        cfg = self._cfg(rt=rt, user_inputs={"supply_product": False})
+        _, _, hkn, _ = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_winter()
+        )
+        # No case matched — falls through to static rt.hkn_rp_kwh = 1.0.
+        assert hkn == pytest.approx(1.0)
+
+    def test_additive_bonus_adds_to_rate(self):
+        from dataclasses import replace
+
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=8.0,
+            hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
+        )
+        rt = replace(rt, bonuses=(
+            {
+                "kind": "additive_rp_kwh", "name": "TestBonus",
+                "applies_when": "always", "rate_rp_kwh": 0.5,
+            },
+        ))
+        cfg = self._cfg(rt=rt, hkn_aktiviert=False)
+        rate, base, hkn, bonus = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_winter()
+        )
+        assert bonus == pytest.approx(0.5)
+        assert rate == pytest.approx(base + hkn + bonus)
+
+    def test_multiplier_pct_curtailment(self):
+        # multiplier_pct=85 → rate scaled to 85%; bonus_delta = -15% × current.
+        from dataclasses import replace
+
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=10.0,
+            hkn_rp_kwh=0.0, federal_floor_rp_kwh=0.0,
+        )
+        rt = replace(rt, bonuses=(
+            {
+                "kind": "multiplier_pct", "name": "TOP-40 curtailment",
+                "applies_when": "always", "multiplier_pct": 85.0,
+            },
+        ))
+        cfg = self._cfg(rt=rt, hkn_aktiviert=False)
+        rate, base, _, bonus = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_winter()
+        )
+        # base after floor = 10.0; bonus delta = 10.0 * (0.85 - 1) = -1.5.
+        assert base == pytest.approx(10.0)
+        assert bonus == pytest.approx(-1.5)
+        assert rate == pytest.approx(8.5)
+
+    def test_optin_bonus_without_when_clause_skipped(self):
+        # opt_in bonuses without a when-clause cannot be gated → never apply.
+        from dataclasses import replace
+
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=8.0,
+            hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
+        )
+        rt = replace(rt, bonuses=(
+            {
+                "kind": "additive_rp_kwh", "name": "OptIn no clause",
+                "applies_when": "opt_in", "rate_rp_kwh": 0.5,
+            },
+        ))
+        cfg = self._cfg(rt=rt, hkn_aktiviert=False)
+        _, _, _, bonus = _effective_rate_breakdown_at_hour(
+            cfg, 0.0, self._hour_winter()
+        )
+        assert bonus == 0.0
+
+    def test_optin_bonus_with_when_user_inputs_applies_on_match(self):
+        from dataclasses import replace
+
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _effective_rate_breakdown_at_hour,
+        )
+
+        rt = _make_resolved(
+            base_model="fixed_flat", fixed_rp_kwh=8.0,
+            hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
+        )
+        rt = replace(rt, bonuses=(
+            {
+                "kind": "additive_rp_kwh", "name": "OptIn with toggle",
+                "applies_when": "opt_in",
+                "when": {"user_inputs": {"top40_enrolled": True}},
+                "rate_rp_kwh": 1.0,
+            },
+        ))
+        cfg_off = self._cfg(
+            rt=rt, hkn_aktiviert=False, user_inputs={"top40_enrolled": False}
+        )
+        cfg_on = self._cfg(
+            rt=rt, hkn_aktiviert=False, user_inputs={"top40_enrolled": True}
+        )
+        _, _, _, b_off = _effective_rate_breakdown_at_hour(
+            cfg_off, 0.0, self._hour_winter()
+        )
+        _, _, _, b_on = _effective_rate_breakdown_at_hour(
+            cfg_on, 0.0, self._hour_winter()
+        )
+        assert b_off == 0.0
+        assert b_on == pytest.approx(1.0)

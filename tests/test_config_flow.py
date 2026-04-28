@@ -65,16 +65,20 @@ class TestValidateTariff:
 class TestUtilityKeys:
     """tariffs.json shape sanity for the menu wiring."""
 
-    def test_aew_split_present(self):
+    def test_unified_aew_present(self):
+        # v0.11.0 (Batch D) — AEW collapsed back to one key with a
+        # ``user_inputs.tariff_model`` enum picking fixpreis vs rmp.
         keys = set(list_utility_keys())
-        assert "aew_fixpreis" in keys
-        assert "aew_rmp" in keys
+        assert "aew" in keys
 
-    def test_old_aew_key_gone(self):
-        assert "aew" not in list_utility_keys()
+    def test_old_aew_split_keys_gone(self):
+        # v0.11.0 (Batch D) — `aew_fixpreis` / `aew_rmp` retired.
+        keys = set(list_utility_keys())
+        assert "aew_fixpreis" not in keys
+        assert "aew_rmp" not in keys
 
     def test_minimum_thirteen_utilities(self):
-        # 11 utilities + AEW split → 13. Adding more is fine; fewer breaks v0.5.
+        # v0.11.0: 13+ unified utilities (was 11 + AEW-split = 13 before).
         assert len(list_utility_keys()) >= 13
 
 
