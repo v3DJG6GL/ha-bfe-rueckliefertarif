@@ -1421,6 +1421,10 @@ class TestCoordinatorRefreshesRunningQuarter:
         coord.quarterly = quarterly
         coord._imported = imported or {}
         coord.hass = MagicMock()
+        # v0.9.14 — `_auto_import_newly_published` wraps its body in this
+        # lock; the BfeCoordinator(__new__) skip means we set it manually.
+        import asyncio
+        coord._auto_import_lock = asyncio.Lock()
         # Sub-helpers that aren't relevant to these tests.
         coord._notify_skipped_quarters = _async_noop_factory()
         return coord
@@ -1569,6 +1573,261 @@ class TestCoordinatorRefreshesRunningQuarter:
 
         # Estimate did NOT fire — the published-quarter path handled it.
         assert estimate_calls == []
+
+
+class TestFirstRefreshDefersAutoImport:
+    """v0.9.14 — `_async_update_data`'s first refresh schedules
+    `_auto_import_newly_published` as a background task instead of
+    blocking on it inline. This keeps sensor platform setup off the
+    recorder-drain critical path during HA startup."""
+
+    def _make_coord(self, *, data):
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(utility="ekz"),
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        coord.quarterly = {}
+        coord.monthly = {}
+        coord._imported = {}
+        coord.hass = MagicMock()
+        coord.data = data
+        coord._tariff_breakdown = MagicMock(return_value=None)
+        return coord
+
+    @pytest.mark.asyncio
+    async def test_first_refresh_schedules_background_task(self):
+        # `self.data is None` → schedule auto-import as a background task,
+        # don't await it inline.
+        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        coord = self._make_coord(data=None)
+        background_tasks: list = []
+
+        def _capture_bg(coro, *, name=None):
+            background_tasks.append((coro, name))
+            coro.close()  # don't actually run it
+            return MagicMock()
+
+        coord.hass.async_create_background_task = _capture_bg
+
+        async def _fake_fetch_quarterly(_session):
+            return {Quarter(2026, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)}
+
+        async def _fake_fetch_monthly(_session):
+            return {}
+
+        # Sentinel: if auto-import ran inline it would call this and fail.
+        async def _fake_auto_import_inline():
+            raise AssertionError("auto-import must NOT run inline on first refresh")
+
+        coord._auto_import_newly_published = _fake_auto_import_inline
+
+        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
+             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+            result = await coord._async_update_data()
+
+        # Result returned promptly with BFE prices populated.
+        assert "quarterly" in result
+        # Auto-import was scheduled as a background task.
+        assert len(background_tasks) == 1
+        assert background_tasks[0][1].startswith("bfe_rueckliefertarif_initial_auto_import")
+
+    @pytest.mark.asyncio
+    async def test_subsequent_tick_runs_auto_import_inline(self):
+        # `self.data` already populated → 6h tick path → run inline,
+        # no background task.
+        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        coord = self._make_coord(data={"already": "populated"})
+
+        bg_called = []
+
+        def _capture_bg(coro, *, name=None):
+            bg_called.append((coro, name))
+            coro.close()
+            return MagicMock()
+
+        coord.hass.async_create_background_task = _capture_bg
+
+        async def _fake_fetch_quarterly(_session):
+            return {Quarter(2026, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)}
+
+        async def _fake_fetch_monthly(_session):
+            return {}
+
+        inline_calls = []
+
+        async def _fake_auto_import_inline():
+            inline_calls.append(True)
+
+        coord._auto_import_newly_published = _fake_auto_import_inline
+
+        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
+             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+            await coord._async_update_data()
+
+        # Inline path ran, background-task path did not.
+        assert inline_calls == [True]
+        assert bg_called == []
+
+
+class TestAutoImportLock:
+    """v0.9.14 — `_auto_import_newly_published` is single-flight: a 6h
+    tick that fires while the first-refresh-deferred background task
+    is still running waits for it instead of interleaving."""
+
+    @pytest.mark.asyncio
+    async def test_lock_serializes_concurrent_invocations(self):
+        # Two concurrent invocations of `_auto_import_newly_published`
+        # must not interleave; the second waits until the first
+        # releases the lock.
+        import asyncio
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(utility="ekz"),
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        coord.quarterly = {}  # nothing to reimport
+        coord._imported = {}
+        coord.hass = MagicMock()
+        coord._auto_import_lock = asyncio.Lock()
+        coord._notify_skipped_quarters = _async_noop_factory()
+
+        events: list[str] = []
+        first_in_critical = asyncio.Event()
+        let_first_finish = asyncio.Event()
+
+        async def _slow_estimate(_hass, *, anchor_override=None):
+            events.append("enter")
+            if not first_in_critical.is_set():
+                first_in_critical.set()
+                await let_first_finish.wait()
+            events.append("exit")
+            return {}
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 0.0
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_slow_estimate), \
+             patch.object(svc, "_build_recompute_report", new=MagicMock()), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+
+            task_a = asyncio.create_task(coord._auto_import_newly_published())
+            await first_in_critical.wait()
+            # Second invocation must block on the lock — `task_b` will
+            # not progress past `enter` until task_a releases.
+            task_b = asyncio.create_task(coord._auto_import_newly_published())
+            # Give task_b a chance to try (it should be lock-blocked).
+            await asyncio.sleep(0)
+            assert events == ["enter"], (
+                "Second invocation entered critical section before lock release"
+            )
+            let_first_finish.set()
+            await asyncio.gather(task_a, task_b)
+
+        # Both invocations completed, in serialized order.
+        assert events == ["enter", "exit", "enter", "exit"]
+
+
+class TestApplyChangeNotificationIncludesRunningQuarter:
+    """v0.9.14 — when the auto-import path fires the recompute
+    notification (because something published was reimported), the
+    running quarter rides along so apply_change recomputes show e.g.
+    2026Q1 + 2026Q2, not just 2026Q1."""
+
+    @pytest.mark.asyncio
+    async def test_running_quarter_appended_to_report_quarters(self):
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(utility="ekz"),
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": "2025-01-01",
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+
+        running_q = quarter_of(datetime.now(timezone.utc))
+        # A published prior quarter that's stale (apply_change drift).
+        stale_published = Quarter(running_q.year, running_q.q - 1) if running_q.q > 1 \
+            else Quarter(running_q.year - 1, 4)
+
+        coord.quarterly = {
+            stale_published: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+        }
+        coord._imported = {}
+        coord.hass = MagicMock()
+        import asyncio
+        coord._auto_import_lock = asyncio.Lock()
+        coord._notify_skipped_quarters = _async_noop_factory()
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 100.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            return {}
+
+        captured_quarters: list = []
+
+        def _capture_report(_hass, quarters, **_kw):
+            captured_quarters.append(list(quarters))
+            return MagicMock()
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published()
+
+        # Report builder received BOTH the stale-published quarter AND
+        # the running quarter (regression test for "only previous
+        # quarter is mentioned").
+        assert len(captured_quarters) == 1
+        assert stale_published in captured_quarters[0]
+        assert running_q in captured_quarters[0]
 
 
 def _async_return(value):

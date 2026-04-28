@@ -28,9 +28,12 @@ def _make_coordinator(statistic_id: str | None = "sensor.power_meter_exported"):
     v0.9.0: ``entry.options`` must be present (even if empty) because
     ``_config`` reads it via ``_resolve_config_at``.
     """
+    import asyncio
+
     coord = BfeCoordinator.__new__(BfeCoordinator)
     coord.hass = MagicMock()
     coord._earliest_export_hour = None
+    coord._auto_import_lock = asyncio.Lock()
     entry_data = {"stromnetzeinspeisung_kwh": statistic_id} if statistic_id else {}
     coord.entry = SimpleNamespace(
         entry_id="test_entry", data=entry_data, options={}

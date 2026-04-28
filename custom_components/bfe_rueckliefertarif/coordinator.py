@@ -8,6 +8,7 @@ The coordinator owns the "what's the current state of the world" view:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -53,6 +54,11 @@ class BfeCoordinator(DataUpdateCoordinator):
         # don't claim HA has records when it doesn't. Lazily computed; reset
         # on coordinator restart only.
         self._earliest_export_hour: datetime | None = None
+        # v0.9.14 — single-flight guard around `_auto_import_newly_published`.
+        # The first-refresh path schedules it as a background task while
+        # `_async_update_data` returns early; a 6h tick that fires before the
+        # background task finishes must wait, not interleave.
+        self._auto_import_lock = asyncio.Lock()
 
     @property
     def _config(self) -> dict:
@@ -95,7 +101,19 @@ class BfeCoordinator(DataUpdateCoordinator):
             if abrechnungs_rhythmus == ABRECHNUNGS_RHYTHMUS_MONAT:
                 self.monthly = await fetch_monthly(session)
 
-        await self._auto_import_newly_published()
+        # v0.9.14 — defer auto-import on the first refresh so sensor
+        # platform setup doesn't block on the recorder drain
+        # (`async_block_till_done` inside `import_statistics` waits for
+        # the entire recorder queue, not just our writes — multi-second
+        # on Postgres-backed recorders during cold HA startup).
+        # Subsequent ticks (6h tick, refresh_data service) run inline.
+        if self.data is None:
+            self.hass.async_create_background_task(
+                self._auto_import_newly_published(),
+                name=f"{DOMAIN}_initial_auto_import_{self.entry.entry_id}",
+            )
+        else:
+            await self._auto_import_newly_published()
         breakdown = self._tariff_breakdown()
         return {
             "quarterly": self.quarterly,
@@ -245,7 +263,10 @@ class BfeCoordinator(DataUpdateCoordinator):
 
         After the loop, any quarters that were actually reimported get
         summarized in a single rich notification card (utility, model,
-        kW/EV/HKN/billing, plus a per-month results table).
+        kW/EV/HKN/billing, plus a per-month results table). v0.9.14: the
+        running quarter rides along in that notification when the
+        estimate ran successfully (so apply_change recomputes show the
+        running quarter alongside the stale-published ones).
         """
         from datetime import date
 
@@ -257,78 +278,92 @@ class BfeCoordinator(DataUpdateCoordinator):
             _reimport_quarter,
         )
 
-        # v0.9.3: skip quarters that predate the earliest config-history
-        # record (the plant install date). Without this guard, every
-        # 6-hourly coordinator refresh logs a "predates earliest record"
-        # WARNING for each pre-install quarter BFE has published — same
-        # root cause `_reimport_all_history`'s pre-active filter addresses
-        # for the explicit Recompute button.
-        history = (self.entry.options or {}).get(OPT_CONFIG_HISTORY) or []
-        earliest_date: date | None = None
-        if history:
-            try:
-                earliest_date = date.fromisoformat(history[0]["valid_from"])
-            except (KeyError, ValueError, TypeError):
-                earliest_date = None
+        # v0.9.14 — single-flight: a 6h tick that fires while the
+        # first-refresh-deferred background task is still running waits
+        # here, instead of double-mutating `_imported`.
+        async with self._auto_import_lock:
+            # v0.9.3: skip quarters that predate the earliest config-history
+            # record (the plant install date). Without this guard, every
+            # 6-hourly coordinator refresh logs a "predates earliest record"
+            # WARNING for each pre-install quarter BFE has published — same
+            # root cause `_reimport_all_history`'s pre-active filter addresses
+            # for the explicit Recompute button.
+            history = (self.entry.options or {}).get(OPT_CONFIG_HISTORY) or []
+            earliest_date: date | None = None
+            if history:
+                try:
+                    earliest_date = date.fromisoformat(history[0]["valid_from"])
+                except (KeyError, ValueError, TypeError):
+                    earliest_date = None
 
-        no_data_skipped: list[str] = []
-        reimported: list[Quarter] = []
-        # v0.9.12 — track the most recent quarter reimported in this tick so
-        # a contiguous running-quarter estimate can chain its anchor through
-        # memory (avoiding the recorder commit-timer race that v0.9.11 fixed
-        # in `_reimport_all_history`).
-        last_reimported_q: Quarter | None = None
-        last_reimported_final: float = 0.0
+            no_data_skipped: list[str] = []
+            reimported: list[Quarter] = []
+            # v0.9.12 — track the most recent quarter reimported in this tick so
+            # a contiguous running-quarter estimate can chain its anchor through
+            # memory (avoiding the recorder commit-timer race that v0.9.11 fixed
+            # in `_reimport_all_history`).
+            last_reimported_q: Quarter | None = None
+            last_reimported_final: float = 0.0
 
-        for q, price in sorted(self.quarterly.items()):
-            if earliest_date is not None:
-                q_start_local = date(q.year, ((q.q - 1) * 3) + 1, 1)
-                if q_start_local < earliest_date:
+            for q, price in sorted(self.quarterly.items()):
+                if earliest_date is not None:
+                    q_start_local = date(q.year, ((q.q - 1) * 3) + 1, 1)
+                    if q_start_local < earliest_date:
+                        continue
+                key = str(q)
+                prior = self._imported.get(key)
+                if prior and not self._snapshot_is_stale(prior, q, price):
                     continue
-            key = str(q)
-            prior = self._imported.get(key)
-            if prior and not self._snapshot_is_stale(prior, q, price):
-                continue
-            try:
-                final_sum = await _reimport_quarter(self.hass, q)
-                reimported.append(q)
-                last_reimported_q = q
-                last_reimported_final = final_sum
-            except LookupError as exc:
-                # No tariff data covering this date — expected for pre-2026
-                # quarters. Surface via a persistent notification below.
-                _LOGGER.debug("Auto-import skipped %s: %s", q, exc)
-                no_data_skipped.append(str(q))
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
+                try:
+                    final_sum = await _reimport_quarter(self.hass, q)
+                    reimported.append(q)
+                    last_reimported_q = q
+                    last_reimported_final = final_sum
+                except LookupError as exc:
+                    # No tariff data covering this date — expected for pre-2026
+                    # quarters. Surface via a persistent notification below.
+                    _LOGGER.debug("Auto-import skipped %s: %s", q, exc)
+                    no_data_skipped.append(str(q))
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
 
-        # v0.9.12 — refresh the running-quarter estimate under the same
-        # triggers as published quarters (6h tick, apply_change reload via
-        # `async_config_entry_first_refresh`, `refresh_data` service). Skip
-        # only when BFE has just published the running quarter — in that
-        # case the loop above already imported it via `_reimport_quarter`.
-        running_q = quarter_of(datetime.now(timezone.utc))
-        if running_q not in self.quarterly:
-            try:
-                if (
-                    last_reimported_q is not None
-                    and last_reimported_q.next() == running_q
-                ):
-                    await _import_running_quarter_estimate(
-                        self.hass, anchor_override=last_reimported_final
+            # v0.9.12 — refresh the running-quarter estimate under the same
+            # triggers as published quarters (6h tick, apply_change reload via
+            # `async_config_entry_first_refresh`, `refresh_data` service). Skip
+            # only when BFE has just published the running quarter — in that
+            # case the loop above already imported it via `_reimport_quarter`.
+            running_q = quarter_of(datetime.now(timezone.utc))
+            running_q_estimated = False
+            if running_q not in self.quarterly:
+                try:
+                    if (
+                        last_reimported_q is not None
+                        and last_reimported_q.next() == running_q
+                    ):
+                        await _import_running_quarter_estimate(
+                            self.hass, anchor_override=last_reimported_final
+                        )
+                    else:
+                        await _import_running_quarter_estimate(self.hass)
+                    running_q_estimated = True
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Running-quarter estimate failed during auto-import: %s",
+                        exc,
                     )
-                else:
-                    await _import_running_quarter_estimate(self.hass)
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Running-quarter estimate failed during auto-import: %s",
-                    exc,
-                )
 
-        await self._notify_skipped_quarters(no_data_skipped)
-        if reimported:
-            report = _build_recompute_report(self.hass, reimported)
-            _notify_recompute(self.hass, self.entry.entry_id, report)
+            await self._notify_skipped_quarters(no_data_skipped)
+            if reimported:
+                # v0.9.14 — when a notification fires (because something
+                # published was reimported), include the running quarter
+                # so apply_change recomputes show e.g. 2026Q1 + 2026Q2,
+                # not just 2026Q1. Stays gated on `reimported` so quiet
+                # 6h ticks don't spam.
+                notify_quarters = list(reimported)
+                if running_q_estimated:
+                    notify_quarters.append(running_q)
+                report = _build_recompute_report(self.hass, notify_quarters)
+                _notify_recompute(self.hass, self.entry.entry_id, report)
 
     def _snapshot_is_stale(
         self, prior: dict, q: Quarter, price: BfePrice
