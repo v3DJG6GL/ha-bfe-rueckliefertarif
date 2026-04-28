@@ -1661,8 +1661,6 @@ class TestRunningQuarterEstimatePerHourRates:
         coordinator = MagicMock()
         coordinator._imported = {}
         coordinator._async_save_state = _async_noop_factory()
-        # `_import_running_quarter_estimate` only checks `coordinator.data`
-        # is truthy now (the rate logic no longer reads `tariff_breakdown`).
         coordinator.data = {"current_tariff_rp_kwh": 12.91}
 
         live_entry = SimpleNamespace(
@@ -1834,6 +1832,110 @@ class TestRunningQuarterEstimatePerHourRates:
         assert abs(period["base_rp_kwh_avg"] - 8.000) < 1e-3
         assert abs(period["hkn_rp_kwh_avg"] - 4.000) < 1e-3
         assert abs(period["rate_rp_kwh_avg"] - 12.000) < 1e-3
+
+
+class TestRunningEstimateDuringFirstRefresh:
+    """v0.9.13 — regression test for "Coordinator not ready" warning fired
+    during entry reload after `apply_change`.
+
+    `_async_update_data` runs while `coordinator.data` is still None (the
+    first refresh is what populates it). v0.9.12's auto-import call to
+    `_import_running_quarter_estimate` therefore tripped on the old
+    `not coordinator.data` gate. Fix: gate now only checks `coordinator
+    is None`."""
+
+    @pytest.mark.asyncio
+    async def test_runs_when_coordinator_data_is_none(self):
+        from datetime import datetime, timezone
+
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.importer import TariffConfig
+        from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
+
+        resolved = ResolvedTariff(
+            utility_key="age_sa",
+            valid_from="2026-01-01",
+            settlement_period="quartal",
+            base_model="fixed_flat",
+            fixed_rp_kwh=8.00,
+            fixed_ht_rp_kwh=None,
+            fixed_nt_rp_kwh=None,
+            hkn_rp_kwh=4.00,
+            hkn_structure="additive_optin",
+            cap_mode=False,
+            cap_rp_kwh=None,
+            federal_floor_rp_kwh=6.00,
+            federal_floor_label="<30 kW",
+            price_floor_rp_kwh=None,
+            tariffs_json_version="1.0.0",
+            tariffs_json_source="remote",
+            ht_window=None,
+            seasonal=None,
+        )
+        tariff_cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kw=8.0,
+            hkn_aktiviert=True,
+            hkn_rp_kwh_resolved=4.00,
+            resolved=resolved,
+        )
+        cfg = {
+            CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+            CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+            CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        }
+
+        hass = MagicMock()
+        coordinator = MagicMock()
+        coordinator._imported = {}
+        coordinator._async_save_state = _async_noop_factory()
+        # First-refresh state: DataUpdateCoordinator.data is still None
+        # while `_async_update_data` populates it. Pre-fix this raised
+        # "Coordinator not ready — run 'Refresh prices from BFE' first".
+        coordinator.data = None
+
+        live_entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data={**cfg, **_entry_data(utility="age_sa")},
+            options={},
+        )
+        hass.data = {
+            DOMAIN: {
+                "entry_xyz": {
+                    "config": dict(live_entry.data),
+                    "options": dict(live_entry.options),
+                    "coordinator": coordinator,
+                }
+            }
+        }
+        hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
+
+        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)
+        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=timezone.utc)
+        synthetic = {ht_hour: 2.0, nt_hour: 2.0}
+
+        async def _fake_read_hourly_export(_hass, _stat_id, _start, _end):
+            return {h: kwh for h, kwh in synthetic.items() if _start <= h < _end}
+
+        async def _fake_read_anchor(*_args, **_kw):
+            return 0.0
+
+        async def _fake_import_statistics(*args, **kwargs):
+            return None
+
+        def _sync_cfg(_hass, **_kw):
+            return cfg, tariff_cfg
+
+        with patch.object(svc, "_cfg_for_entry", new=_sync_cfg), \
+             patch.object(svc, "read_hourly_export", new=_fake_read_hourly_export), \
+             patch.object(svc, "read_compensation_anchor", new=_fake_read_anchor), \
+             patch.object(svc, "import_statistics", new=_fake_import_statistics):
+            # Must NOT raise "Coordinator not ready …".
+            result = await svc._import_running_quarter_estimate(hass)
+
+        # Estimate completed and wrote a snapshot for the running quarter.
+        assert "2026Q2" in coordinator._imported
+        assert result["chf_total"] >= 0.0
 
 
 class TestRenderConfigBlockShared:

@@ -960,9 +960,9 @@ async def _import_running_quarter_estimate(
 
     entry_data = _first_entry_data(hass)
     coordinator = entry_data.get("coordinator")
-    if coordinator is None or not coordinator.data:
+    if coordinator is None:
         raise RuntimeError(
-            "Coordinator not ready — run 'Refresh prices from BFE' first"
+            "Coordinator not registered — integration not loaded"
         )
 
     rt = tariff_cfg.resolved
