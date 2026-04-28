@@ -1393,6 +1393,184 @@ class TestAnchorThreading:
         assert estimate_anchor == [14.28]
 
 
+class TestCoordinatorRefreshesRunningQuarter:
+    """v0.9.12 — `_auto_import_newly_published` (the 6h tick / reload /
+    refresh_data trigger) refreshes the running-quarter estimate so the
+    Energy Dashboard's 'this quarter' CHF rolls forward continuously
+    rather than freezing between manual recomputes.
+    """
+
+    def _make_coord(self, *, quarterly: dict, imported: dict | None = None,
+                    history_valid_from: str = "2025-01-01"):
+        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+
+        coord = BfeCoordinator.__new__(BfeCoordinator)
+        coord.entry = SimpleNamespace(
+            entry_id="entry_xyz",
+            data=_entry_data(utility="ekz"),
+            options={
+                OPT_CONFIG_HISTORY: [
+                    {
+                        "valid_from": history_valid_from,
+                        "valid_to": None,
+                        "config": _entry_data(utility="ekz"),
+                    }
+                ]
+            },
+        )
+        coord.quarterly = quarterly
+        coord._imported = imported or {}
+        coord.hass = MagicMock()
+        # Sub-helpers that aren't relevant to these tests.
+        coord._notify_skipped_quarters = _async_noop_factory()
+        return coord
+
+    @pytest.mark.asyncio
+    async def test_refreshes_running_quarter_when_no_reimports(self):
+        # No stale quarters → no `_reimport_quarter` calls → estimate
+        # still runs (LTS-read path because no contiguous reimport).
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        # Q1 2026 already in `_imported` and considered fresh.
+        q1_2026 = Quarter(2026, 1)
+        coord = self._make_coord(
+            quarterly={
+                q1_2026: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            },
+            imported={"2026Q1": {"q_price_chf_mwh": 80.0, "snapshot": {}}},
+        )
+        # Force every prior to be 'fresh' (not stale).
+        coord._snapshot_is_stale = MagicMock(return_value=False)
+
+        estimate_calls: list[float | None] = []
+        reimport_calls: list = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            reimport_calls.append(q)
+            return 0.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", new=MagicMock()), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published()
+
+        assert reimport_calls == []  # nothing was stale
+        # Estimate fired anyway, with anchor_override=None (LTS-read path).
+        assert estimate_calls == [None]
+
+    @pytest.mark.asyncio
+    async def test_chains_anchor_when_prev_quarter_was_just_reimported(self):
+        # Q1 2026 reimported in this tick → running Q2 2026 should chain
+        # its anchor through memory using Q1's returned final sum.
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        q1_2026 = Quarter(2026, 1)
+        coord = self._make_coord(
+            quarterly={
+                q1_2026: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
+            },
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+
+        estimate_calls: list[float | None] = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 114.71  # Q1's final cumulative sum
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", new=MagicMock()), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published()
+
+        # Estimate received Q1's final sum as anchor_override (no LTS race).
+        assert estimate_calls == [114.71]
+
+    @pytest.mark.asyncio
+    async def test_uses_lts_read_when_chain_not_contiguous(self):
+        # Only Q3 2025 was reimported (e.g. utility change for that
+        # quarter only). Running quarter Q2 2026 is NOT contiguous to
+        # Q3 2025 → fall back to LTS-read path.
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter
+
+        q3_2025 = Quarter(2025, 3)
+        coord = self._make_coord(
+            quarterly={
+                q3_2025: BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+            },
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+
+        estimate_calls: list[float | None] = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 14.28
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", new=MagicMock()), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published()
+
+        # Q3 → Q4 → Q1 → Q2: not contiguous from Q3 → no override.
+        assert estimate_calls == [None]
+
+    @pytest.mark.asyncio
+    async def test_skips_estimate_when_bfe_published_running_quarter(self):
+        # If BFE has published the running quarter, the published-quarter
+        # loop handles it via `_reimport_quarter`. The estimate must NOT
+        # then overwrite that with a floor-based estimate.
+        from custom_components.bfe_rueckliefertarif import services as svc
+        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+        from datetime import datetime, timezone
+
+        running_q = quarter_of(datetime.now(timezone.utc))
+        coord = self._make_coord(
+            quarterly={
+                running_q: BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
+            },
+        )
+        coord._snapshot_is_stale = MagicMock(return_value=True)
+
+        estimate_calls: list[float | None] = []
+
+        async def _fake_reimport_quarter(_hass, q):
+            return 100.0
+
+        async def _fake_estimate(_hass, *, anchor_override=None):
+            estimate_calls.append(anchor_override)
+            return {}
+
+        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
+             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
+             patch.object(svc, "_build_recompute_report", new=MagicMock()), \
+             patch.object(svc, "_notify_recompute", new=MagicMock()):
+            await coord._auto_import_newly_published()
+
+        # Estimate did NOT fire — the published-quarter path handled it.
+        assert estimate_calls == []
+
+
 def _async_return(value):
     async def _f(*args, **kwargs):
         return value

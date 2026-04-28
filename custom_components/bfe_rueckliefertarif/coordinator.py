@@ -252,6 +252,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         from .const import OPT_CONFIG_HISTORY
         from .services import (
             _build_recompute_report,
+            _import_running_quarter_estimate,
             _notify_recompute,
             _reimport_quarter,
         )
@@ -272,6 +273,12 @@ class BfeCoordinator(DataUpdateCoordinator):
 
         no_data_skipped: list[str] = []
         reimported: list[Quarter] = []
+        # v0.9.12 — track the most recent quarter reimported in this tick so
+        # a contiguous running-quarter estimate can chain its anchor through
+        # memory (avoiding the recorder commit-timer race that v0.9.11 fixed
+        # in `_reimport_all_history`).
+        last_reimported_q: Quarter | None = None
+        last_reimported_final: float = 0.0
 
         for q, price in sorted(self.quarterly.items()):
             if earliest_date is not None:
@@ -283,8 +290,10 @@ class BfeCoordinator(DataUpdateCoordinator):
             if prior and not self._snapshot_is_stale(prior, q, price):
                 continue
             try:
-                await _reimport_quarter(self.hass, q)
+                final_sum = await _reimport_quarter(self.hass, q)
                 reimported.append(q)
+                last_reimported_q = q
+                last_reimported_final = final_sum
             except LookupError as exc:
                 # No tariff data covering this date — expected for pre-2026
                 # quarters. Surface via a persistent notification below.
@@ -292,6 +301,29 @@ class BfeCoordinator(DataUpdateCoordinator):
                 no_data_skipped.append(str(q))
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
+
+        # v0.9.12 — refresh the running-quarter estimate under the same
+        # triggers as published quarters (6h tick, apply_change reload via
+        # `async_config_entry_first_refresh`, `refresh_data` service). Skip
+        # only when BFE has just published the running quarter — in that
+        # case the loop above already imported it via `_reimport_quarter`.
+        running_q = quarter_of(datetime.now(timezone.utc))
+        if running_q not in self.quarterly:
+            try:
+                if (
+                    last_reimported_q is not None
+                    and last_reimported_q.next() == running_q
+                ):
+                    await _import_running_quarter_estimate(
+                        self.hass, anchor_override=last_reimported_final
+                    )
+                else:
+                    await _import_running_quarter_estimate(self.hass)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Running-quarter estimate failed during auto-import: %s",
+                    exc,
+                )
 
         await self._notify_skipped_quarters(no_data_skipped)
         if reimported:
