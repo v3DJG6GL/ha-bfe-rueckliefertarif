@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.bfe_rueckliefertarif.quarters import (
+    ZURICH,
     Month,
     Quarter,
-    ZURICH,
     hours_in_range,
     month_bounds_utc,
     quarter_bounds_utc,

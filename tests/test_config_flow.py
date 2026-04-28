@@ -13,7 +13,6 @@ import pytest
 
 from custom_components.bfe_rueckliefertarif.config_flow import _validate_tariff
 from custom_components.bfe_rueckliefertarif.const import (
-    ABRECHNUNGS_RHYTHMUS_MONAT,
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
     CONF_ABRECHNUNGS_RHYTHMUS,
     CONF_EIGENVERBRAUCH_AKTIVIERT,
@@ -26,7 +25,6 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_VALID_FROM,
 )
 from custom_components.bfe_rueckliefertarif.tariffs_db import list_utility_keys
-
 
 _COMPONENT_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "bfe_rueckliefertarif"
 

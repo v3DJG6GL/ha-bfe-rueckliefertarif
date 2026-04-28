@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -37,7 +37,7 @@ _STORAGE_KEY_FMT = "bfe_rueckliefertarif.{entry_id}"
 class BfeCoordinator(DataUpdateCoordinator):
     """Polls BFE CSVs, caches prices, tracks which quarters are imported."""
 
-    def __init__(self, hass: "HomeAssistant", entry: "ConfigEntry") -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
             hass,
             _LOGGER,
@@ -125,7 +125,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             "current_tariff_rp_kwh": breakdown["effective_rp_kwh"] if breakdown else None,
             "current_tariff_chf_kwh": breakdown["effective_chf_kwh"] if breakdown else None,
             "tariff_breakdown": breakdown,
-            "next_publication": _next_publication_estimate(datetime.now(timezone.utc)),
+            "next_publication": _next_publication_estimate(datetime.now(UTC)),
         }
 
     def _tariff_breakdown(self) -> dict[str, Any] | None:
@@ -176,7 +176,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         floor_value = floor if floor is not None else 0.0
         cap = rt.cap_rp_kwh if rt.cap_mode else None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         q = quarter_of(now)
         is_estimate = False
         estimate_basis: str | None = None
@@ -330,7 +330,7 @@ class BfeCoordinator(DataUpdateCoordinator):
                     # quarters. Surface via a persistent notification below.
                     _LOGGER.debug("Auto-import skipped %s: %s", q, exc)
                     no_data_skipped.append(str(q))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
 
             # v0.9.12 — refresh the running-quarter estimate under the same
@@ -344,7 +344,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             # config doesn't list the running quarter in the notification.
             # 6h tick / refresh_data keep unconditional behavior to
             # preserve the kWh roll-forward feature.
-            running_q = quarter_of(datetime.now(timezone.utc))
+            running_q = quarter_of(datetime.now(UTC))
             running_q_estimated = False
             prior_running_snapshot = (
                 self._imported.get(str(running_q)) or {}
@@ -366,7 +366,7 @@ class BfeCoordinator(DataUpdateCoordinator):
                         else:
                             await _import_running_quarter_estimate(self.hass)
                         running_q_estimated = True
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         _LOGGER.warning(
                             "Running-quarter estimate failed during auto-import: %s",
                             exc,
@@ -484,6 +484,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         """
         from homeassistant.components.persistent_notification import (
             async_create as _notify,
+        )
+        from homeassistant.components.persistent_notification import (
             async_dismiss as _dismiss,
         )
 
@@ -503,7 +505,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             db = load_tariffs()
             rates = db["utilities"].get(utility_key, {}).get("rates") or []
             earliest_window = min((r["valid_from"] for r in rates), default=None)
-        except Exception:  # noqa: BLE001
+        except Exception:
             earliest_window = None
         window_text = (
             f"starts at **{earliest_window}**"
@@ -558,10 +560,10 @@ class BfeCoordinator(DataUpdateCoordinator):
                 rows = await read_hourly_export(
                     self.hass,
                     statistic_id,
-                    datetime(1970, 1, 1, tzinfo=timezone.utc),
-                    datetime.now(timezone.utc),
+                    datetime(1970, 1, 1, tzinfo=UTC),
+                    datetime.now(UTC),
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _LOGGER.debug("read_hourly_export failed: %s", exc)
                 return skipped
             non_zero_hours = [h for h, v in rows.items() if v > 0]
@@ -581,7 +583,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             except ValueError:
                 kept.append(s)
                 continue
-            q_end_utc = quarter_end_zurich(q).astimezone(timezone.utc)
+            q_end_utc = quarter_end_zurich(q).astimezone(UTC)
             if q_end_utc >= threshold:
                 kept.append(s)
         return kept
@@ -595,4 +597,4 @@ def _next_publication_estimate(now: datetime) -> datetime:
 
     q_end_of_current = quarter_start_zurich(next_q)
     pub = q_end_of_current + timedelta(days=15)
-    return pub.astimezone(timezone.utc)
+    return pub.astimezone(UTC)

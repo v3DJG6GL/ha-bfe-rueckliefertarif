@@ -7,7 +7,7 @@ notification from claiming HA has grid-export records when it doesn't.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,7 +58,7 @@ class TestFilterSkippedQuarters:
     async def test_dismisses_when_sensor_has_only_zero_rows(self):
         # Recorder returns rows but all zero — no real export data.
         coord = _make_coordinator()
-        zero_rows = {datetime(2025, 9, 1, h, tzinfo=timezone.utc): 0.0 for h in range(3)}
+        zero_rows = {datetime(2025, 9, 1, h, tzinfo=UTC): 0.0 for h in range(3)}
         with patch(
             "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
             new=AsyncMock(return_value=zero_rows),
@@ -73,8 +73,8 @@ class TestFilterSkippedQuarters:
         # 2025-07..2025-09-30, ends after threshold → kept.
         coord = _make_coordinator()
         rows = {
-            datetime(2025, 9, 1, 12, tzinfo=timezone.utc): 1.5,
-            datetime(2025, 9, 2, 12, tzinfo=timezone.utc): 2.0,
+            datetime(2025, 9, 1, 12, tzinfo=UTC): 1.5,
+            datetime(2025, 9, 2, 12, tzinfo=UTC): 2.0,
         }
         with patch(
             "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
@@ -109,7 +109,7 @@ class TestFilterSkippedQuarters:
         # First call computes, second call reuses cached value (no second
         # recorder query).
         coord = _make_coordinator()
-        rows = {datetime(2025, 9, 1, tzinfo=timezone.utc): 1.0}
+        rows = {datetime(2025, 9, 1, tzinfo=UTC): 1.0}
         mock_read = AsyncMock(return_value=rows)
         with patch(
             "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
@@ -118,7 +118,7 @@ class TestFilterSkippedQuarters:
             await coord._filter_skipped_to_quarters_with_export(["2025Q3"])
             await coord._filter_skipped_to_quarters_with_export(["2025Q4"])
         assert mock_read.call_count == 1
-        assert coord._earliest_export_hour == datetime(2025, 9, 1, tzinfo=timezone.utc)
+        assert coord._earliest_export_hour == datetime(2025, 9, 1, tzinfo=UTC)
 
 
 class TestCoordinatorAutoImportSkipsPreValidFrom:

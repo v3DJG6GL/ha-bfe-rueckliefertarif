@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.bfe_rueckliefertarif.bfe import (
-    PriceNotYetPublished,
+    PriceNotYetPublishedError,
     get_month,
     get_quarter,
     parse_monatspreise,
@@ -75,12 +75,12 @@ class TestMonthlyParse:
 class TestPriceNotPublished:
     def test_get_quarter_missing_raises(self, quarterly_csv):
         prices = parse_quartalspreise(quarterly_csv)
-        with pytest.raises(PriceNotYetPublished):
+        with pytest.raises(PriceNotYetPublishedError):
             get_quarter(prices, Quarter(2030, 1))
 
     def test_get_month_missing_raises(self, monthly_csv):
         prices = parse_monatspreise(monthly_csv)
-        with pytest.raises(PriceNotYetPublished):
+        with pytest.raises(PriceNotYetPublishedError):
             get_month(prices, Month(2030, 1))
 
     def test_get_quarter_present_returns_price(self, quarterly_csv):

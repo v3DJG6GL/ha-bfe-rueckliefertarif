@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -221,7 +222,7 @@ class TestOptionsFlowPreservesOptions:
         # change), so we trigger the reload explicitly. Required so the
         # coordinator's tariff-breakdown sensor rebuilds with fresh entry
         # state.
-        flow, entry = self._make_flow({OPT_CONFIG_HISTORY: []})
+        flow, _entry = self._make_flow({OPT_CONFIG_HISTORY: []})
         await flow.async_step_done_history()
         # async_create_task(async_reload(entry_id)) must have been scheduled.
         assert flow.hass.async_create_task.called, (
@@ -551,9 +552,9 @@ class TestRecomputeHistoryEstimate:
         # table. The basis label is gone (fixed_flat utilities don't really
         # have a "floor" — sensor attributes still expose estimate_basis).
         from custom_components.bfe_rueckliefertarif.services import (
+            _format_recompute_notification,
             _RecomputeReport,
             _RecomputeReportRow,
-            _format_recompute_notification,
         )
 
         rows = [
@@ -1543,12 +1544,13 @@ class TestCoordinatorRefreshesRunningQuarter:
         # If BFE has published the running quarter, the published-quarter
         # loop handles it via `_reimport_quarter`. The estimate must NOT
         # then overwrite that with a floor-based estimate.
+        from datetime import datetime
+
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
-        from datetime import datetime, timezone
+        from custom_components.bfe_rueckliefertarif.quarters import quarter_of
 
-        running_q = quarter_of(datetime.now(timezone.utc))
+        running_q = quarter_of(datetime.now(UTC))
         coord = self._make_coord(
             quarterly={
                 running_q: BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
@@ -1767,12 +1769,12 @@ class TestApplyChangeNotificationIncludesRunningQuarter:
 
     @pytest.mark.asyncio
     async def test_running_quarter_appended_to_report_quarters(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
         from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
@@ -1789,7 +1791,7 @@ class TestApplyChangeNotificationIncludesRunningQuarter:
             },
         )
 
-        running_q = quarter_of(datetime.now(timezone.utc))
+        running_q = quarter_of(datetime.now(UTC))
         # A published prior quarter that's stale (apply_change drift).
         stale_published = Quarter(running_q.year, running_q.q - 1) if running_q.q > 1 \
             else Quarter(running_q.year - 1, 4)
@@ -1868,13 +1870,13 @@ class TestRunningQuarterStalenessGate:
         # running quarter's resolved config (e.g. the 2025-01-01 →
         # 2025-12-31 record). Expected: estimate skipped, running_q NOT
         # in notification. Reproduces the user's v0.9.14 regression.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.bfe import BfePrice
         from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
 
-        running_q = quarter_of(datetime.now(timezone.utc))
+        running_q = quarter_of(datetime.now(UTC))
         stale_q = Quarter(running_q.year - 1, 1)  # Q1 of last year
         coord = self._make_coord(
             quarterly={
@@ -1926,13 +1928,13 @@ class TestRunningQuarterStalenessGate:
         # User edits the OPEN record (covers running quarter), so
         # `_running_q_config_changed` returns True. Expected: estimate
         # runs, running_q IS in notification.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.bfe import BfePrice
         from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
 
-        running_q = quarter_of(datetime.now(timezone.utc))
+        running_q = quarter_of(datetime.now(UTC))
         stale_q = Quarter(running_q.year, running_q.q - 1) if running_q.q > 1 \
             else Quarter(running_q.year - 1, 4)
         coord = self._make_coord(
@@ -1979,13 +1981,13 @@ class TestRunningQuarterStalenessGate:
         # estimate always runs to roll kWh forward — even when
         # `_running_q_config_changed` is False. But the notification
         # gate still excludes running_q because config is unchanged.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.bfe import BfePrice
         from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
 
-        running_q = quarter_of(datetime.now(timezone.utc))
+        running_q = quarter_of(datetime.now(UTC))
         stale_q = Quarter(running_q.year - 1, 1)
         coord = self._make_coord(
             quarterly={
@@ -2031,13 +2033,13 @@ class TestRunningQuarterStalenessGate:
         # Empty `_imported` (fresh install or first run after upgrade).
         # `_running_q_config_changed` returns True for "no prior snapshot".
         # Expected: estimate runs AND running_q IS in notification.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.bfe import BfePrice
         from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
 
-        running_q = quarter_of(datetime.now(timezone.utc))
+        running_q = quarter_of(datetime.now(UTC))
         stale_q = Quarter(running_q.year - 1, 1)
         coord = self._make_coord(
             quarterly={
@@ -2206,7 +2208,7 @@ class TestRunningQuarterEstimatePerHourRates:
         # export hours land in 2026Q2 — one in HT (Tue 2026-04-07 09:00
         # UTC = 11:00 CEST → HT mofr 06–22) and one in NT (Tue 2026-04-07
         # 21:00 UTC = 23:00 CEST → after 22:00 → NT). Both 2 kWh.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.importer import TariffConfig
@@ -2275,8 +2277,8 @@ class TestRunningQuarterEstimatePerHourRates:
             return cfg, tariff_cfg
 
         # Read-the-export-LTS mock: 2 kWh at HT, 2 kWh at NT.
-        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)   # 11:00 CEST → HT
-        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=timezone.utc)  # 23:00 CEST → NT
+        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=UTC)   # 11:00 CEST → HT
+        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=UTC)  # 23:00 CEST → NT
         synthetic_kwh = {ht_hour: 2.0, nt_hour: 2.0}
 
         async def _fake_read_hourly_export(_hass, _stat_id, _start, _end):
@@ -2330,7 +2332,7 @@ class TestRunningQuarterEstimatePerHourRates:
         # Regression: a fixed_flat utility (no HT/NT split) should produce
         # constant per-hour rates equal to fixed_rp_kwh + HKN. Base/HKN
         # cells now light up but with the same value across all hours.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.importer import TariffConfig
@@ -2390,8 +2392,8 @@ class TestRunningQuarterEstimatePerHourRates:
         }
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
 
-        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)
-        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=timezone.utc)
+        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=UTC)
+        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=UTC)
         synthetic = {ht_hour: 2.0, nt_hour: 2.0}
 
         async def _fake_read_hourly_export(_hass, _stat_id, _start, _end):
@@ -2434,7 +2436,7 @@ class TestRunningEstimateDuringFirstRefresh:
 
     @pytest.mark.asyncio
     async def test_runs_when_coordinator_data_is_none(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.importer import TariffConfig
@@ -2498,8 +2500,8 @@ class TestRunningEstimateDuringFirstRefresh:
         }
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
 
-        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)
-        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=timezone.utc)
+        ht_hour = datetime(2026, 4, 7, 9, 0, tzinfo=UTC)
+        nt_hour = datetime(2026, 4, 7, 21, 0, tzinfo=UTC)
         synthetic = {ht_hour: 2.0, nt_hour: 2.0}
 
         async def _fake_read_hourly_export(_hass, _stat_id, _start, _end):

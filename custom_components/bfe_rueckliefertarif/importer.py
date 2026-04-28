@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from .bfe import BfePrice, PriceNotYetPublished
+from .bfe import BfePrice, PriceNotYetPublishedError
 from .const import ABRECHNUNGS_RHYTHMUS_MONAT
 from .quarters import Month, Quarter, hours_in_range, month_bounds_utc, quarter_bounds_utc
 from .tariff import (
@@ -45,7 +45,7 @@ class TariffConfig:
     installierte_leistung_kw: float
     hkn_aktiviert: bool
     hkn_rp_kwh_resolved: float          # JSON's HKN if opted in, else 0.0
-    resolved: "ResolvedTariff"
+    resolved: ResolvedTariff
 
 
 @dataclass(frozen=True)
@@ -74,7 +74,7 @@ class QuarterPlan:
     post_quarter_delta_chf: float
 
 
-def _effective_floor(rt: "ResolvedTariff") -> float | None:
+def _effective_floor(rt: ResolvedTariff) -> float | None:
     """``max(federal_floor, utility_floor)`` — whichever binds first.
 
     Utility-level ``price_floor_rp_kwh`` (per StromVV Art. 4 Abs. 3 Bst. e
@@ -320,7 +320,7 @@ def _rate_rp_kwh_at_hour(
 
     if this_month in (m1, m2):
         if this_month not in monthly_prices:
-            raise PriceNotYetPublished(
+            raise PriceNotYetPublishedError(
                 f"Monthly PV price for {this_month} not published"
             )
         m_rp = chf_per_mwh_to_rp_per_kwh(monthly_prices[this_month].chf_per_mwh)
@@ -331,7 +331,7 @@ def _rate_rp_kwh_at_hour(
     # r_m3_eff = (Q_kwh × r_q_eff − M1_kwh × r_m1_eff − M2_kwh × r_m2_eff) / M3_kwh
     r_q_eff, _, q_hkn = _effective_rate_breakdown(cfg, q_rp)
     if m1 not in monthly_prices or m2 not in monthly_prices:
-        raise PriceNotYetPublished(
+        raise PriceNotYetPublishedError(
             f"Need M1 and M2 monthly prices to derive M3 rate for {q}"
         )
     r_m1_eff = _effective_rate(
@@ -444,7 +444,7 @@ def compute_quarter_plan_segmented(
                         this_month = m
                         break
                 if this_month not in monthly_prices:
-                    raise PriceNotYetPublished(
+                    raise PriceNotYetPublishedError(
                         f"Monthly PV price for {this_month} not published"
                     )
                 m_rp = chf_per_mwh_to_rp_per_kwh(monthly_prices[this_month].chf_per_mwh)

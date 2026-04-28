@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 async def read_hourly_export(
-    hass: "HomeAssistant", statistic_id: str, start: datetime, end: datetime
+    hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime
 ) -> dict[datetime, float]:
     """Read hourly export kWh from LTS. Derives per-hour from differencing `sum`.
 
@@ -60,7 +60,7 @@ async def read_hourly_export(
 
 
 async def read_compensation_anchor(
-    hass: "HomeAssistant", statistic_id: str, at: datetime
+    hass: HomeAssistant, statistic_id: str, at: datetime
 ) -> float:
     """Read the compensation LTS `sum` at a specific hour start. Returns 0 if missing."""
     from homeassistant.components.recorder import get_instance
@@ -84,7 +84,7 @@ async def read_compensation_anchor(
 
 
 async def read_post_quarter_sums(
-    hass: "HomeAssistant", statistic_id: str, start: datetime, end: datetime
+    hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime
 ) -> list[tuple[datetime, float]]:
     """Read all compensation LTS `sum` values in [start, end). For transition-spike shift."""
     from homeassistant.components.recorder import get_instance
@@ -147,7 +147,7 @@ def build_metadata_basis(statistic_id: str, name: str | None = None) -> dict[str
 
 
 async def import_statistics(
-    hass: "HomeAssistant",
+    hass: HomeAssistant,
     metadata: dict[str, Any],
     stats: list[dict[str, Any]],
 ) -> None:

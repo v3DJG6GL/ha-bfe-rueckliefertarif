@@ -12,7 +12,7 @@ comparison into a pure helper, both deferred until the logic grows.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -33,14 +33,13 @@ from custom_components.bfe_rueckliefertarif.quarters import (
     quarter_bounds_utc,
 )
 from custom_components.bfe_rueckliefertarif.services import (
-    _RecomputeReport,
-    _RecomputeReportRow,
     _aggregate_by_period,
     _format_recompute_notification,
+    _RecomputeReport,
+    _RecomputeReportRow,
 )
 from custom_components.bfe_rueckliefertarif.tariff import classify_ht
 from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
-
 
 # ----- _aggregate_by_period --------------------------------------------------
 
@@ -49,7 +48,7 @@ def _hour(year: int, month: int, day: int, hour: int) -> datetime:
     """Build a UTC hour matching the given Zurich-local wall-clock."""
     return datetime(
         year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich")
-    ).astimezone(timezone.utc)
+    ).astimezone(UTC)
 
 
 def _hr(
@@ -145,10 +144,8 @@ class TestAggregateByPeriod:
         # Synthetic January with 1 kWh/hour. EKZ-2025 producer window:
         # mofr 7-20 = HT (12.60), everything else = NT (11.60).
         ekz_window = {"mofr": [7, 20], "sa": None, "su": None}
-        m = Quarter(2025, 1)
-        s, e = quarter_bounds_utc(m)
         # Only iterate the January slice
-        from custom_components.bfe_rueckliefertarif.quarters import month_bounds_utc, Month
+        from custom_components.bfe_rueckliefertarif.quarters import Month, month_bounds_utc
         jan_s, jan_e = month_bounds_utc(Month(2025, 1))
         records = []
         for h in hours_in_range(jan_s, jan_e):

@@ -7,6 +7,7 @@ visibility and debugging — they expose current tariff values and publication s
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import (
@@ -39,9 +40,9 @@ if TYPE_CHECKING:
 
 
 async def async_setup_entry(
-    hass: "HomeAssistant",
-    entry: "ConfigEntry",
-    async_add_entities: "AddEntitiesCallback",
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Register diagnostic sensors for this config entry."""
     from datetime import date
@@ -98,7 +99,7 @@ class _BaseSensor(SensorEntity):
 
     def __init__(
         self,
-        entry: "ConfigEntry",
+        entry: ConfigEntry,
         prefix: str,
         suffix: str,
         translation_key: str,
@@ -123,7 +124,7 @@ class BasisVerguetungSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
     _attr_suggested_display_precision = 2
 
     def __init__(
-        self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
+        self, coordinator: BfeCoordinator, entry: ConfigEntry, prefix: str
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
         _BaseSensor.__init__(self, entry, prefix, "basisverguetung", "basisverguetung")
@@ -167,7 +168,7 @@ class AktuelleVerguetungChfKwhSensor(CoordinatorEntity[BfeCoordinator], _BaseSen
     # in time, so leave state_class unset).
 
     def __init__(
-        self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
+        self, coordinator: BfeCoordinator, entry: ConfigEntry, prefix: str
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
         _BaseSensor.__init__(
@@ -197,7 +198,7 @@ class HknVerguetungSensor(_BaseSensor):
     _attr_native_unit_of_measurement = "Rp/kWh"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, entry: "ConfigEntry", prefix: str, value: float) -> None:
+    def __init__(self, entry: ConfigEntry, prefix: str, value: float) -> None:
         super().__init__(entry, prefix, "hkn_verguetung", "hkn_verguetung")
         self._attr_native_value = value
 
@@ -210,7 +211,7 @@ class NaechsteReferenzmarktpreisPublikationSensor(
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
-        self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
+        self, coordinator: BfeCoordinator, entry: ConfigEntry, prefix: str
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
         _BaseSensor.__init__(
@@ -222,7 +223,7 @@ class NaechsteReferenzmarktpreisPublikationSensor(
         )
 
     @property
-    def native_value(self) -> "datetime | None":
+    def native_value(self) -> datetime | None:
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("next_publication")
@@ -235,7 +236,7 @@ class ReferenzmarktpreisQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
-        self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
+        self, coordinator: BfeCoordinator, entry: ConfigEntry, prefix: str
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
         _BaseSensor.__init__(
@@ -248,10 +249,10 @@ class ReferenzmarktpreisQSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         prices = self.coordinator.quarterly if self.coordinator else {}
-        q = quarter_of(datetime.now(timezone.utc))
+        q = quarter_of(datetime.now(UTC))
         price = prices.get(q)
         return price.chf_per_mwh if price else None
 
@@ -266,7 +267,7 @@ class TariffsDataLastUpdateSensor(_BaseSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
-    def __init__(self, entry: "ConfigEntry", prefix: str) -> None:
+    def __init__(self, entry: ConfigEntry, prefix: str) -> None:
         super().__init__(
             entry, prefix,
             "tariffs_last_remote_update",
@@ -275,7 +276,7 @@ class TariffsDataLastUpdateSensor(_BaseSensor):
         self._entry = entry
 
     @property
-    def native_value(self) -> "datetime | None":
+    def native_value(self) -> datetime | None:
         from .const import DOMAIN as _DOMAIN  # avoid top-level cycle
 
         tdc = self.hass.data.get(_DOMAIN, {}).get("_tariffs_data") if self.hass else None
@@ -300,7 +301,7 @@ class ReferenzmarktpreisMSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
-        self, coordinator: BfeCoordinator, entry: "ConfigEntry", prefix: str
+        self, coordinator: BfeCoordinator, entry: ConfigEntry, prefix: str
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
         _BaseSensor.__init__(
@@ -313,11 +314,11 @@ class ReferenzmarktpreisMSensor(CoordinatorEntity[BfeCoordinator], _BaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from .quarters import Month
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         m = Month(now.year, now.month)
         prices = self.coordinator.monthly if self.coordinator else {}
         price = prices.get(m)

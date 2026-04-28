@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING
 
-from .bfe import PriceNotYetPublished, fetch_monthly, fetch_quarterly
+from .bfe import PriceNotYetPublishedError, fetch_monthly, fetch_quarterly
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
@@ -31,13 +32,13 @@ from .ha_recorder import (
     read_post_quarter_sums,
 )
 from .importer import (
+    QuarterSegment,
     TariffConfig,
-    compute_quarter_plan,
     compute_quarter_plan_segmented,
     cumulative_sums,
 )
 from .quarters import Quarter, hours_in_range, quarter_bounds_utc, quarter_of
-from .tariffs_db import find_active, resolve_tariff_at
+from .tariffs_db import find_active, load_tariffs, resolve_tariff_at
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_register_services(hass: "HomeAssistant") -> None:
+async def async_register_services(hass: HomeAssistant) -> None:
     """Register services on first integration setup."""
     if hass.services.has_service(DOMAIN, "reimport_all_history"):
         # v0.9.6: drop the legacy ``refresh`` service if it survived from a
@@ -67,7 +68,7 @@ async def async_register_services(hass: "HomeAssistant") -> None:
     )
 
 
-def _first_entry_data(hass: "HomeAssistant") -> dict:
+def _first_entry_data(hass: HomeAssistant) -> dict:
     """Return the first config entry's storage dict, with live config/options.
 
     ``hass.data[DOMAIN]`` carries one slot per config entry (keyed by
@@ -95,7 +96,7 @@ def _first_entry_data(hass: "HomeAssistant") -> dict:
 
 
 def _cfg_for_entry(
-    hass: "HomeAssistant", *, for_quarter: Quarter | None = None
+    hass: HomeAssistant, *, for_quarter: Quarter | None = None
 ) -> tuple[dict, TariffConfig]:
     """Build the TariffConfig for a config entry, optionally as-of a quarter.
 
@@ -116,7 +117,7 @@ def _cfg_for_entry(
 
 
 def _cfg_for_entry_at_date(
-    hass: "HomeAssistant", at_date
+    hass: HomeAssistant, at_date
 ) -> tuple[dict, TariffConfig]:
     """v0.9.9 — like ``_cfg_for_entry`` but takes an arbitrary calendar date,
     not just quarter starts. Used by ``_resolve_quarter_segments`` to build a
@@ -150,8 +151,8 @@ def _cfg_for_entry_at_date(
 
 
 def _resolve_quarter_segments(
-    hass: "HomeAssistant", q: Quarter
-) -> list["QuarterSegment"]:
+    hass: HomeAssistant, q: Quarter
+) -> list[QuarterSegment]:
     """Split ``q`` into contiguous (config × season) segments.
 
     A segment is a half-open ``[start_utc, end_utc)`` UTC range carrying a
@@ -171,16 +172,14 @@ def _resolve_quarter_segments(
     from datetime import date, datetime
     from zoneinfo import ZoneInfo
 
-    from .importer import QuarterSegment
-
-    _ZRH = ZoneInfo("Europe/Zurich")
+    _zrh = ZoneInfo("Europe/Zurich")
 
     def _zurich_midnight_utc(d: date) -> datetime:
         """Zurich-local 00:00 of ``d`` expressed in UTC. Mirrors the convention
         used by ``quarter_bounds_utc`` / ``month_bounds_utc`` so segment
         boundaries align with the importer's hour iteration.
         """
-        local = datetime(d.year, d.month, d.day, tzinfo=_ZRH)
+        local = datetime(d.year, d.month, d.day, tzinfo=_zrh)
         return local.astimezone(ZoneInfo("UTC"))
 
     q_start_utc, q_end_utc = quarter_bounds_utc(q)
@@ -314,7 +313,7 @@ def _resolve_config_at(options: dict, at_date, fallback_cfg: dict) -> dict:
 
 
 async def _reimport_quarter(
-    hass: "HomeAssistant",
+    hass: HomeAssistant,
     q: Quarter,
     *,
     anchor_override: float | None = None,
@@ -365,7 +364,7 @@ async def _reimport_quarter(
         )
 
     if q not in quarterly:
-        raise PriceNotYetPublished(f"BFE has not published 2026Q{q.q}/{q.year} yet")
+        raise PriceNotYetPublishedError(f"BFE has not published 2026Q{q.q}/{q.year} yet")
     q_price = quarterly[q]
 
     hourly_kwh = await read_hourly_export(hass, export_id, q_start, q_end)
@@ -708,7 +707,7 @@ def _short_date(iso: str) -> str:
 
 
 def _record_snapshot(
-    hass: "HomeAssistant",
+    hass: HomeAssistant,
     q: Quarter,
     q_price_chf_mwh: float,
     plan,
@@ -788,8 +787,9 @@ def _record_snapshot(
     # the quarter actually spans >1 segment (single-segment quarters render
     # as today's flat shape).
     if segments and len(segments) > 1:
-        from .quarters import month_bounds_utc as _mbu  # noqa: F401
         from zoneinfo import ZoneInfo
+
+        from .quarters import month_bounds_utc as _mbu  # noqa: F401
 
         z = ZoneInfo("Europe/Zurich")
         segments_meta: dict[str, dict] = {}
@@ -811,24 +811,24 @@ def _record_snapshot(
             }
         snapshot["segments_meta"] = segments_meta
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     key = str(q)
     coordinator._imported[key] = {
         "q_price_chf_mwh": q_price_chf_mwh,
-        "imported_at": datetime.now(timezone.utc).isoformat(),
+        "imported_at": datetime.now(UTC).isoformat(),
         "snapshot": snapshot,
     }
     hass.async_create_task(coordinator._async_save_state())
 
 
-def _one_hour() -> "timedelta":
+def _one_hour() -> timedelta:
     from datetime import timedelta
 
     return timedelta(hours=1)
 
 
-async def _reimport_all_history(hass: "HomeAssistant") -> dict:
+async def _reimport_all_history(hass: HomeAssistant) -> dict:
     """Re-import every quarter BFE has published, then estimate the running quarter.
 
     v0.9.2 changes:
@@ -852,9 +852,9 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     - ``before_active``: list of Quarters skipped because they predate
       ``OPT_CONFIG_HISTORY[0].valid_from`` (the plant install date)
     """
-    import aiohttp
-    from datetime import date, datetime, timezone
+    from datetime import date, datetime
 
+    import aiohttp
     from homeassistant.components.recorder import get_instance
 
     # Clear LTS + snapshot map first so the rewrite below is the sole source
@@ -922,10 +922,10 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
                 hass, q, anchor_override=cumulative_sum_chf
             )
             imported.append(q)
-        except PriceNotYetPublished as exc:
+        except PriceNotYetPublishedError as exc:
             _LOGGER.warning("Skipping %s: %s", q, exc)
             skipped.append(q)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _LOGGER.error("Failed importing %s: %s", q, exc)
             failed.append(q)
 
@@ -934,14 +934,14 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
     # price, HKN, federal floor, or previous-quarter reference) so the user
     # sees realistic CHF in the Energy Dashboard immediately.
     estimated: list = []
-    running_q = quarter_of(datetime.now(timezone.utc))
+    running_q = quarter_of(datetime.now(UTC))
     if running_q not in imported:
         try:
             await _import_running_quarter_estimate(
                 hass, anchor_override=cumulative_sum_chf
             )
             estimated.append(running_q)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _LOGGER.warning("Running-quarter estimate failed: %s", exc)
 
     # Final flush: ensure all queued imports are committed to disk before
@@ -963,7 +963,7 @@ async def _reimport_all_history(hass: "HomeAssistant") -> dict:
 
 
 async def _import_running_quarter_estimate(
-    hass: "HomeAssistant", *, anchor_override: float | None = None
+    hass: HomeAssistant, *, anchor_override: float | None = None
 ) -> dict:
     """Write LTS for the running quarter using a per-hour effective-rate estimate.
 
@@ -988,7 +988,7 @@ async def _import_running_quarter_estimate(
 
     Returns a result dict for the caller to surface in a notification.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from .importer import HourRecord, _effective_rate_breakdown_at_hour
 
@@ -1015,7 +1015,7 @@ async def _import_running_quarter_estimate(
     fallback_ref_rp_kwh = float(rt.federal_floor_rp_kwh or 0.0)
     is_estimate = rt.base_model in ("rmp_quartal", "rmp_monat")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     q = quarter_of(now)
     q_start_utc, _q_end_utc = quarter_bounds_utc(q)
     last_full_hour = now.replace(minute=0, second=0, microsecond=0)
@@ -1122,7 +1122,7 @@ async def _import_running_quarter_estimate(
     }
     coordinator._imported[str(q)] = {
         "q_price_chf_mwh": None,
-        "imported_at": datetime.now(timezone.utc).isoformat(),
+        "imported_at": datetime.now(UTC).isoformat(),
         "snapshot": snapshot,
     }
     hass.async_create_task(coordinator._async_save_state())
@@ -1143,7 +1143,7 @@ async def _import_running_quarter_estimate(
     }
 
 
-async def _refresh_upstream_data(hass: "HomeAssistant") -> dict:
+async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
     """Trigger a fresh fetch from BOTH upstream sources (v0.9.6).
 
     Two independent network operations:
@@ -1192,7 +1192,7 @@ async def _refresh_upstream_data(hass: "HomeAssistant") -> dict:
 
                 data = await hass.async_add_executor_job(load_tariffs)
                 tariffs_version = data.get("schema_version")
-            except Exception:  # noqa: BLE001
+            except Exception:
                 tariffs_version = None
 
     return {
@@ -1204,7 +1204,7 @@ async def _refresh_upstream_data(hass: "HomeAssistant") -> dict:
     }
 
 
-async def _handle_reimport_all_history(call: "ServiceCall") -> None:
+async def _handle_reimport_all_history(call: ServiceCall) -> None:
     """Service handler for `bfe_rueckliefertarif.reimport_all_history`.
 
     v0.9.2: also emits the same recompute summary notification the OptionsFlow
@@ -1243,7 +1243,7 @@ async def _handle_reimport_all_history(call: "ServiceCall") -> None:
         _notify_recompute(hass, entry_id, report)
 
 
-async def _handle_refresh_data(call: "ServiceCall") -> None:
+async def _handle_refresh_data(call: ServiceCall) -> None:
     """Refresh both BFE prices AND companion-repo tariffs.json.
 
     v0.9.6: combined service (was: ``refresh`` doing BFE only). The
@@ -1252,7 +1252,7 @@ async def _handle_refresh_data(call: "ServiceCall") -> None:
     await _refresh_upstream_data(call.hass)
 
 
-async def _handle_refresh_tariffs(call: "ServiceCall") -> None:
+async def _handle_refresh_tariffs(call: ServiceCall) -> None:
     """Force a fresh fetch of the companion repo's tariffs.json.
 
     Falls back to the bundled file silently on any error (network /
@@ -1353,7 +1353,7 @@ class _RecomputeReport:
 
 
 def _build_recompute_report(
-    hass: "HomeAssistant",
+    hass: HomeAssistant,
     quarters: list[Quarter],
     *,
     before_active_count: int = 0,
@@ -1868,10 +1868,10 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     c = report.config
     lines = _render_active_today_block(c)
 
-    LIMIT = 24
-    if n_periods > LIMIT:
-        shown_rows = report.rows[:LIMIT]
-        elided = n_periods - LIMIT
+    max_rows = 24
+    if n_periods > max_rows:
+        shown_rows = report.rows[:max_rows]
+        elided = n_periods - max_rows
     else:
         shown_rows = report.rows
         elided = 0
@@ -1891,8 +1891,6 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     suppress_per_group_heading = (
         len(groups) == 1 and groups[0][0] == today_fingerprint
     )
-
-    all_forfeits: list[tuple[_RecomputeReportRow, _RecomputeReportRow]] = []
 
     if suppress_per_group_heading:
         lines.append("")
@@ -1966,7 +1964,7 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
 
 
 def _notify_recompute(
-    hass: "HomeAssistant", entry_id: str, report: _RecomputeReport
+    hass: HomeAssistant, entry_id: str, report: _RecomputeReport
 ) -> None:
     """Emit (or replace) the recompute summary notification for an entry."""
     from homeassistant.components.persistent_notification import async_create

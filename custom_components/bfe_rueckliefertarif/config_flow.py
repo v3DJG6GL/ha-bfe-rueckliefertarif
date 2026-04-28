@@ -28,7 +28,7 @@ from homeassistant.helpers import selector
 
 _LOGGER = logging.getLogger(__name__)
 
-from .const import (
+from .const import (  # noqa: E402  — intentionally below _LOGGER guard
     ABRECHNUNGS_RHYTHMUS_MONAT,
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
     CONF_ABRECHNUNGS_RHYTHMUS,
@@ -41,11 +41,11 @@ from .const import (
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
     CONF_VALID_FROM,
-    DOMAIN,
     CONFIG_HISTORY_FIELDS,
+    DOMAIN,
     OPT_CONFIG_HISTORY,
 )
-from .tariffs_db import find_active, list_utility_keys, load_tariffs
+from .tariffs_db import find_active, list_utility_keys, load_tariffs  # noqa: E402
 
 
 async def _async_warm_cache(hass) -> None:
@@ -475,14 +475,14 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
-    ) -> "BfeRuecklieferTarifOptionsFlow":
+    ) -> BfeRuecklieferTarifOptionsFlow:
         return BfeRuecklieferTarifOptionsFlow()
 
     # ----- Step 1: utility menu --------------------------------------------------
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         await _async_warm_cache(self.hass)
         keys = list_utility_keys()
         return self.async_show_menu(
@@ -493,7 +493,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders=_source_links(self.hass),
         )
 
-    async def _apply_preset(self, key: str) -> "FlowResult":
+    async def _apply_preset(self, key: str) -> FlowResult:
         self._data[CONF_ENERGIEVERSORGER] = key
         return await self.async_step_tariff()
 
@@ -506,7 +506,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             key = name.removeprefix("async_step_preset_")
             try:
                 valid = set(list_utility_keys())
-            except Exception:  # noqa: BLE001
+            except Exception:
                 valid = set()
             if key in valid:
                 async def _step(user_input=None, _key=key):
@@ -518,7 +518,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_tariff(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         errors: dict[str, str] = {}
         utility_key = self._data[CONF_ENERGIEVERSORGER]
 
@@ -566,7 +566,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_entities(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         if user_input is not None:
             from homeassistant.util import slugify
 
@@ -620,7 +620,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         return self.async_show_menu(
             step_id="init",
             menu_options=[
@@ -636,7 +636,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_apply_change(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         """Wizard for applying any config change effective from a given date.
 
         Single-step form covering utility / kW / EV / HKN all at once.
@@ -791,7 +791,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_manage_history(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         _LOGGER.debug("manage_history: %d record(s) read from options", len(history))
         today_iso = date.today().isoformat()
@@ -815,7 +815,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_done_history(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         # Pass current options through so HA's commit doesn't wipe them.
         # OptionsFlowWithReload's auto-reload silently skips when _edit_row
         # has pre-written options inline (its diff check sees no change),
@@ -834,12 +834,12 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_add_new_row(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         return await self._edit_row(idx=None, user_input=user_input)
 
     async def async_step_edit_row(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         # Form-resubmit lands here. ``self._editing_idx`` was set by
         # ``__getattr__`` when the menu item was first clicked.
         return await self._edit_row(getattr(self, "_editing_idx", None), user_input)
@@ -861,7 +861,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def _edit_row(
         self, idx: int | None, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         """Show the edit form for one history record. ``idx=None`` → add new."""
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         _LOGGER.debug(
@@ -1041,7 +1041,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_recompute_history(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         """Confirm + run full-history recompute (published quarters + current Q estimate)."""
         from homeassistant.components.persistent_notification import async_create
 
@@ -1055,7 +1055,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None and user_input.get("confirm"):
             try:
                 result = await _reimport_all_history(self.hass)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _LOGGER.exception("Recompute full history failed")
                 async_create(
                     self.hass,
@@ -1119,7 +1119,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_refresh_data(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         """v0.9.6: combined refresh — BFE prices + companion-repo tariffs.json.
 
         Replaces the v0.9.0 ``refresh_prices`` step which only polled BFE.
@@ -1133,7 +1133,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None and user_input.get("confirm"):
             try:
                 result = await _refresh_upstream_data(self.hass)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _LOGGER.exception("Refresh data failed")
                 async_create(
                     self.hass,
@@ -1193,7 +1193,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
     async def async_step_entities(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> FlowResult:
         if user_input is not None:
             # Plant name doubles as the entry title — extract before merging.
             plant_name = (user_input.get(CONF_PLANT_NAME) or "").strip()

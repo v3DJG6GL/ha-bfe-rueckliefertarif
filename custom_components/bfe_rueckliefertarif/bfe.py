@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     import aiohttp
 
 
-class PriceNotYetPublished(Exception):
+class PriceNotYetPublishedError(Exception):
     """Raised when a period exists in logic but has no BFE publication yet."""
 
 
@@ -39,7 +39,7 @@ class BfePrice:
     volume_mwh: float
 
 
-async def fetch_csv(session: "aiohttp.ClientSession", url: str) -> str:
+async def fetch_csv(session: aiohttp.ClientSession, url: str) -> str:
     import aiohttp
 
     async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
@@ -107,21 +107,21 @@ def parse_monatspreise(csv_text: str) -> dict[Month, BfePrice]:
     return out
 
 
-async def fetch_quarterly(session: "aiohttp.ClientSession") -> dict[Quarter, BfePrice]:
+async def fetch_quarterly(session: aiohttp.ClientSession) -> dict[Quarter, BfePrice]:
     return parse_quartalspreise(await fetch_csv(session, BFE_QUARTALSPREISE_URL))
 
 
-async def fetch_monthly(session: "aiohttp.ClientSession") -> dict[Month, BfePrice]:
+async def fetch_monthly(session: aiohttp.ClientSession) -> dict[Month, BfePrice]:
     return parse_monatspreise(await fetch_csv(session, BFE_MONATSPREISE_URL))
 
 
 def get_quarter(prices: dict[Quarter, BfePrice], q: Quarter) -> BfePrice:
     if q not in prices:
-        raise PriceNotYetPublished(f"BFE has not yet published quarterly PV price for {q}")
+        raise PriceNotYetPublishedError(f"BFE has not yet published quarterly PV price for {q}")
     return prices[q]
 
 
 def get_month(prices: dict[Month, BfePrice], m: Month) -> BfePrice:
     if m not in prices:
-        raise PriceNotYetPublished(f"BFE has not yet published monthly PV price for {m}")
+        raise PriceNotYetPublishedError(f"BFE has not yet published monthly PV price for {m}")
     return prices[m]

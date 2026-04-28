@@ -7,7 +7,7 @@ and that the transition-spike delta is computed correctly.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -352,7 +352,7 @@ class TestFixedHtNtMode:
 
     def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
         local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(timezone.utc)
+        return local.astimezone(UTC)
 
     def test_weekday_midday_uses_ht_rate_with_hkn(self):
         cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
@@ -484,7 +484,7 @@ class TestSeasonalFixedFlat:
 
     def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
         local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(timezone.utc)
+        return local.astimezone(UTC)
 
     def test_july_uses_summer_rate(self):
         cfg = self._make_cfg(seasonal=self.BAGNES_SEASONAL)
@@ -558,7 +558,7 @@ class TestSeasonalFixedHtNt:
 
     def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
         local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(timezone.utc)
+        return local.astimezone(UTC)
 
     def test_summer_weekday_midday_is_summer_ht(self):
         cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
@@ -769,7 +769,7 @@ class TestSegmentedQuarterPlan:
         q = Quarter(2026, 1)
         q_start, q_end = quarter_bounds_utc(q)
         # Split mid-quarter at Zurich-local 2026-02-15 00:00.
-        boundary = datetime(2026, 2, 15, tzinfo=ZoneInfo("Europe/Zurich")).astimezone(timezone.utc)
+        boundary = datetime(2026, 2, 15, tzinfo=ZoneInfo("Europe/Zurich")).astimezone(UTC)
         cfg_a = TariffConfig(
             eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
             hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,7 +47,7 @@ class TariffsDataCoordinator:
     update tick (it calls async_maybe_refresh).
     """
 
-    def __init__(self, hass: "HomeAssistant") -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
         storage_dir = Path(hass.config.path(".storage"))
         self._cache_path = storage_dir / CACHE_FILENAME
@@ -89,7 +89,7 @@ class TariffsDataCoordinator:
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _LOGGER.warning("Remote tariffs.json fetch failed: %s — using bundled", exc)
             self.last_error = str(exc)
             set_override_path(None)
@@ -97,7 +97,7 @@ class TariffsDataCoordinator:
 
         try:
             await self._hass.async_add_executor_job(self._validate, data)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _LOGGER.warning(
                 "Remote tariffs.json failed schema validation: %s — using bundled", exc
             )
@@ -107,7 +107,7 @@ class TariffsDataCoordinator:
 
         # Persist cache + metadata.
         await self._hass.async_add_executor_job(self._write_cache, data)
-        self.last_remote_update = datetime.now(timezone.utc)
+        self.last_remote_update = datetime.now(UTC)
         self.last_error = None
         set_override_path(self._cache_path)
         # Warm tariffs_db's lru_cache against the new file so the next caller
@@ -122,7 +122,7 @@ class TariffsDataCoordinator:
     def _is_fresh(self) -> bool:
         if self.last_remote_update is None:
             return False
-        age = datetime.now(timezone.utc) - self.last_remote_update
+        age = datetime.now(UTC) - self.last_remote_update
         return age < REFRESH_INTERVAL
 
     async def _read_meta(self) -> dict[str, Any] | None:
@@ -146,7 +146,7 @@ class TariffsDataCoordinator:
             json.dump(data, f, indent=2, ensure_ascii=False)
         tmp.replace(self._cache_path)
 
-        meta = {"fetched_at": datetime.now(timezone.utc).isoformat()}
+        meta = {"fetched_at": datetime.now(UTC).isoformat()}
         meta_tmp = self._meta_path.with_suffix(".meta.json.tmp")
         with open(meta_tmp, "w", encoding="utf-8") as f:
             json.dump(meta, f)

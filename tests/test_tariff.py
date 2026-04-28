@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -229,7 +229,7 @@ def _utc_for_zurich(year: int, month: int, day: int, hour: int) -> datetime:
     in local-clock terms and convert here so the assertions read naturally.
     """
     local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-    return local.astimezone(timezone.utc)
+    return local.astimezone(UTC)
 
 
 class TestClassifyHT:
