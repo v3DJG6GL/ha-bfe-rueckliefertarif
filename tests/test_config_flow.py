@@ -296,6 +296,188 @@ class TestNotesBlockHelper:
         assert _pick_note_text(None, "en") is None
         assert _pick_note_text({}, "en") is None
 
+    def test_renders_blockquote_with_severity_label_de(self):
+        # v0.12.1 — note rendered as markdown blockquote with locale severity.
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        class _Hass:
+            class config:
+                language = "de"
+
+        out = _notes_block("bkw", "2026-04-01", _Hass())
+        # Blockquote prefix + emoji + bold severity label.
+        assert "> ⚠️ **Warnung:**" in out
+
+    def test_renders_blockquote_with_severity_label_en(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
+
+        class _Hass:
+            class config:
+                language = "en"
+
+        out = _notes_block("bkw", "2026-04-01", _Hass())
+        assert "> ⚠️ **Warning:**" in out
+
+
+class TestChangeAdvisory:
+    """v0.12.1 — gate-change advisory banner shown on first re-submit
+    after the user changes valid_from in the ConfigFlow tariff step."""
+
+    def test_empty_when_not_shown(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_change_advisory,
+        )
+
+        assert _format_change_advisory(False, "de") == ""
+
+    def test_locale_picks(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_change_advisory,
+        )
+
+        de = _format_change_advisory(True, "de")
+        en = _format_change_advisory(True, "en")
+        fr = _format_change_advisory(True, "fr")
+        assert "Datum geändert" in de
+        assert "date changed" in en.lower()
+        assert "modifiée" in fr
+        # Each starts with the ℹ️ emoji prefix for visual distinction.
+        for s in (de, en, fr):
+            assert s.startswith("ℹ️")
+
+    def test_unknown_locale_falls_back_to_en(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_change_advisory,
+        )
+
+        out = _format_change_advisory(True, "xx")
+        assert "date changed" in out.lower()
+
+
+class TestEditRowWizard:
+    """v0.12.1 — manage-history wizard: Step 1 picks utility + valid_from,
+    Step 2 captures kW / EV / HKN / user_inputs and saves."""
+
+    def _make_flow(self, options, data=None):
+        from types import MappingProxyType, SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            BfeRuecklieferTarifOptionsFlow,
+        )
+
+        flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
+        flow.hass = MagicMock()
+        flow.hass.async_add_executor_job = AsyncMock(return_value=None)
+        flow_entry = SimpleNamespace(
+            entry_id="t",
+            data=data or {"stromnetzeinspeisung_kwh": "sensor.foo"},
+            options=MappingProxyType(options),
+        )
+        flow.handler = "t"
+        flow.hass.config_entries.async_get_entry.return_value = flow_entry
+        flow.hass.config_entries.async_get_known_entry.return_value = flow_entry
+        return flow
+
+    @pytest.mark.asyncio
+    async def test_add_pick_then_save(self):
+        from custom_components.bfe_rueckliefertarif.const import (
+            CONF_EIGENVERBRAUCH_AKTIVIERT,
+            CONF_ENERGIEVERSORGER,
+            CONF_HKN_AKTIVIERT,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+            OPT_CONFIG_HISTORY,
+        )
+
+        existing = [
+            {"valid_from": "2026-02-01", "valid_to": None,
+             "config": {
+                 CONF_ENERGIEVERSORGER: "ekz",
+                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                 CONF_HKN_AKTIVIERT: True,
+                 "abrechnungs_rhythmus": "QUARTAL",
+             }},
+        ]
+        flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
+
+        # Step 1 (add picker)
+        step1 = await flow.async_step_add_pick_row()
+        assert step1["type"].name in ("FORM", "form")
+        assert step1["step_id"] == "add_pick_row"
+
+        step1_submit = await flow.async_step_add_pick_row(
+            {"valid_from": "2026-04-01", CONF_ENERGIEVERSORGER: "ekz"}
+        )
+        # Should auto-route to Step 2.
+        assert step1_submit["step_id"] == "add_new_row"
+
+        # Step 2 (details + save)
+        step2_submit = await flow.async_step_add_new_row({
+            CONF_INSTALLIERTE_LEISTUNG_KW: 12.0,
+            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+            CONF_HKN_AKTIVIERT: False,
+        })
+        # Save returns to manage_history menu.
+        assert step2_submit["type"].name in ("MENU", "menu")
+        # Verify the new record landed in the entry options.
+        flow.hass.config_entries.async_update_entry.assert_called_once()
+        new_options = flow.hass.config_entries.async_update_entry.call_args.kwargs[
+            "options"
+        ]
+        history = new_options[OPT_CONFIG_HISTORY]
+        assert history[-1]["valid_from"] == "2026-04-01"
+        assert history[-1]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 12.0
+
+    @pytest.mark.asyncio
+    async def test_edit_pick_then_save(self):
+        from custom_components.bfe_rueckliefertarif.const import (
+            CONF_EIGENVERBRAUCH_AKTIVIERT,
+            CONF_ENERGIEVERSORGER,
+            CONF_HKN_AKTIVIERT,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+            OPT_CONFIG_HISTORY,
+        )
+
+        existing = [
+            {"valid_from": "2026-02-01", "valid_to": None,
+             "config": {
+                 CONF_ENERGIEVERSORGER: "ekz",
+                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                 CONF_HKN_AKTIVIERT: True,
+                 "abrechnungs_rhythmus": "QUARTAL",
+             }},
+        ]
+        flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
+
+        # Simulate the menu dispatch for "edit_pick_row_0".
+        flow._editing_idx = 0
+        step1 = await flow.async_step_edit_pick_row()
+        assert step1["step_id"] == "edit_pick_row"
+
+        # Submit Step 1 unchanged → routes to Step 2 (edit_row).
+        step1_submit = await flow.async_step_edit_pick_row(
+            {"valid_from": "2026-02-01", CONF_ENERGIEVERSORGER: "ekz"}
+        )
+        assert step1_submit["step_id"] == "edit_row"
+
+        # Step 2: tweak kW, submit → save replaces history[0].
+        step2_submit = await flow.async_step_edit_row({
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.5,
+            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+            CONF_HKN_AKTIVIERT: True,
+            "delete": False,
+        })
+        assert step2_submit["type"].name in ("MENU", "menu")
+        flow.hass.config_entries.async_update_entry.assert_called_once()
+        new_options = flow.hass.config_entries.async_update_entry.call_args.kwargs[
+            "options"
+        ]
+        history = new_options[OPT_CONFIG_HISTORY]
+        assert len(history) == 1
+        assert history[0]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 15.5
+
 
 class TestPickValueLabel:
     """v0.12.0 — value_labels_<lang> lookup for enum dropdowns."""
@@ -373,14 +555,28 @@ class TestFormatTarifUrlsBlock:
         assert "documentation" in en_out.lower()
         assert "[Tariff sheet](https://example.test/de.pdf)" in en_out
 
-    def test_falls_back_to_url_when_no_label(self):
+    def test_falls_back_to_url_derived_label_for_pdf(self):
+        # v0.12.1 — when no curator label, build "📄 PDF · domain".
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _format_tarif_urls_block,
         )
 
-        urls = [{"url": "https://example.test/raw.pdf"}]
+        urls = [{"url": "https://www.example.test/raw.pdf"}]
         out = _format_tarif_urls_block(urls, "de")
-        assert "[https://example.test/raw.pdf](https://example.test/raw.pdf)" in out
+        assert "📄 PDF · example.test" in out
+        # Link still points at the URL.
+        assert "(https://www.example.test/raw.pdf)" in out
+
+    def test_falls_back_to_url_derived_label_for_html(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_tarif_urls_block,
+        )
+
+        urls = [{"url": "https://aew.ch/foo"}]
+        out_de = _format_tarif_urls_block(urls, "de")
+        assert "🌐 Webseite · aew.ch" in out_de
+        out_en = _format_tarif_urls_block(urls, "en")
+        assert "🌐 Webpage · aew.ch" in out_en
 
     def test_skips_entries_without_url(self):
         from custom_components.bfe_rueckliefertarif.config_flow import (

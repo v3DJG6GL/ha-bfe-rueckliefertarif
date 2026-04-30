@@ -110,6 +110,40 @@ _FEDLEX_STROMVV_URLS: dict[str, str] = {
 }
 
 
+# Fired when the user changes the active-since date in the ConfigFlow
+# tariff step — HA forms aren't reactive, so the first submit on a date
+# change re-renders with this banner instead of progressing, giving the
+# user a chance to review the (now updated) notes / tarif_urls /
+# user_inputs before confirming.
+_CHANGE_ADVISORY: dict[str, str] = {
+    "de": (
+        "ℹ️ **Aktiv-ab-Datum geändert.** Das Formular wurde anhand des "
+        "neuen Datums aktualisiert (Hinweise / Tarifinformationen / "
+        "versorgerspezifische Felder unten). **Weiter** erneut klicken, "
+        "um zu übernehmen."
+    ),
+    "en": (
+        "ℹ️ **Active-since date changed.** The form below has been "
+        "updated for the new date (notes / tariff documentation / "
+        "utility-specific fields). Click **Submit** again to apply."
+    ),
+    "fr": (
+        "ℹ️ **Date d'activation modifiée.** Le formulaire ci-dessous a "
+        "été mis à jour selon la nouvelle date (informations / "
+        "documentation tarifaire / champs spécifiques au fournisseur). "
+        "Cliquez sur **Suivant** à nouveau pour appliquer."
+    ),
+}
+
+
+def _format_change_advisory(should_show: bool, lang: str) -> str:
+    """Locale-picked advisory banner. Empty string when not shown so
+    the description placeholder collapses cleanly."""
+    if not should_show:
+        return ""
+    return _CHANGE_ADVISORY.get(lang) or _CHANGE_ADVISORY["en"]
+
+
 def _source_links(hass) -> dict[str, str]:
     """Return locale-correct data-source URLs for description_placeholders."""
     lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
@@ -305,9 +339,18 @@ def _active_hkn_structure(utility_key: str, valid_from_iso: str) -> str | None:
 
 
 _NOTE_SEVERITY_PREFIX: dict[str, str] = {
-    "info": "ℹ",
-    "warning": "⚠",
-    "error": "❌",
+    # Variation-selector forms force emoji presentation (coloured icon)
+    # rather than the stark monochrome glyph (the bare "ℹ" easily reads
+    # as a stray letter "i" in HA's default font).
+    "info": "ℹ️",
+    "warning": "⚠️",
+    "error": "🛑",
+}
+
+_NOTE_SEVERITY_LABEL: dict[str, dict[str, str]] = {
+    "info": {"de": "Hinweis", "en": "Note", "fr": "Information"},
+    "warning": {"de": "Warnung", "en": "Warning", "fr": "Avertissement"},
+    "error": {"de": "Fehler", "en": "Error", "fr": "Erreur"},
 }
 
 
@@ -329,12 +372,13 @@ def _pick_note_text(text_dict: dict[str, str] | None, lang: str) -> str | None:
 def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
     """Markdown block rendered for utility notes active at ``valid_from_iso``.
 
-    Looks up the active rate window for ``utility_key``, picks notes whose
-    half-open ``[valid_from, valid_to)`` straddles ``valid_from_iso``, and
-    renders one bold paragraph per note with a severity emoji prefix:
-    ``info → ℹ``, ``warning → ⚠``, ``error → ❌``. Returns ``""`` when no
-    notes apply. Used as the ``{notes_block}`` description placeholder in
-    every OptionsFlow form so the user sees rate-window context inline.
+    Each note is emitted as a markdown blockquote so HA's renderer paints
+    a left-side bar / indent — visually distinct from prose body text:
+
+        > ℹ️ **Hinweis:** {text}
+
+    Severity emoji and label are locale-picked. Returns ``""`` when no
+    notes apply (so the description placeholder collapses cleanly).
     """
     try:
         db = load_tariffs()
@@ -364,8 +408,14 @@ def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
         text = _pick_note_text(n.get("text"), lang)
         if not text:
             continue
-        prefix = _NOTE_SEVERITY_PREFIX.get(n.get("severity", "info"), "ℹ")
-        blocks.append(f"**{prefix} {text}**")
+        severity = n.get("severity", "info")
+        prefix = _NOTE_SEVERITY_PREFIX.get(severity, _NOTE_SEVERITY_PREFIX["info"])
+        sev_dict = _NOTE_SEVERITY_LABEL.get(severity, _NOTE_SEVERITY_LABEL["info"])
+        sev_label = sev_dict.get(lang) or sev_dict["en"]
+        text_lines = text.splitlines() or [""]
+        first = f"> {prefix} **{sev_label}:** {text_lines[0]}"
+        rest = [f"> {ln}" for ln in text_lines[1:]]
+        blocks.append("\n".join([first, *rest]))
 
     if not blocks:
         return ""
@@ -380,6 +430,36 @@ _TARIF_URLS_HEADING: dict[str, str] = {
     "en": "**Utility tariff documentation:**",
     "fr": "**Informations tarifaires du fournisseur :**",
 }
+
+
+# Fallback metadata for entries lacking a curator-supplied label. The
+# rendered label becomes "<emoji> <kind_label> · <domain>" (e.g.
+# "📄 PDF · aew.ch") which is more readable than the raw URL.
+_LINK_KIND_LABELS: dict[str, dict[str, str]] = {
+    "pdf": {"de": "PDF", "en": "PDF", "fr": "PDF"},
+    "html": {"de": "Webseite", "en": "Webpage", "fr": "Site web"},
+}
+_LINK_KIND_EMOJI: dict[str, str] = {"pdf": "📄", "html": "🌐"}
+
+
+def _infer_link_kind(url: str, declared: str | None) -> str:
+    """Pick ``pdf`` or ``html``. Honour curator-declared kind first;
+    else infer from the URL extension (everything not ending in .pdf
+    is treated as html)."""
+    if declared in ("pdf", "html"):
+        return declared
+    return "pdf" if url.lower().rsplit("?", 1)[0].endswith(".pdf") else "html"
+
+
+def _derive_link_fallback_label(url: str, kind: str, lang: str) -> str:
+    """Build ``<emoji> <kind_label> · <domain>`` when no curator label."""
+    from urllib.parse import urlparse
+
+    domain = (urlparse(url).netloc or "").removeprefix("www.")
+    emoji = _LINK_KIND_EMOJI.get(kind, "🌐")
+    kind_dict = _LINK_KIND_LABELS.get(kind, _LINK_KIND_LABELS["html"])
+    kind_label = kind_dict.get(lang) or kind_dict["en"]
+    return f"{emoji} {kind_label} · {domain}" if domain else f"{emoji} {kind_label}"
 
 
 def _pick_localised_label(
@@ -435,7 +515,14 @@ def _format_tarif_urls_block(urls: list[dict], lang: str) -> str:
         url = entry.get("url")
         if not url:
             continue
-        label = _pick_localised_label(entry, "label", lang, url)
+        # "" sentinel triggers URL-derived fallback ("📄 PDF · domain")
+        # below; with a curator label, _pick_localised_label wins.
+        raw_label = _pick_localised_label(entry, "label", lang, "")
+        if raw_label:
+            label = raw_label
+        else:
+            kind = _infer_link_kind(url, entry.get("kind"))
+            label = _derive_link_fallback_label(url, kind, lang)
         lines.append(f"- [{label}]({url})")
     if len(lines) == 1:
         return ""
@@ -728,27 +815,37 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         errors: dict[str, str] = {}
         utility_key = self._data[CONF_ENERGIEVERSORGER]
+        gate_advisory = False
 
         if user_input is not None:
-            errors = _validate_tariff(user_input)
-            if not errors:
-                hkn_structure = _active_hkn_structure(
-                    utility_key, user_input[CONF_VALID_FROM]
-                )
-                user_input[CONF_HKN_AKTIVIERT] = _force_hkn_for_save(
-                    hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
-                )
-                try:
-                    user_input[CONF_ABRECHNUNGS_RHYTHMUS] = _derive_billing(
+            # Detect a date change since the last render; if found, re-
+            # render with the change-advisory banner instead of advancing
+            # so the user sees the updated notes / tarif_urls / HKN gate
+            # for the new date before confirming.
+            last_seen = getattr(self, "_last_seen_valid_from", None)
+            submitted = user_input.get(CONF_VALID_FROM)
+            if last_seen is not None and submitted and last_seen != submitted:
+                gate_advisory = True
+            else:
+                errors = _validate_tariff(user_input)
+                if not errors:
+                    hkn_structure = _active_hkn_structure(
                         utility_key, user_input[CONF_VALID_FROM]
                     )
-                except NotImplementedError:
-                    errors["base"] = "settlement_period_unsupported"
-                except (KeyError, LookupError):
-                    errors["base"] = "no_active_rate"
-                else:
-                    self._data.update(user_input)
-                    return await self.async_step_entities()
+                    user_input[CONF_HKN_AKTIVIERT] = _force_hkn_for_save(
+                        hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
+                    )
+                    try:
+                        user_input[CONF_ABRECHNUNGS_RHYTHMUS] = _derive_billing(
+                            utility_key, user_input[CONF_VALID_FROM]
+                        )
+                    except NotImplementedError:
+                        errors["base"] = "settlement_period_unsupported"
+                    except (KeyError, LookupError):
+                        errors["base"] = "no_active_rate"
+                    else:
+                        self._data.update(user_input)
+                        return await self.async_step_entities()
 
         defaults = user_input if user_input is not None else self._data
         # Gate the HKN toggle on the chosen utility's hkn_structure.
@@ -760,12 +857,14 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         lang = (
             getattr(self.hass.config, "language", None) or "de"
         ).split("-")[0].lower()
+        self._last_seen_valid_from = gate_valid_from
         return self.async_show_form(
             step_id="tariff",
             data_schema=_tariff_schema(defaults, hkn_structure=hkn_structure),
             errors=errors,
             description_placeholders={
                 "utility_name": _utility_display_name(utility_key),
+                "change_advisory": _format_change_advisory(gate_advisory, lang),
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 "notes_block": _notes_block(utility_key, gate_valid_from, self.hass),
                 "tarif_urls_block": _format_tarif_urls_block(
@@ -851,15 +950,13 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_apply_change(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Wizard for applying any config change effective from a given date.
+        """Step 1 of the apply-change wizard: pick utility + valid_from.
 
-        Single-step form covering utility / kW / EV / HKN all at once.
-        Billing rhythm is no longer user-input as of v0.9.8 — it's derived
-        from the chosen utility's published ``settlement_period`` at the
-        ``valid_from`` date. Defaults inherited from the current open record.
-        Effective date defaults to today's quarter-start. Submit appends a
-        new record to ``OPT_CONFIG_HISTORY``; OptionsFlowWithReload reloads
-        the entry.
+        v0.12.1 — split from the previous single-step form so the
+        utility-specific context (notes / tarif_urls / dynamic
+        user_inputs) on Step 2 reflects the user's pick. HA's flow
+        rendering with ``last_step=False`` shows a ``Submit`` button
+        on Step 1 vs ``Save`` on Step 2 → unambiguous progression.
         """
         await _async_warm_cache(self.hass)
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
@@ -869,41 +966,95 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                effective_from = _parse_valid_from(user_input.get("valid_from", ""))
+                picked_from = _parse_valid_from(user_input.get("valid_from", ""))
             except ValueError:
                 errors["valid_from"] = "invalid_valid_from"
+            if not errors:
+                self._apply_pick = {
+                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
+                    "valid_from": picked_from,
+                }
+                return await self.async_step_apply_change_details()
 
+        utility_keys = list_utility_keys()
+        default_valid_from = (
+            user_input.get("valid_from") if user_input is not None
+            else _quarter_start_today()
+        )
+        default_utility = (
+            user_input.get(CONF_ENERGIEVERSORGER) if user_input is not None
+            else (open_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0])
+        )
+        schema = vol.Schema({
+            vol.Required("valid_from", default=default_valid_from):
+                selector.DateSelector(),
+            vol.Required(CONF_ENERGIEVERSORGER, default=default_utility):
+                selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value=k, label=_utility_display_name(k)
+                            )
+                            for k in utility_keys
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+        })
+        return self.async_show_form(
+            step_id="apply_change",
+            data_schema=schema,
+            errors=errors,
+            last_step=False,
+            description_placeholders={
+                "current_summary": (
+                    _format_config_summary(open_cfg) if open_cfg else "—"
+                ),
+            },
+        )
+
+    async def async_step_apply_change_details(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 2 of the apply-change wizard: kW / EV / HKN / user_inputs.
+
+        Notes block, tarif_urls block, and dynamic ``user_inputs[]``
+        fields are rendered against the gate the user picked in Step 1
+        (``self._apply_pick``). The save logic, no-op detection, and
+        history normalisation are unchanged from the pre-split version.
+        """
+        pick = getattr(self, "_apply_pick", None)
+        if pick is None:
+            # Defensive — fall back to Step 1 if state was lost.
+            return await self.async_step_apply_change()
+        gate_utility: str = pick[CONF_ENERGIEVERSORGER]
+        gate_valid_from: str = pick["valid_from"]
+
+        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        open_rec = next((r for r in history if r.get("valid_to") is None), None)
+        open_cfg = (open_rec or {}).get("config") or {}
+
+        errors: dict[str, str] = {}
+        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+
+        if user_input is not None:
             tariff_errs = _validate_tariff(user_input)
             errors.update(tariff_errs)
-
-            # Validate declared user_inputs against the rate window active
-            # at the chosen utility/date. Re-resolved on submit so a
-            # mid-form utility change is picked up.
-            decl_list_submit: tuple[dict, ...] = ()
-            if "valid_from" not in errors and CONF_ENERGIEVERSORGER not in errors:
-                decl_list_submit = _resolve_user_inputs_decl(
-                    user_input.get(CONF_ENERGIEVERSORGER),
-                    user_input.get("valid_from", ""),
-                )
-                errors.update(_validate_user_inputs(decl_list_submit, user_input))
+            errors.update(_validate_user_inputs(decl_list, user_input))
 
             derived_billing: str | None = None
             if not errors:
                 try:
-                    derived_billing = _derive_billing(
-                        user_input[CONF_ENERGIEVERSORGER], effective_from
-                    )
+                    derived_billing = _derive_billing(gate_utility, gate_valid_from)
                 except NotImplementedError:
                     errors["base"] = "settlement_period_unsupported"
                 except (KeyError, LookupError):
                     errors["base"] = "no_active_rate"
 
             if not errors:
-                hkn_structure = _active_hkn_structure(
-                    user_input[CONF_ENERGIEVERSORGER], effective_from
-                )
+                hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
                 new_config = {
-                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
+                    CONF_ENERGIEVERSORGER: gate_utility,
                     CONF_INSTALLIERTE_LEISTUNG_KW: float(
                         user_input[CONF_INSTALLIERTE_LEISTUNG_KW]
                     ),
@@ -914,22 +1065,16 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
                     ),
                     CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
-                    CONF_USER_INPUTS: _user_inputs_payload(
-                        decl_list_submit, user_input
-                    ),
+                    CONF_USER_INPUTS: _user_inputs_payload(decl_list, user_input),
                 }
-                # No-op detection — if effective_from matches the open record's
-                # valid_from AND the config is identical, skip the write.
-                # Normalize: treat absent / None user_inputs as empty dict so
-                # records from before v0.11.0 compare equal to a fresh save
-                # that has no declarations to fill in.
+
                 def _eq_cfg(a: dict, b: dict) -> bool:
                     a2 = {**a, CONF_USER_INPUTS: a.get(CONF_USER_INPUTS) or {}}
                     b2 = {**b, CONF_USER_INPUTS: b.get(CONF_USER_INPUTS) or {}}
                     return a2 == b2
                 if (
                     open_rec
-                    and open_rec["valid_from"] == effective_from
+                    and open_rec["valid_from"] == gate_valid_from
                     and _eq_cfg(open_rec["config"], new_config)
                 ):
                     return self.async_create_entry(
@@ -937,12 +1082,13 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     )
 
                 new_record = {
-                    "valid_from": effective_from,
+                    "valid_from": gate_valid_from,
                     "valid_to": None,
                     "config": new_config,
                 }
-                # Strip any existing record at the same date so this one wins.
-                history = [r for r in history if r.get("valid_from") != effective_from]
+                history = [
+                    r for r in history if r.get("valid_from") != gate_valid_from
+                ]
                 history = _append_history_record(
                     history, new_record, dict(self.config_entry.data)
                 )
@@ -953,40 +1099,15 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 }
                 return self.async_create_entry(title="", data=new_options)
 
+        # Fall-through: render Step 2 form (initial + on validation error).
         defaults_cfg = (
             user_input
             if user_input is not None
             else (open_cfg or build_history_config(self.config_entry.data))
         )
-        default_valid_from = (
-            user_input.get("valid_from", _quarter_start_today())
-            if user_input is not None
-            else _quarter_start_today()
-        )
-
-        utility_keys = list_utility_keys()
-        gate_utility = defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0]
-        gate_valid_from = default_valid_from or _quarter_start_today()
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
 
         schema_dict: dict[Any, Any] = {
-            vol.Required(
-                "valid_from", default=default_valid_from
-            ): selector.DateSelector(),
-            vol.Required(
-                CONF_ENERGIEVERSORGER,
-                default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(
-                            value=k, label=_utility_display_name(k)
-                        )
-                        for k in utility_keys
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            ),
             vol.Required(
                 CONF_INSTALLIERTE_LEISTUNG_KW,
                 default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
@@ -1010,25 +1131,22 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 )
             ] = selector.BooleanSelector()
 
-        # v0.11.0 (Batch D) — dynamic per-utility user_inputs declared on
-        # the rate window active at the chosen utility/date. Read on every
-        # form render so a mid-form utility change updates which fields
-        # appear on the next render. Defaults from existing record's
-        # user_inputs sub-dict, falling back to the declaration's default.
-        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
         decl_defaults = (defaults_cfg.get(CONF_USER_INPUTS) or {})
         lang = (
             getattr(self.hass.config, "language", None) or "de"
         ).split("-")[0].lower()
         _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
 
-        schema = vol.Schema(schema_dict)
         return self.async_show_form(
-            step_id="apply_change",
-            data_schema=schema,
+            step_id="apply_change_details",
+            data_schema=vol.Schema(schema_dict),
             errors=errors,
             description_placeholders={
-                "current_summary": _format_config_summary(open_cfg) if open_cfg else "—",
+                "utility_name": _utility_display_name(gate_utility),
+                "valid_from": gate_valid_from,
+                "current_summary": (
+                    _format_config_summary(open_cfg) if open_cfg else "—"
+                ),
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
                 "tarif_urls_block": _format_tarif_urls_block(
@@ -1062,8 +1180,8 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 f"{rec['valid_from']} → {end_label}: "
                 f"{_format_config_summary(rec['config'])}"
             )
-            menu[f"edit_row_{i}"] = label
-        menu["add_new_row"] = "+ Add new transition"
+            menu[f"edit_pick_row_{i}"] = label
+        menu["add_pick_row"] = "+ Add new transition"
         menu["done_history"] = "Done"
         return self.async_show_menu(step_id="manage_history", menu_options=menu)
 
@@ -1086,6 +1204,105 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             title="", data=dict(self.config_entry.options or {})
         )
 
+    # ----- Manage-history wizard: Step 1 (picker) ----------------------------
+
+    async def async_step_add_pick_row(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 1 (add): pick utility + valid_from for a new history row."""
+        return await self._pick_row(idx=None, user_input=user_input)
+
+    async def async_step_edit_pick_row(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 1 (edit): pick utility + valid_from for an existing row."""
+        return await self._pick_row(
+            getattr(self, "_editing_idx", None), user_input
+        )
+
+    def __getattr__(self, name: str):
+        # Dynamic dispatch for "edit_pick_row_<N>" menu options. We stash
+        # the row index on self and delegate to async_step_edit_pick_row,
+        # which uses a static step_id so translations resolve.
+        if name.startswith("async_step_edit_pick_row_"):
+            try:
+                idx = int(name.removeprefix("async_step_edit_pick_row_"))
+            except ValueError:
+                raise AttributeError(name) from None
+            async def _step(user_input=None, _idx=idx):
+                self._editing_idx = _idx
+                return await self.async_step_edit_pick_row(user_input)
+            return _step
+        raise AttributeError(name)
+
+    async def _pick_row(
+        self, idx: int | None, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Render the Step 1 picker form (utility + valid_from) for either
+        add (idx=None) or edit (idx=N) of a history row. On submit, stash
+        the picks in ``self._row_pick`` and route to Step 2.
+        """
+        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
+        is_edit = idx is not None and 0 <= idx < len(history)
+        existing = history[idx] if is_edit else None
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                picked_from = _parse_valid_from(user_input.get("valid_from", ""))
+            except ValueError:
+                errors["valid_from"] = "invalid_valid_from"
+            if not errors:
+                self._row_pick = {
+                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
+                    "valid_from": picked_from,
+                }
+                if is_edit:
+                    return await self.async_step_edit_row()
+                return await self.async_step_add_new_row()
+
+        # Defaults: existing record (edit) or open record (add).
+        if existing is not None:
+            default_utility = existing["config"].get(CONF_ENERGIEVERSORGER)
+            default_valid_from = existing["valid_from"]
+        else:
+            open_rec = next(
+                (r for r in history if r.get("valid_to") is None), None
+            )
+            cfg = (open_rec or {}).get("config") or build_history_config(
+                self.config_entry.data
+            )
+            default_utility = cfg.get(CONF_ENERGIEVERSORGER)
+            default_valid_from = _quarter_start_today()
+
+        utility_keys = list_utility_keys()
+        schema = vol.Schema({
+            vol.Required("valid_from", default=default_valid_from):
+                selector.DateSelector(),
+            vol.Required(
+                CONF_ENERGIEVERSORGER,
+                default=default_utility or utility_keys[0],
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(
+                            value=k, label=_utility_display_name(k)
+                        )
+                        for k in utility_keys
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        })
+        return self.async_show_form(
+            step_id="edit_pick_row" if is_edit else "add_pick_row",
+            data_schema=schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    # ----- Manage-history wizard: Step 2 (details) ---------------------------
+
     async def async_step_add_new_row(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -1094,29 +1311,25 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_edit_row(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        # Form-resubmit lands here. ``self._editing_idx`` was set by
-        # ``__getattr__`` when the menu item was first clicked.
-        return await self._edit_row(getattr(self, "_editing_idx", None), user_input)
-
-    def __getattr__(self, name: str):
-        # Dynamic dispatch for "edit_row_<N>" menu options. We stash the row
-        # index on self and delegate to async_step_edit_row, which uses a
-        # static step_id so translations resolve.
-        if name.startswith("async_step_edit_row_"):
-            try:
-                idx = int(name.removeprefix("async_step_edit_row_"))
-            except ValueError:
-                raise AttributeError(name) from None
-            async def _step(user_input=None, _idx=idx):
-                self._editing_idx = _idx
-                return await self.async_step_edit_row(user_input)
-            return _step
-        raise AttributeError(name)
+        return await self._edit_row(
+            getattr(self, "_editing_idx", None), user_input
+        )
 
     async def _edit_row(
         self, idx: int | None, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Show the edit form for one history record. ``idx=None`` → add new."""
+        """Step 2: render the details form (kW / EV / HKN / user_inputs)
+        for the (utility, valid_from) the user picked in Step 1
+        (``self._row_pick``). Save on submit. ``idx=None`` = add-new
+        mode; otherwise edit-existing mode.
+        """
+        pick = getattr(self, "_row_pick", None)
+        if pick is None:
+            # Defensive — fall back to Step 1 if state was lost.
+            return await self._pick_row(idx, None)
+        gate_utility: str = pick[CONF_ENERGIEVERSORGER]
+        gate_valid_from: str = pick["valid_from"]
+
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         _LOGGER.debug(
             "_edit_row entry: idx=%s, %d record(s) currently in OPT_CONFIG_HISTORY",
@@ -1126,10 +1339,11 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         existing = history[idx] if is_edit else None
 
         errors: dict[str, str] = {}
+        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+
         if user_input is not None:
             # Delete branch (only when editing). Refuse to delete the last
-            # record so the sentinel is always present — without it the
-            # per-quarter resolver loses its fallback for past dates.
+            # record so the sentinel is always present.
             if is_edit and bool(user_input.get("delete")):
                 if len(history) <= 1:
                     errors["base"] = "cannot_delete_last_record"
@@ -1145,25 +1359,13 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     )
                     return await self.async_step_manage_history()
 
-            # Save / overwrite branch.
-            try:
-                valid_from = _parse_valid_from(user_input.get("valid_from", ""))
-            except ValueError:
-                errors["valid_from"] = "invalid_valid_from"
-
-            decl_list_submit: tuple[dict, ...] = ()
-            if "valid_from" not in errors and CONF_ENERGIEVERSORGER in user_input:
-                decl_list_submit = _resolve_user_inputs_decl(
-                    user_input[CONF_ENERGIEVERSORGER],
-                    user_input.get("valid_from", ""),
-                )
-                errors.update(_validate_user_inputs(decl_list_submit, user_input))
+            errors.update(_validate_user_inputs(decl_list, user_input))
 
             derived_billing: str | None = None
             if not errors:
                 try:
                     derived_billing = _derive_billing(
-                        user_input[CONF_ENERGIEVERSORGER], valid_from
+                        gate_utility, gate_valid_from
                     )
                 except NotImplementedError:
                     errors["base"] = "settlement_period_unsupported"
@@ -1172,10 +1374,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
             if not errors:
                 hkn_structure = _active_hkn_structure(
-                    user_input[CONF_ENERGIEVERSORGER], valid_from
+                    gate_utility, gate_valid_from
                 )
                 new_config = {
-                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
+                    CONF_ENERGIEVERSORGER: gate_utility,
                     CONF_INSTALLIERTE_LEISTUNG_KW: float(
                         user_input[CONF_INSTALLIERTE_LEISTUNG_KW]
                     ),
@@ -1187,15 +1389,15 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     ),
                     CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
                     CONF_USER_INPUTS: _user_inputs_payload(
-                        decl_list_submit, user_input
+                        decl_list, user_input
                     ),
                 }
-                # Replace at idx (edit) or append (add). The normalize step
-                # de-duplicates by valid_from, so editing an existing row's
-                # valid_from to clash with another row will collapse them.
+                # Replace at idx (edit) or append (add). Normalize de-
+                # duplicates by valid_from, so editing a row's valid_from
+                # to clash with another row will collapse them.
                 if is_edit:
                     history[idx] = {
-                        "valid_from": valid_from,
+                        "valid_from": gate_valid_from,
                         "valid_to": None,
                         "config": new_config,
                     }
@@ -1203,7 +1405,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     history = _append_history_record(
                         history,
                         {
-                            "valid_from": valid_from,
+                            "valid_from": gate_valid_from,
                             "valid_to": None,
                             "config": new_config,
                         },
@@ -1223,15 +1425,12 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 )
                 return await self.async_step_manage_history()
 
-        # Build form defaults: prior submission > existing record > open record.
+        # Defaults: prior submission > existing record > open record.
         if user_input is not None:
-            defaults_cfg = build_history_config(user_input)
-            default_valid_from = user_input.get("valid_from", "")
+            defaults_cfg = dict(user_input)
         elif existing is not None:
             defaults_cfg = dict(existing["config"])
-            default_valid_from = existing["valid_from"]
         else:
-            # Add-new mode: prefill from the open record (most recent state).
             open_rec = next(
                 (r for r in history if r.get("valid_to") is None), None
             )
@@ -1239,31 +1438,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 dict(open_rec["config"]) if open_rec
                 else build_history_config(self.config_entry.data)
             )
-            default_valid_from = _quarter_start_today()
 
-        utility_keys = list_utility_keys()
-        gate_utility = defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0]
-        gate_valid_from = default_valid_from or _quarter_start_today()
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-
         schema_dict: dict[Any, Any] = {
-            vol.Required(
-                "valid_from", default=default_valid_from
-            ): selector.DateSelector(),
-            vol.Required(
-                CONF_ENERGIEVERSORGER,
-                default=defaults_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0],
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(
-                            value=k, label=_utility_display_name(k)
-                        )
-                        for k in utility_keys
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            ),
             vol.Required(
                 CONF_INSTALLIERTE_LEISTUNG_KW,
                 default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
@@ -1287,8 +1464,6 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 )
             ] = selector.BooleanSelector()
 
-        # v0.11.0 (Batch D) — dynamic per-utility user_inputs.
-        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
         decl_defaults = (defaults_cfg.get(CONF_USER_INPUTS) or {})
         lang = (
             getattr(self.hass.config, "language", None) or "de"
@@ -1296,18 +1471,21 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
 
         if is_edit:
-            schema_dict[vol.Optional("delete", default=False)] = selector.BooleanSelector()
+            schema_dict[vol.Optional("delete", default=False)] = (
+                selector.BooleanSelector()
+            )
 
-        # Use static step_ids so translations resolve. For edit, we still need
-        # a static id "edit_row" — the row index is held in self._editing_idx.
-        step_id = "edit_row" if is_edit else "add_new_row"
         return self.async_show_form(
-            step_id=step_id,
+            step_id="edit_row" if is_edit else "add_new_row",
             data_schema=vol.Schema(schema_dict),
             errors=errors,
             description_placeholders={
+                "utility_name": _utility_display_name(gate_utility),
+                "valid_from": gate_valid_from,
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
-                "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
+                "notes_block": _notes_block(
+                    gate_utility, gate_valid_from, self.hass
+                ),
                 "tarif_urls_block": _format_tarif_urls_block(
                     _resolve_tarif_urls(
                         gate_utility, gate_valid_from, decl_defaults

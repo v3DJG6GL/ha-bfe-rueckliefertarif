@@ -7,7 +7,7 @@
       },
       "tariff": {
         "title": "Configuration du tarif ({utility_name})",
-        "description": "Indiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "{change_advisory}\n\nIndiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
         "data": {
           "valid_from": "Actif depuis",
           "installierte_leistung_kw": "Puissance installée (kW)",
@@ -61,44 +61,65 @@
         "title": "Gérer l'historique de configuration",
         "description": "Cliquez sur une ligne pour modifier, **Ajouter une transition** pour enregistrer un changement (changement de fournisseur, extension PV, certificat GO), ou **Terminer** pour sortir. Le recalcul des trimestres passés utilise les valeurs actives à l'époque."
       },
-      "add_new_row": {
-        "title": "Ajouter une transition",
-        "description": "Enregistrer un changement de configuration à partir d'une date.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+      "apply_change": {
+        "title": "Changement de configuration — fournisseur & date",
+        "description": "Sélectionnez le fournisseur et la date d'effet du changement. L'étape suivante affichera les options spécifiques au fournisseur (informations, documentation tarifaire, champs spécifiques).\n\n**Actuellement actif :** {current_summary}",
+        "data": {
+          "valid_from": "Effectif depuis",
+          "energieversorger": "Fournisseur"
+        },
+        "data_description": {
+          "valid_from": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
+          "energieversorger": "## Fournisseur\nFournisseur qui rétribue l'injection. L'étape suivante reflètera son gate GO, ses informations, sa documentation tarifaire et ses éventuels champs spécifiques."
+        }
+      },
+      "apply_change_details": {
+        "title": "Changement de configuration — {utility_name} dès {valid_from}",
+        "description": "Renseignez les paramètres pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "data": {
+          "installierte_leistung_kw": "Puissance installée (kW)",
+          "eigenverbrauch_aktiviert": "Autoconsommation",
+          "hkn_aktiviert": "Opt-in GO"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale fédérale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
+          "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place.",
+          "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur."
+        }
+      },
+      "add_pick_row": {
+        "title": "Ajouter une transition — fournisseur & date",
+        "description": "Sélectionnez le fournisseur et la date d'effet. L'étape suivante affichera les options spécifiques au fournisseur.",
         "data": {
           "valid_from": "Actif depuis",
-          "energieversorger": "Fournisseur",
+          "energieversorger": "Fournisseur"
+        }
+      },
+      "edit_pick_row": {
+        "title": "Modifier la transition — fournisseur & date",
+        "description": "Modifier le fournisseur et/ou la date d'effet de cette transition. L'étape suivante permettra d'ajuster kW / autoconsommation / GO et les champs spécifiques au fournisseur.",
+        "data": {
+          "valid_from": "Actif depuis",
+          "energieversorger": "Fournisseur"
+        }
+      },
+      "add_new_row": {
+        "title": "Ajouter une transition — {utility_name} dès {valid_from}",
+        "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
           "hkn_aktiviert": "Opt-in GO"
         }
       },
       "edit_row": {
-        "title": "Modifier la transition",
-        "description": "Mettre à jour ou supprimer cette transition. Cochez **Supprimer cet enregistrement** pour le retirer.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "title": "Modifier la transition — {utility_name} dès {valid_from}",
+        "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
         "data": {
-          "valid_from": "Actif depuis",
-          "energieversorger": "Fournisseur",
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
           "hkn_aktiviert": "Opt-in GO",
           "delete": "Supprimer cet enregistrement"
-        }
-      },
-      "apply_change": {
-        "title": "Appliquer un changement de configuration",
-        "description": "Enregistre un changement de configuration à partir d'une date — couvre changement de fournisseur, extension kW, opt-in/out GO. Tous les champs sont pré-remplis depuis votre configuration actuelle ; modifiez ce qui a changé. La fréquence de facturation est dérivée de la période de règlement publiée par le fournisseur choisi.\n\n**Actuellement actif :** {current_summary}\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
-        "data": {
-          "valid_from": "Effectif depuis",
-          "energieversorger": "Fournisseur",
-          "installierte_leistung_kw": "Puissance installée (kW)",
-          "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO"
-        },
-        "data_description": {
-          "valid_from": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
-          "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale fédérale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
-          "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place.",
-          "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur."
         }
       },
       "recompute_history": {

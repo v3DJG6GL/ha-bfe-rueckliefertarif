@@ -340,8 +340,11 @@ async def _async_noop(*args, **kwargs):
 
 
 class TestApplyChangeWizard:
-    """v0.9.0 — the OptionsFlow ``apply_change`` wizard inlines what the
-    deleted ``tariff`` step + ``_apply_config_change`` helper used to do."""
+    """v0.12.1 — the OptionsFlow ``apply_change`` wizard is now a two-step
+    flow: Step 1 picks utility + valid_from, Step 2 captures kW / EV / HKN
+    / declared user_inputs and saves. The split makes the utility-specific
+    Step 2 context (notes / tarif_urls / user_inputs) reflect Step 1's
+    pick instead of the form's stale defaults."""
 
     def _make_flow(self, options, data=None):
         from unittest.mock import AsyncMock
@@ -360,6 +363,21 @@ class TestApplyChangeWizard:
         flow.hass.config_entries.async_get_known_entry.return_value = flow_entry
         return flow, flow_entry
 
+    async def _drive(self, flow, valid_from, utility, details):
+        """Drive the two-step wizard end-to-end. ``details`` is the Step 2
+        payload (kw / EV / HKN / user_inputs). Returns the final result."""
+        step1 = await flow.async_step_apply_change(
+            {"valid_from": valid_from, CONF_ENERGIEVERSORGER: utility}
+        )
+        # Step 1 routes to Step 2 internally on success and returns the
+        # Step 2 form. Submit Step 2 to commit.
+        if step1["type"].name in ("CREATE_ENTRY", "create_entry"):
+            return step1
+        if step1.get("step_id") == "apply_change":
+            # Step 1 re-rendered with errors — caller wants to see those.
+            return step1
+        return await flow.async_step_apply_change_details(details)
+
     @pytest.mark.asyncio
     async def test_creates_new_record_with_all_fields(self):
         existing = [
@@ -367,15 +385,15 @@ class TestApplyChangeWizard:
              "config": _entry_data(utility="age_sa", kw=10.0)},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
-        result = await flow.async_step_apply_change(
-            {
-                "valid_from": "2026-04-01",
-                CONF_ENERGIEVERSORGER: "ekz",
+        result = await self._drive(
+            flow,
+            valid_from="2026-04-01",
+            utility="ekz",
+            details={
                 CONF_INSTALLIERTE_LEISTUNG_KW: 12.5,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: True,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-            }
+            },
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
         history = result["data"][OPT_CONFIG_HISTORY]
@@ -393,63 +411,59 @@ class TestApplyChangeWizard:
 
     @pytest.mark.asyncio
     async def test_invalid_valid_from_re_renders_form(self):
+        # Step 1 catches an invalid date — never advances to Step 2.
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
         result = await flow.async_step_apply_change(
-            {
-                "valid_from": "garbage",
-                CONF_ENERGIEVERSORGER: "ekz",
-                CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
-                CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-                CONF_HKN_AKTIVIERT: False,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-            }
+            {"valid_from": "garbage", CONF_ENERGIEVERSORGER: "ekz"}
         )
-        # Form re-renders with the error.
         assert result["type"].name in ("FORM", "form")
         assert result["errors"] == {"valid_from": "invalid_valid_from"}
+        assert result["step_id"] == "apply_change"
 
     @pytest.mark.asyncio
-    async def test_kw_zero_re_renders_form(self):
+    async def test_kw_zero_re_renders_step_two(self):
+        # Step 1 advances OK; Step 2 catches kw=0.
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
-        result = await flow.async_step_apply_change(
-            {
-                "valid_from": "2026-04-01",
-                CONF_ENERGIEVERSORGER: "ekz",
+        result = await self._drive(
+            flow,
+            valid_from="2026-04-01",
+            utility="ekz",
+            details={
                 CONF_INSTALLIERTE_LEISTUNG_KW: 0.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-            }
+            },
         )
         assert result["type"].name in ("FORM", "form")
         assert result["errors"] == {CONF_INSTALLIERTE_LEISTUNG_KW: "kw_required"}
+        assert result["step_id"] == "apply_change_details"
 
     @pytest.mark.asyncio
     async def test_no_op_change_does_not_duplicate_record(self):
-        # Submitting the exact same values for the open record's date should
-        # not create a duplicate — the wizard treats this as a no-op.
+        # Submitting Step 2 with the exact same values for the open record's
+        # date is a no-op — wizard returns CREATE_ENTRY without appending.
         existing = [
             {"valid_from": "2026-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz", kw=8.0)},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
-        result = await flow.async_step_apply_change(
-            {
-                "valid_from": "2026-01-01",
-                CONF_ENERGIEVERSORGER: "ekz",
+        result = await self._drive(
+            flow,
+            valid_from="2026-01-01",
+            utility="ekz",
+            details={
                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: True,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-            }
+            },
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
         # Options unchanged, history is still 1 record.
@@ -459,53 +473,51 @@ class TestApplyChangeWizard:
     @pytest.mark.asyncio
     async def test_user_inputs_persist_into_history_record(self):
         # AEW declares user_inputs.aew_fixpreis_rmp (v1.2.0 bundled data).
-        # Submitting the wizard with a chosen value persists it into the
-        # new record's config.user_inputs sub-dict.
+        # The Step 2 form renders the dropdown for the utility chosen in
+        # Step 1; the chosen value persists into the new record.
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
-        result = await flow.async_step_apply_change(
-            {
-                "valid_from": "2026-04-01",
-                CONF_ENERGIEVERSORGER: "aew",
+        result = await self._drive(
+            flow,
+            valid_from="2026-04-01",
+            utility="aew",
+            details={
                 CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
                 "aew_fixpreis_rmp": "Referenzmarktpreis",
-            }
+            },
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
         history = result["data"][OPT_CONFIG_HISTORY]
         new_rec = history[-1]
         assert new_rec["config"]["energieversorger"] == "aew"
-        # user_inputs sub-dict carries the chosen value.
         assert new_rec["config"]["user_inputs"] == {
             "aew_fixpreis_rmp": "Referenzmarktpreis"
         }
 
     @pytest.mark.asyncio
     async def test_user_inputs_default_used_when_not_provided(self):
-        # When the form submission omits a declared user_input field,
-        # the resolver falls back to the schema's declared default.
+        # Submission omits the declared user_input — resolver falls back
+        # to decl.default ("AEW Fixpreis").
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
-        result = await flow.async_step_apply_change(
-            {
-                "valid_from": "2026-04-01",
-                CONF_ENERGIEVERSORGER: "aew",
+        result = await self._drive(
+            flow,
+            valid_from="2026-04-01",
+            utility="aew",
+            details={
                 CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                # aew_fixpreis_rmp intentionally omitted — should default to
-                # decl.default ("AEW Fixpreis").
-            }
+                # aew_fixpreis_rmp intentionally omitted.
+            },
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
         history = result["data"][OPT_CONFIG_HISTORY]
@@ -515,26 +527,46 @@ class TestApplyChangeWizard:
 
     @pytest.mark.asyncio
     async def test_invalid_user_input_choice_re_renders_form(self):
-        # Submitting an enum value not in the declared `values` list
-        # should produce a per-field error and re-render the form.
+        # Submitting an enum value not in the declared `values` list →
+        # Step 2 form re-renders with a per-field error.
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
         ]
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
-        result = await flow.async_step_apply_change(
-            {
-                "valid_from": "2026-04-01",
-                CONF_ENERGIEVERSORGER: "aew",
+        result = await self._drive(
+            flow,
+            valid_from="2026-04-01",
+            utility="aew",
+            details={
                 CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
                 "aew_fixpreis_rmp": "bogus_value_not_in_enum",
-            }
+            },
         )
         assert result["type"].name in ("FORM", "form")
         assert result["errors"].get("aew_fixpreis_rmp") == "invalid_choice"
+        assert result["step_id"] == "apply_change_details"
+
+    @pytest.mark.asyncio
+    async def test_step1_renders_picker_only(self):
+        # Initial render of apply_change is the utility/date picker —
+        # it must not contain kW/EV/HKN/user_inputs fields.
+        existing = [
+            {"valid_from": "1970-01-01", "valid_to": None,
+             "config": _entry_data(utility="ekz")},
+        ]
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: existing})
+        result = await flow.async_step_apply_change()
+        assert result["type"].name in ("FORM", "form")
+        assert result["step_id"] == "apply_change"
+        assert result.get("last_step") is False
+        # The schema only has valid_from + utility — no kW/EV/HKN.
+        rendered_keys = {str(k) for k in result["data_schema"].schema}
+        assert "valid_from" in rendered_keys
+        assert CONF_ENERGIEVERSORGER in rendered_keys
+        assert CONF_INSTALLIERTE_LEISTUNG_KW not in rendered_keys
 
 
 class TestRecomputeHistoryEstimate:
@@ -2692,8 +2724,8 @@ class TestManageHistoryLabels:
             mock_date.today.return_value.isoformat.return_value = "2026-04-27"
             result = await flow.async_step_manage_history()
         labels = result["menu_options"]
-        assert "→ now" in labels["edit_row_0"]
-        assert "→ ..." not in labels["edit_row_0"]
+        assert "→ now" in labels["edit_pick_row_0"]
+        assert "→ ..." not in labels["edit_pick_row_0"]
 
     @pytest.mark.asyncio
     async def test_future_record_renders_ellipsis(self):
@@ -2712,10 +2744,10 @@ class TestManageHistoryLabels:
             result = await flow.async_step_manage_history()
         labels = result["menu_options"]
         # Closed past record renders the explicit valid_to.
-        assert "→ 2026-07-01" in labels["edit_row_0"]
+        assert "→ 2026-07-01" in labels["edit_pick_row_0"]
         # Future open record renders ... and NOT now.
-        assert "→ ..." in labels["edit_row_1"]
-        assert "→ now" not in labels["edit_row_1"]
+        assert "→ ..." in labels["edit_pick_row_1"]
+        assert "→ now" not in labels["edit_pick_row_1"]
 
     @pytest.mark.asyncio
     async def test_record_starting_today_renders_now(self):
@@ -2731,5 +2763,5 @@ class TestManageHistoryLabels:
             mock_date.today.return_value.isoformat.return_value = "2026-04-27"
             result = await flow.async_step_manage_history()
         labels = result["menu_options"]
-        assert "→ now" in labels["edit_row_0"]
-        assert "→ ..." not in labels["edit_row_0"]
+        assert "→ now" in labels["edit_pick_row_0"]
+        assert "→ ..." not in labels["edit_pick_row_0"]

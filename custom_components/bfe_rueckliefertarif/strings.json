@@ -7,7 +7,7 @@
       },
       "tariff": {
         "title": "Tariff configuration ({utility_name})",
-        "description": "Tell us about your plant — utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "{change_advisory}\n\nTell us about your plant — utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
         "data": {
           "valid_from": "Active since",
           "installierte_leistung_kw": "Installed power (kW)",
@@ -61,44 +61,65 @@
         "title": "Manage configuration history",
         "description": "Click a row to edit, choose **Add new transition** to record a switch (e.g. utility change, PV expansion, HKN certificate), or **Done** to finish. Past quarter recompute uses the values that were active back then."
       },
-      "add_new_row": {
-        "title": "Add transition",
-        "description": "Record a config change effective from a specific date.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+      "apply_change": {
+        "title": "Apply config change — pick utility & date",
+        "description": "Pick the utility and the date this change takes effect. The next step shows the utility-specific options (notes, tariff documentation, utility-specific fields).\n\n**Currently active:** {current_summary}",
+        "data": {
+          "valid_from": "Effective from",
+          "energieversorger": "Utility"
+        },
+        "data_description": {
+          "valid_from": "## When this change takes effect\nDefault is the current quarter's start. For utility switches mid-quarter, pick the actual switch date — the recompute path will use the new utility for any quarter starting on or after that date.",
+          "energieversorger": "## Utility\nThe utility paying for the feed-in. The next step's HKN gate, notes, tariff documentation links, and any utility-specific options reflect this choice."
+        }
+      },
+      "apply_change_details": {
+        "title": "Apply config change — {utility_name} from {valid_from}",
+        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "data": {
+          "installierte_leistung_kw": "Installed power (kW)",
+          "eigenverbrauch_aktiviert": "Self-consumption",
+          "hkn_aktiviert": "HKN opt-in"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "## Installed peak power\nDC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
+          "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** for typical residential / commercial setups; **No** for full feed-in (Volleinspeisung).",
+          "hkn_aktiviert": "## HKN opt-in\n**Yes** if you sell *Herkunftsnachweise* to your utility. Rate is utility-published."
+        }
+      },
+      "add_pick_row": {
+        "title": "Add transition — pick utility & date",
+        "description": "Pick the utility and the date this transition takes effect. The next step shows the utility-specific options.",
         "data": {
           "valid_from": "Active since",
-          "energieversorger": "Utility",
+          "energieversorger": "Utility"
+        }
+      },
+      "edit_pick_row": {
+        "title": "Edit transition — utility & date",
+        "description": "Adjust the utility and/or the active-since date for this transition. The next step lets you adjust kW / self-consumption / HKN and any utility-specific fields.",
+        "data": {
+          "valid_from": "Active since",
+          "energieversorger": "Utility"
+        }
+      },
+      "add_new_row": {
+        "title": "Add transition — {utility_name} from {valid_from}",
+        "description": "Plant details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
           "hkn_aktiviert": "HKN opt-in"
         }
       },
       "edit_row": {
-        "title": "Edit transition",
-        "description": "Update or delete this config transition. Tick **Delete this record** to remove it.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "title": "Edit transition — {utility_name} from {valid_from}",
+        "description": "Update plant details for **{utility_name}** effective **{valid_from}**, or tick **Delete this record** to remove the row.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
         "data": {
-          "valid_from": "Active since",
-          "energieversorger": "Utility",
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
           "hkn_aktiviert": "HKN opt-in",
           "delete": "Delete this record"
-        }
-      },
-      "apply_change": {
-        "title": "Apply configuration change",
-        "description": "Record a config change effective from a date — covers utility switches, kW expansion, HKN opt-in/out. All fields are pre-filled from your current config; adjust whatever changed. Billing rhythm is derived from the chosen utility's published settlement period.\n\n**Currently active:** {current_summary}\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
-        "data": {
-          "valid_from": "Effective from",
-          "energieversorger": "Utility",
-          "installierte_leistung_kw": "Installed power (kW)",
-          "eigenverbrauch_aktiviert": "Self-consumption",
-          "hkn_aktiviert": "HKN opt-in"
-        },
-        "data_description": {
-          "valid_from": "## When this change takes effect\nDefault is the current quarter's start. For utility switches mid-quarter, pick the actual switch date — the recompute path will use the new utility for any quarter starting on or after that date.",
-          "installierte_leistung_kw": "## Installed peak power\nDC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
-          "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** for typical residential / commercial setups; **No** for full feed-in (Volleinspeisung).",
-          "hkn_aktiviert": "## HKN opt-in\n**Yes** if you sell *Herkunftsnachweise* to your utility. Rate is utility-published."
         }
       },
       "recompute_history": {
