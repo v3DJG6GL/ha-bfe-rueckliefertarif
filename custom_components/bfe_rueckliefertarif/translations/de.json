@@ -192,13 +192,12 @@
   },
   "issues": {
     "tariff_drift": {
-      "title": "{utility}: Tarif-Struktur geändert",
-      "description": "Deine gespeicherte Konfiguration deckt den Zeitraum {period_from} → {period_to} ab. Die Tarif-Struktur hat sich in diesem Zeitraum geändert. Betroffene Felder: {fields}. Öffne die Reparatur zum Anpassen.",
+      "title": "{utility}: Tarif-Struktur geändert ({period_from} → {period_to})",
       "fix_flow": {
         "step": {
           "init": {
             "title": "{utility} ab {period_from} neu konfigurieren",
-            "description": "Wähle den neuen Wert für den Zeitraum {period_from} → {period_to}. Beim Speichern wird ein neuer History-Eintrag mit Start {period_from} angelegt."
+            "description": "Deine gespeicherte Konfiguration deckt den Zeitraum {period_from} → {period_to} ab. Die Tarif-Struktur hat sich geändert; folgende Felder brauchen einen neuen Wert: **{fields}**. Wähle jetzt — beim Speichern wird ein neuer History-Eintrag mit Start {period_from} angelegt."
           }
         }
       }

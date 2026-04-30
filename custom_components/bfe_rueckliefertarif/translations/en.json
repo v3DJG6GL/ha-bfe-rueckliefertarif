@@ -192,13 +192,12 @@
   },
   "issues": {
     "tariff_drift": {
-      "title": "{utility} tariff structure changed",
-      "description": "Your saved configuration covers {period_from} → {period_to}, but the tariff structure has changed in this period. Affected fields: {fields}. Open the repair to reconfigure.",
+      "title": "{utility} tariff structure changed ({period_from} → {period_to})",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Reconfigure {utility} from {period_from}",
-            "description": "Pick the new value(s) for the {period_from} → {period_to} period. Saving will append a new history entry at {period_from} with your choices."
+            "description": "Your saved configuration covers {period_from} → {period_to}. The tariff structure has changed and these fields need a value: **{fields}**. Pick now — saving appends a new history entry at {period_from} with your choices."
           }
         }
       }

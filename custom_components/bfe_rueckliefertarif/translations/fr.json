@@ -192,13 +192,12 @@
   },
   "issues": {
     "tariff_drift": {
-      "title": "{utility}: structure tarifaire modifiée",
-      "description": "Votre configuration couvre la période {period_from} → {period_to}, mais la structure tarifaire a changé. Champs concernés : {fields}. Ouvrez la réparation pour ajuster.",
+      "title": "{utility} : structure tarifaire modifiée ({period_from} → {period_to})",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Reconfigurer {utility} dès {period_from}",
-            "description": "Choisissez la nouvelle valeur pour la période {period_from} → {period_to}. L'enregistrement créera une nouvelle entrée d'historique débutant le {period_from}."
+            "description": "Votre configuration couvre {period_from} → {period_to}. La structure tarifaire a changé ; ces champs ont besoin d'une valeur : **{fields}**. Choisissez maintenant — l'enregistrement créera une nouvelle entrée d'historique débutant le {period_from}."
           }
         }
       }
