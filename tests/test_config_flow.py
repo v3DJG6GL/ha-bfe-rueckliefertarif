@@ -295,3 +295,179 @@ class TestNotesBlockHelper:
         # Empty / missing → None.
         assert _pick_note_text(None, "en") is None
         assert _pick_note_text({}, "en") is None
+
+
+class TestPickValueLabel:
+    """v0.12.0 — value_labels_<lang> lookup for enum dropdowns."""
+
+    def test_returns_locale_label(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+
+        decl = {
+            "key": "model",
+            "type": "enum",
+            "values": ["fixpreis", "rmp"],
+            "value_labels_de": {"fixpreis": "AEW Fixpreis", "rmp": "RMP"},
+            "value_labels_en": {"fixpreis": "AEW Fixed", "rmp": "RMP"},
+        }
+        assert _pick_value_label(decl, "fixpreis", "de") == "AEW Fixpreis"
+        assert _pick_value_label(decl, "fixpreis", "en") == "AEW Fixed"
+
+    def test_falls_back_to_de_then_en(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+
+        decl_de_only = {
+            "values": ["a"],
+            "value_labels_de": {"a": "Eins"},
+        }
+        # Unknown locale → de fallback.
+        assert _pick_value_label(decl_de_only, "a", "fr") == "Eins"
+
+        decl_en_only = {
+            "values": ["a"],
+            "value_labels_en": {"a": "One"},
+        }
+        # No de → en fallback.
+        assert _pick_value_label(decl_en_only, "a", "fr") == "One"
+
+    def test_falls_back_to_raw_value_when_no_labels(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+
+        decl = {"values": ["fixpreis"]}
+        assert _pick_value_label(decl, "fixpreis", "de") == "fixpreis"
+
+    def test_unknown_value_returns_value(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+
+        decl = {"value_labels_de": {"a": "Eins"}}
+        assert _pick_value_label(decl, "z", "de") == "z"
+
+
+class TestFormatTarifUrlsBlock:
+    """v0.12.0 — markdown rendering of rate.tarif_urls (schema v1.2.0)."""
+
+    def test_empty_returns_empty_string(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_tarif_urls_block,
+        )
+
+        assert _format_tarif_urls_block([], "de") == ""
+
+    def test_renders_locale_heading_and_label(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_tarif_urls_block,
+        )
+
+        urls = [
+            {
+                "url": "https://example.test/de.pdf",
+                "label_de": "Tarifblatt",
+                "label_en": "Tariff sheet",
+            }
+        ]
+        de_out = _format_tarif_urls_block(urls, "de")
+        assert "Tarifinformationen" in de_out
+        assert "[Tarifblatt](https://example.test/de.pdf)" in de_out
+
+        en_out = _format_tarif_urls_block(urls, "en")
+        assert "documentation" in en_out.lower()
+        assert "[Tariff sheet](https://example.test/de.pdf)" in en_out
+
+    def test_falls_back_to_url_when_no_label(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_tarif_urls_block,
+        )
+
+        urls = [{"url": "https://example.test/raw.pdf"}]
+        out = _format_tarif_urls_block(urls, "de")
+        assert "[https://example.test/raw.pdf](https://example.test/raw.pdf)" in out
+
+    def test_skips_entries_without_url(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_tarif_urls_block,
+        )
+
+        urls = [{"label_de": "no url"}]
+        # Heading would appear alone → caller-friendly: collapse to "".
+        assert _format_tarif_urls_block(urls, "de") == ""
+
+
+class TestResolveTarifUrls:
+    """v0.12.0 — resolver pulls active rate-window's tarif_urls and
+    filters by applies_when. Uses synthetic data via load_tariffs override
+    is heavy; instead exercise the contract on inputs the resolver short-
+    circuits, plus a bundled smoke test."""
+
+    def test_missing_inputs_returns_empty(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _resolve_tarif_urls,
+        )
+
+        assert _resolve_tarif_urls(None, "2026-04-01", None) == []
+        assert _resolve_tarif_urls("ekz", None, None) == []
+        assert _resolve_tarif_urls("ekz", "not-a-date", None) == []
+
+    def test_unknown_utility_returns_empty(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _resolve_tarif_urls,
+        )
+
+        assert _resolve_tarif_urls("does_not_exist", "2026-04-01", None) == []
+
+    def test_bundled_ekz_has_at_least_one_url(self):
+        # Smoke test on bundled v1.2.0 data: every 2026 rate window has a
+        # tarif_urls entry per the upstream migration.
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _resolve_tarif_urls,
+        )
+
+        urls = _resolve_tarif_urls("ekz", "2026-06-01", None)
+        assert len(urls) >= 1
+        assert all(entry.get("url") for entry in urls)
+
+    def test_applies_when_filter_drops_unmatched(self, monkeypatch):
+        # Synthetic: patch load_tariffs to return a 1-utility db with a
+        # rate window carrying 2 tarif_urls — one gated, one unconditional.
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "rates": [
+                        {
+                            "valid_from": "2026-01-01",
+                            "valid_to": None,
+                            "settlement_period": "quartal",
+                            "power_tiers": [],
+                            "tarif_urls": [
+                                {"url": "https://example.test/always.pdf"},
+                                {
+                                    "url": "https://example.test/fixpreis.pdf",
+                                    "applies_when": {"model": "fixpreis"},
+                                },
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+
+        # No user_inputs → only the unconditional URL passes.
+        out = cf._resolve_tarif_urls("syn", "2026-06-01", None)
+        assert [e["url"] for e in out] == ["https://example.test/always.pdf"]
+
+        # With matching user_inputs → both URLs pass.
+        out = cf._resolve_tarif_urls("syn", "2026-06-01", {"model": "fixpreis"})
+        urls = [e["url"] for e in out]
+        assert "https://example.test/always.pdf" in urls
+        assert "https://example.test/fixpreis.pdf" in urls
+
+        # With non-matching user_inputs → only unconditional.
+        out = cf._resolve_tarif_urls("syn", "2026-06-01", {"model": "rmp"})
+        assert [e["url"] for e in out] == ["https://example.test/always.pdf"]

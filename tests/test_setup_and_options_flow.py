@@ -458,9 +458,9 @@ class TestApplyChangeWizard:
 
     @pytest.mark.asyncio
     async def test_user_inputs_persist_into_history_record(self):
-        # v0.11.0 (Batch D) — AEW declares user_inputs.tariff_model. Submitting
-        # the wizard with a chosen value persists it into the new record's
-        # config.user_inputs sub-dict.
+        # AEW declares user_inputs.aew_fixpreis_rmp (v1.2.0 bundled data).
+        # Submitting the wizard with a chosen value persists it into the
+        # new record's config.user_inputs sub-dict.
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
@@ -474,7 +474,7 @@ class TestApplyChangeWizard:
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
                 CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                "tariff_model": "rmp",
+                "aew_fixpreis_rmp": "Referenzmarktpreis",
             }
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
@@ -482,7 +482,9 @@ class TestApplyChangeWizard:
         new_rec = history[-1]
         assert new_rec["config"]["energieversorger"] == "aew"
         # user_inputs sub-dict carries the chosen value.
-        assert new_rec["config"]["user_inputs"] == {"tariff_model": "rmp"}
+        assert new_rec["config"]["user_inputs"] == {
+            "aew_fixpreis_rmp": "Referenzmarktpreis"
+        }
 
     @pytest.mark.asyncio
     async def test_user_inputs_default_used_when_not_provided(self):
@@ -501,13 +503,15 @@ class TestApplyChangeWizard:
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
                 CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                # tariff_model intentionally omitted — should default to
-                # decl.default ("fixpreis").
+                # aew_fixpreis_rmp intentionally omitted — should default to
+                # decl.default ("AEW Fixpreis").
             }
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
         history = result["data"][OPT_CONFIG_HISTORY]
-        assert history[-1]["config"]["user_inputs"] == {"tariff_model": "fixpreis"}
+        assert history[-1]["config"]["user_inputs"] == {
+            "aew_fixpreis_rmp": "AEW Fixpreis"
+        }
 
     @pytest.mark.asyncio
     async def test_invalid_user_input_choice_re_renders_form(self):
@@ -526,11 +530,11 @@ class TestApplyChangeWizard:
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
                 CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                "tariff_model": "bogus_value_not_in_enum",
+                "aew_fixpreis_rmp": "bogus_value_not_in_enum",
             }
         )
         assert result["type"].name in ("FORM", "form")
-        assert result["errors"].get("tariff_model") == "invalid_choice"
+        assert result["errors"].get("aew_fixpreis_rmp") == "invalid_choice"
 
 
 class TestRecomputeHistoryEstimate:

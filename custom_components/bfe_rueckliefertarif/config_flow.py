@@ -46,7 +46,13 @@ from .const import (  # noqa: E402  — intentionally below _LOGGER guard
     OPT_CONFIG_HISTORY,
     build_history_config,
 )
-from .tariffs_db import find_active, list_utility_keys, load_tariffs  # noqa: E402
+from .tariffs_db import (  # noqa: E402
+    find_active,
+    find_active_rate_window,
+    list_utility_keys,
+    load_tariffs,
+    match_applies_when,
+)
 
 
 async def _async_warm_cache(hass) -> None:
@@ -366,6 +372,76 @@ def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
     return "\n\n".join(blocks)
 
 
+# Locale-aware heading for the tarif_urls block. v0.12.0 (schema v1.2.0).
+# Kept in Python rather than strings.json so the whole block can collapse
+# to "" when no URLs apply (avoids an empty section in the rendered form).
+_TARIF_URLS_HEADING: dict[str, str] = {
+    "de": "**Tarifinformationen des Versorgers:**",
+    "en": "**Utility tariff documentation:**",
+    "fr": "**Informations tarifaires du fournisseur :**",
+}
+
+
+def _pick_localised_label(
+    d: dict, prefix: str, lang: str, fallback: str
+) -> str:
+    """Pick ``d[f"{prefix}_{lang}"]`` → ``d[f"{prefix}_de"]`` →
+    ``d[f"{prefix}_en"]`` → ``fallback``. Mirrors the locale chain used
+    elsewhere (``_user_input_label``, ``_pick_note_text``).
+    """
+    return (
+        d.get(f"{prefix}_{lang}")
+        or d.get(f"{prefix}_de")
+        or d.get(f"{prefix}_en")
+        or fallback
+    )
+
+
+def _resolve_tarif_urls(
+    utility_key: str | None,
+    valid_from_iso: str | None,
+    user_inputs: dict | None,
+) -> list[dict]:
+    """Return the active rate-window's ``tarif_urls`` filtered by
+    ``applies_when`` against ``user_inputs``. Empty list if no utility,
+    no active window, no urls, or all entries gated out.
+    """
+    if not utility_key or not valid_from_iso:
+        return []
+    try:
+        d = date.fromisoformat(valid_from_iso)
+    except ValueError:
+        return []
+    rate = find_active_rate_window(utility_key, d)
+    if rate is None:
+        return []
+    return [
+        entry
+        for entry in (rate.get("tarif_urls") or [])
+        if match_applies_when(entry.get("applies_when"), user_inputs)
+    ]
+
+
+def _format_tarif_urls_block(urls: list[dict], lang: str) -> str:
+    """Render ``urls`` as a markdown bullet list with a locale-picked
+    heading. Returns ``""`` when there are no usable entries so the
+    description placeholder collapses cleanly.
+    """
+    if not urls:
+        return ""
+    heading = _TARIF_URLS_HEADING.get(lang, _TARIF_URLS_HEADING["en"])
+    lines = [heading]
+    for entry in urls:
+        url = entry.get("url")
+        if not url:
+            continue
+        label = _pick_localised_label(entry, "label", lang, url)
+        lines.append(f"- [{label}]({url})")
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)
+
+
 def _force_hkn_for_save(hkn_structure: str | None, user_hkn: bool) -> bool:
     """Pick the persisted ``hkn_aktiviert`` value given the gate.
 
@@ -499,12 +575,21 @@ def _user_input_label(decl: dict, lang: str) -> str:
     """Pick the localized label for a user_input declaration. Falls back
     to ``label_de`` (schema-required), then ``label_en``, then the key.
     """
-    return (
-        decl.get(f"label_{lang}")
-        or decl.get("label_de")
-        or decl.get("label_en")
-        or decl.get("key", "—")
+    return _pick_localised_label(decl, "label", lang, decl.get("key", "—"))
+
+
+def _pick_value_label(decl: dict, value: str, lang: str) -> str:
+    """Look up the per-value display label from ``value_labels_<lang>`` on
+    a user_input declaration (schema v1.2.0 additive). Falls back to the
+    raw value when no label dict matches.
+    """
+    labels = (
+        decl.get(f"value_labels_{lang}")
+        or decl.get("value_labels_de")
+        or decl.get("value_labels_en")
+        or {}
     )
+    return str(labels.get(value, value))
 
 
 def _add_user_input_fields(
@@ -529,7 +614,10 @@ def _add_user_input_fields(
         if decl["type"] == "enum":
             values = decl.get("values", []) or []
             options = [
-                selector.SelectOptionDict(value=str(v), label=str(v))
+                selector.SelectOptionDict(
+                    value=str(v),
+                    label=_pick_value_label(decl, str(v), lang),
+                )
                 for v in values
             ]
             schema_dict[
@@ -669,6 +757,9 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             or date.today().isoformat()
         )
         hkn_structure = _active_hkn_structure(utility_key, gate_valid_from)
+        lang = (
+            getattr(self.hass.config, "language", None) or "de"
+        ).split("-")[0].lower()
         return self.async_show_form(
             step_id="tariff",
             data_schema=_tariff_schema(defaults, hkn_structure=hkn_structure),
@@ -677,6 +768,10 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "utility_name": _utility_display_name(utility_key),
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 "notes_block": _notes_block(utility_key, gate_valid_from, self.hass),
+                "tarif_urls_block": _format_tarif_urls_block(
+                    _resolve_tarif_urls(utility_key, gate_valid_from, None),
+                    lang,
+                ),
                 **_source_links(self.hass),
             },
         )
@@ -936,6 +1031,12 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 "current_summary": _format_config_summary(open_cfg) if open_cfg else "—",
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
+                "tarif_urls_block": _format_tarif_urls_block(
+                    _resolve_tarif_urls(
+                        gate_utility, gate_valid_from, decl_defaults
+                    ),
+                    lang,
+                ),
                 **_source_links(self.hass),
             },
         )
@@ -1207,6 +1308,12 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             description_placeholders={
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
                 "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
+                "tarif_urls_block": _format_tarif_urls_block(
+                    _resolve_tarif_urls(
+                        gate_utility, gate_valid_from, decl_defaults
+                    ),
+                    lang,
+                ),
             },
         )
 

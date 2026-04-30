@@ -238,6 +238,36 @@ def find_tier_for(
     return fallback
 
 
+def match_applies_when(
+    clause: dict | None, user_inputs: dict | None
+) -> bool:
+    """True iff every key in ``clause`` matches ``user_inputs``.
+
+    Empty/None clause = unconditional match. Missing or mismatched key =
+    no match. Mirrors the scalar-equality semantics used by
+    ``find_tier_for`` for ``power_tiers[].applies_when``; reused here
+    for ``rate.tarif_urls[].applies_when`` (schema v1.2.0).
+    """
+    if not clause:
+        return True
+    ui = user_inputs or {}
+    return all(ui.get(k) == v for k, v in clause.items())
+
+
+def find_active_rate_window(
+    utility_key: str, on_date: date
+) -> dict | None:
+    """Return the rate-window record active for ``utility_key`` on
+    ``on_date``, or ``None``. Convenience wrapper for callers that only
+    have the utility key + a date (e.g. config-flow link rendering).
+    """
+    db = load_tariffs()
+    utility = db.get("utilities", {}).get(utility_key)
+    if utility is None:
+        return None
+    return find_active(utility.get("rates", []), on_date)
+
+
 def evaluate_when(
     clause: dict, *, season: str | None, user_inputs: dict | None
 ) -> bool:

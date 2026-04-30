@@ -114,7 +114,13 @@
         "valid_from":         { "type": "string", "format": "date" },
         "valid_to":           { "$ref": "#/$defs/iso_date_or_null" },
         "settlement_period":  { "type": "string", "enum": ["quartal", "monat", "stunde"] },
-        "tarif_url":          { "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }] },
+        "tarif_urls": {
+          "oneOf": [
+            { "type": "array",
+              "items": { "$ref": "#/$defs/tarif_url_entry" } },
+            { "type": "null" }
+          ]
+        },
 
         "power_tiers": {
           "type": "array",
@@ -168,7 +174,7 @@
 
     "power_tier": {
       "type": "object",
-      "required": ["kw_min", "kw_max", "base_model", "hkn_rp_kwh", "hkn_structure"],
+      "required": ["kw_min", "kw_max", "base_model", "hkn_structure"],
       "additionalProperties": true,
       "properties": {
         "kw_min": { "type": "number", "minimum": 0 },
@@ -196,7 +202,12 @@
           }
         },
 
-        "hkn_rp_kwh":    { "type": "number", "minimum": 0 },
+        "hkn_rp_kwh": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
         "hkn_structure": { "type": "string", "enum": ["additive_optin", "bundled", "none"] },
 
         "applies_when": { "$ref": "#/$defs/applies_when_clause" },
@@ -290,6 +301,20 @@
       }
     },
 
+    "tarif_url_entry": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": true,
+      "properties": {
+        "url":          { "type": "string", "format": "uri" },
+        "label_de":     { "type": "string", "minLength": 1 },
+        "label_fr":     { "type": "string", "minLength": 1 },
+        "label_en":     { "type": "string", "minLength": 1 },
+        "kind":         { "type": "string", "enum": ["pdf", "html"] },
+        "applies_when": { "$ref": "#/$defs/applies_when_clause" }
+      }
+    },
+
     "user_input": {
       "type": "object",
       "required": ["key", "type", "default", "label_de"],
@@ -304,7 +329,13 @@
         "label_en":       { "type": "string" },
         "description_de": { "type": "string" },
         "description_fr": { "type": "string" },
-        "description_en": { "type": "string" }
+        "description_en": { "type": "string" },
+        "value_labels_de": { "type": "object",
+                             "additionalProperties": { "type": "string", "minLength": 1 } },
+        "value_labels_fr": { "type": "object",
+                             "additionalProperties": { "type": "string", "minLength": 1 } },
+        "value_labels_en": { "type": "object",
+                             "additionalProperties": { "type": "string", "minLength": 1 } }
       },
       "allOf": [
         {

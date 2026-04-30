@@ -15,12 +15,14 @@ from custom_components.bfe_rueckliefertarif.tariffs_db import (
     evaluate_federal_floor,
     evaluate_when,
     find_active,
+    find_active_rate_window,
     find_rule,
     find_tier,
     find_tier_for,
     floor_label,
     list_utility_keys,
     load_tariffs,
+    match_applies_when,
     resolve_tariff_at,
 )
 
@@ -300,51 +302,51 @@ class TestResolveTariffAt:
         assert rt.cap_rp_kwh == 5.40
 
     def test_aew_fixpreis_via_user_inputs(self, db):
-        # v0.11.0 (Batch D) — AEW unified. tariff_model="fixpreis" picks the
-        # fixed_flat tier via power_tier.applies_when.
+        # AEW unified user_input gates fixed_flat vs rmp_quartal tiers.
+        # v1.2.0 bundled data: key "aew_fixpreis_rmp" with prose values.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True,
-            user_inputs={"tariff_model": "fixpreis"}, data=db,
+            user_inputs={"aew_fixpreis_rmp": "AEW Fixpreis"}, data=db,
         )
         assert rt.base_model == "fixed_flat"
         assert rt.fixed_rp_kwh == 8.20
         assert rt.hkn_structure == "bundled"
         assert rt.notes is not None and len(rt.notes) >= 1
-        assert rt.notes[0]["severity"] == "warning"
-        assert "naturemade" in rt.notes[0]["text"]["de"].lower()
+        assert rt.notes[0]["severity"] == "info"
+        assert "fix" in rt.notes[0]["text"]["de"].lower()
         assert rt.cap_mode is False
         assert rt.cap_rp_kwh is None
         # Tier's applies_when is captured for downstream introspection.
-        assert rt.tier_applies_when == {"tariff_model": "fixpreis"}
+        assert rt.tier_applies_when == {"aew_fixpreis_rmp": "AEW Fixpreis"}
 
     def test_aew_rmp_via_user_inputs_at_50kw(self, db):
-        # tariff_model="rmp" picks the RMP-quartal tier; covers any kW.
+        # "Referenzmarktpreis" picks the RMP-quartal tier (kw_max=3000).
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=50.0, eigenverbrauch=True,
-            user_inputs={"tariff_model": "rmp"}, data=db,
+            user_inputs={"aew_fixpreis_rmp": "Referenzmarktpreis"}, data=db,
         )
         assert rt.base_model == "rmp_quartal"
         assert rt.hkn_structure == "none"
 
-    def test_aew_above_30kw_falls_back_to_rmp(self, db):
-        # At ≥30 kW the tariff_model picker doesn't gate anything — only one
-        # tier (rmp_quartal, no applies_when) covers that band, so it wins
-        # as the unconditional fallback regardless of user choice.
+    def test_aew_at_30kw_requires_rmp_choice(self, db):
+        # v1.2.0 bundled data: at 30 kW only the rmp_quartal tier covers
+        # (kw_min=30..3000) and it's gated on "Referenzmarktpreis".
+        # Without that user_input the resolver finds no covering tier.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=30.0, eigenverbrauch=True,
-            user_inputs={"tariff_model": "fixpreis"}, data=db,
+            user_inputs={"aew_fixpreis_rmp": "Referenzmarktpreis"}, data=db,
         )
         assert rt.base_model == "rmp_quartal"
-        assert rt.tier_applies_when is None
+        assert rt.tier_applies_when == {"aew_fixpreis_rmp": "Referenzmarktpreis"}
 
     def test_aew_default_user_input_falls_back_to_declaration_default(self, db):
         # No user_inputs supplied → resolver defaults from decl.default
-        # ("fixpreis"). Same outcome as test_aew_fixpreis_via_user_inputs.
+        # ("AEW Fixpreis"). Same outcome as test_aew_fixpreis_via_user_inputs.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True, data=db,
         )
         assert rt.base_model == "fixed_flat"
-        assert rt.tier_applies_when == {"tariff_model": "fixpreis"}
+        assert rt.tier_applies_when == {"aew_fixpreis_rmp": "AEW Fixpreis"}
 
     def test_iwb_bundled_hkn(self, db):
         rt = resolve_tariff_at(
@@ -834,3 +836,47 @@ class TestResolveTariffAtBatchD:
         )
         assert rt is not None  # didn't raise
         assert rt.tier_applies_when is None  # tier has no clause
+
+
+class TestMatchAppliesWhen:
+    """v0.12.0 (schema v1.2.0) — clause matcher reused for tarif_urls."""
+
+    def test_none_clause_matches(self):
+        assert match_applies_when(None, {"x": 1}) is True
+
+    def test_empty_clause_matches(self):
+        assert match_applies_when({}, {"x": 1}) is True
+
+    def test_none_user_inputs_treated_as_empty(self):
+        assert match_applies_when({"x": 1}, None) is False
+
+    def test_exact_scalar_match(self):
+        assert match_applies_when({"x": "a"}, {"x": "a", "y": 2}) is True
+
+    def test_missing_key_fails(self):
+        assert match_applies_when({"x": 1}, {"y": 2}) is False
+
+    def test_value_mismatch_fails(self):
+        assert match_applies_when({"x": "a"}, {"x": "b"}) is False
+
+    def test_multi_key_all_must_match(self):
+        ui = {"a": 1, "b": 2, "c": 3}
+        assert match_applies_when({"a": 1, "b": 2}, ui) is True
+        assert match_applies_when({"a": 1, "b": 99}, ui) is False
+
+
+class TestFindActiveRateWindow:
+    """Bundled-data round-trip on the convenience accessor."""
+
+    def test_known_utility_returns_record(self):
+        rec = find_active_rate_window("ekz", date(2026, 6, 1))
+        assert rec is not None
+        assert rec["valid_from"] <= "2026-06-01"
+
+    def test_unknown_utility_returns_none(self):
+        assert find_active_rate_window("does_not_exist", date(2026, 6, 1)) is None
+
+    def test_date_before_any_window_returns_none(self):
+        # The bundled data starts in 2017 for some utilities, but pre-2010 is
+        # outside every utility's coverage.
+        assert find_active_rate_window("ekz", date(1999, 1, 1)) is None
