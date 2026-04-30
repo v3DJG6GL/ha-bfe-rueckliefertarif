@@ -12,6 +12,7 @@ import pytest
 from custom_components.bfe_rueckliefertarif.tariffs_db import (
     _BUNDLED_DATA_PATH,
     ResolvedTariff,
+    compute_user_inputs_periods,
     evaluate_federal_floor,
     evaluate_when,
     find_active,
@@ -24,6 +25,7 @@ from custom_components.bfe_rueckliefertarif.tariffs_db import (
     load_tariffs,
     match_applies_when,
     resolve_tariff_at,
+    user_inputs_decl_signature,
 )
 
 _SCHEMA_PATH = (
@@ -880,3 +882,240 @@ class TestFindActiveRateWindow:
         # The bundled data starts in 2017 for some utilities, but pre-2010 is
         # outside every utility's coverage.
         assert find_active_rate_window("ekz", date(1999, 1, 1)) is None
+
+
+class TestUserInputsDeclSignature:
+    """v0.13.0 — Phase 2 hashable signature for grouping rate windows
+    that share the same user_inputs[] declaration shape."""
+
+    def test_empty_returns_empty_tuple(self):
+        assert user_inputs_decl_signature({}) == ()
+        assert user_inputs_decl_signature({"user_inputs": []}) == ()
+
+    def test_none_returns_empty_tuple(self):
+        assert user_inputs_decl_signature(None) == ()
+
+    def test_same_decls_produce_equal_signatures(self):
+        a = {"user_inputs": [
+            {"key": "model", "type": "enum", "default": "x",
+             "values": ["x", "y"], "label_de": "A"},
+        ]}
+        b = {"user_inputs": [
+            # Different label_de, same key/type/default/values: same sig.
+            {"key": "model", "type": "enum", "default": "x",
+             "values": ["x", "y"], "label_de": "B-different"},
+        ]}
+        assert user_inputs_decl_signature(a) == user_inputs_decl_signature(b)
+
+    def test_different_keys_produce_different_signatures(self):
+        a = {"user_inputs": [{"key": "alpha", "type": "boolean",
+                              "default": True, "label_de": "A"}]}
+        b = {"user_inputs": [{"key": "beta", "type": "boolean",
+                              "default": True, "label_de": "A"}]}
+        assert user_inputs_decl_signature(a) != user_inputs_decl_signature(b)
+
+    def test_different_values_produce_different_signatures(self):
+        a = {"user_inputs": [{"key": "k", "type": "enum", "default": "x",
+                              "values": ["x", "y"], "label_de": "A"}]}
+        b = {"user_inputs": [{"key": "k", "type": "enum", "default": "x",
+                              "values": ["x", "z"], "label_de": "A"}]}
+        assert user_inputs_decl_signature(a) != user_inputs_decl_signature(b)
+
+    def test_different_defaults_produce_different_signatures(self):
+        a = {"user_inputs": [{"key": "k", "type": "enum", "default": "x",
+                              "values": ["x", "y"], "label_de": "A"}]}
+        b = {"user_inputs": [{"key": "k", "type": "enum", "default": "y",
+                              "values": ["x", "y"], "label_de": "A"}]}
+        assert user_inputs_decl_signature(a) != user_inputs_decl_signature(b)
+
+    def test_array_order_does_not_matter(self):
+        a = {"user_inputs": [
+            {"key": "alpha", "type": "boolean", "default": True, "label_de": "A"},
+            {"key": "beta", "type": "boolean", "default": False, "label_de": "B"},
+        ]}
+        b = {"user_inputs": [
+            {"key": "beta", "type": "boolean", "default": False, "label_de": "B"},
+            {"key": "alpha", "type": "boolean", "default": True, "label_de": "A"},
+        ]}
+        assert user_inputs_decl_signature(a) == user_inputs_decl_signature(b)
+
+    def test_value_order_does_not_matter(self):
+        # Curator reordering values list shouldn't trigger a split.
+        a = {"user_inputs": [{"key": "k", "type": "enum", "default": "x",
+                              "values": ["x", "y", "z"], "label_de": "A"}]}
+        b = {"user_inputs": [{"key": "k", "type": "enum", "default": "x",
+                              "values": ["z", "x", "y"], "label_de": "A"}]}
+        assert user_inputs_decl_signature(a) == user_inputs_decl_signature(b)
+
+
+class TestComputeUserInputsPeriods:
+    """v0.13.0 — Phase 2 grouping of overlapping rate windows by
+    user_inputs declaration signature."""
+
+    def _patch_db(self, monkeypatch, utility_rates):
+        """Install a synthetic db with one utility ('syn') and the given
+        rate-window list."""
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": utility_rates,
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+
+    def test_unknown_utility_returns_empty(self, monkeypatch):
+        self._patch_db(monkeypatch, [])
+        assert compute_user_inputs_periods(
+            "does_not_exist", date(2026, 1, 1), None
+        ) == []
+
+    def test_no_overlap_returns_empty(self, monkeypatch):
+        self._patch_db(monkeypatch, [{
+            "valid_from": "2026-01-01",
+            "valid_to": "2027-01-01",
+            "settlement_period": "quartal",
+            "cap_mode": False,
+            "power_tiers": [],
+        }])
+        # Span is entirely BEFORE the only rate window.
+        assert compute_user_inputs_periods(
+            "syn", date(2024, 1, 1), date(2025, 1, 1)
+        ) == []
+
+    def test_single_window_returns_one_period(self, monkeypatch):
+        rate = {
+            "valid_from": "2026-01-01",
+            "valid_to": None,
+            "settlement_period": "quartal",
+            "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [
+                {"key": "k", "type": "boolean", "default": True,
+                 "label_de": "K"},
+            ],
+        }
+        self._patch_db(monkeypatch, [rate])
+        periods = compute_user_inputs_periods("syn", date(2026, 4, 1), None)
+        assert len(periods) == 1
+        period_from, period_to, rep = periods[0]
+        assert period_from == date(2026, 4, 1)
+        assert period_to is None
+        assert rep is rate
+
+    def test_two_windows_same_decls_collapse_to_one_period(self, monkeypatch):
+        common = [
+            {"key": "k", "type": "boolean", "default": True,
+             "label_de": "K"},
+        ]
+        rate_a = {
+            "valid_from": "2026-01-01",
+            "valid_to": "2027-01-01",
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [], "user_inputs": common,
+        }
+        rate_b = {
+            "valid_from": "2027-01-01",
+            "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [], "user_inputs": common,
+        }
+        self._patch_db(monkeypatch, [rate_a, rate_b])
+        periods = compute_user_inputs_periods(
+            "syn", date(2026, 1, 1), None
+        )
+        assert len(periods) == 1
+        period_from, period_to, rep = periods[0]
+        assert period_from == date(2026, 1, 1)
+        assert period_to is None
+        assert rep is rate_a  # representative is first window
+
+    def test_two_windows_different_decls_split_into_two_periods(
+        self, monkeypatch
+    ):
+        rate_a = {
+            "valid_from": "2026-01-01",
+            "valid_to": "2027-01-01",
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [
+                {"key": "old_key", "type": "enum", "default": "fix",
+                 "values": ["fix", "rmp"], "label_de": "K"},
+            ],
+        }
+        rate_b = {
+            "valid_from": "2027-01-01",
+            "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [
+                {"key": "new_key", "type": "enum", "default": "fix",
+                 "values": ["fix", "rmp"], "label_de": "K"},
+            ],
+        }
+        self._patch_db(monkeypatch, [rate_a, rate_b])
+        periods = compute_user_inputs_periods(
+            "syn", date(2026, 1, 1), None
+        )
+        assert len(periods) == 2
+        # Period 0: 2026 window
+        assert periods[0][0] == date(2026, 1, 1)
+        assert periods[0][1] == date(2027, 1, 1)
+        assert periods[0][2] is rate_a
+        # Period 1: 2027 window (open)
+        assert periods[1][0] == date(2027, 1, 1)
+        assert periods[1][1] is None
+        assert periods[1][2] is rate_b
+
+    def test_span_clamps_period_endpoints(self, monkeypatch):
+        rate = {
+            "valid_from": "2025-01-01",
+            "valid_to": "2028-01-01",
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [{"key": "k", "type": "boolean",
+                             "default": True, "label_de": "K"}],
+        }
+        self._patch_db(monkeypatch, [rate])
+        # Span is a sub-interval of the rate window.
+        periods = compute_user_inputs_periods(
+            "syn", date(2026, 6, 1), date(2027, 3, 1)
+        )
+        assert len(periods) == 1
+        assert periods[0][0] == date(2026, 6, 1)
+        assert periods[0][1] == date(2027, 3, 1)
+
+    def test_pure_rate_change_does_not_split(self, monkeypatch):
+        # Same user_inputs decl across two windows, only fixed_rp_kwh
+        # differs → one period (no split).
+        decl = [{"key": "k", "type": "boolean", "default": True,
+                 "label_de": "K"}]
+        rate_a = {
+            "valid_from": "2026-01-01", "valid_to": "2027-01-01",
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [{"kw_min": 0, "kw_max": None,
+                             "base_model": "fixed_flat",
+                             "fixed_rp_kwh": 8.0,
+                             "hkn_rp_kwh": 0.0, "hkn_structure": "none"}],
+            "user_inputs": decl,
+        }
+        rate_b = {
+            "valid_from": "2027-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [{"kw_min": 0, "kw_max": None,
+                             "base_model": "fixed_flat",
+                             "fixed_rp_kwh": 9.5,  # different rate
+                             "hkn_rp_kwh": 0.0, "hkn_structure": "none"}],
+            "user_inputs": decl,
+        }
+        self._patch_db(monkeypatch, [rate_a, rate_b])
+        periods = compute_user_inputs_periods(
+            "syn", date(2026, 1, 1), None
+        )
+        assert len(periods) == 1

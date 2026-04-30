@@ -364,11 +364,17 @@ class TestApplyChangeWizard:
         return flow, flow_entry
 
     async def _drive(self, flow, valid_from, utility, details):
-        """Drive the two-step wizard end-to-end. ``details`` is the Step 2
-        payload (kw / EV / HKN / user_inputs). Returns the final result."""
-        step1 = await flow.async_step_apply_change(
-            {"valid_from": valid_from, CONF_ENERGIEVERSORGER: utility}
-        )
+        """Drive the two-step wizard end-to-end. v0.13.0: kW now lives on
+        Step 1 alongside utility + valid_from; Step 2 details has only
+        EV / HKN / user_inputs. The test API still accepts kW inside
+        ``details`` and re-routes it to Step 1 for backward compat."""
+        kw = details.get(CONF_INSTALLIERTE_LEISTUNG_KW, 10.0)
+        step1_payload = {
+            "valid_from": valid_from,
+            CONF_ENERGIEVERSORGER: utility,
+            CONF_INSTALLIERTE_LEISTUNG_KW: kw,
+        }
+        step1 = await flow.async_step_apply_change(step1_payload)
         # Step 1 routes to Step 2 internally on success and returns the
         # Step 2 form. Submit Step 2 to commit.
         if step1["type"].name in ("CREATE_ENTRY", "create_entry"):
@@ -376,7 +382,11 @@ class TestApplyChangeWizard:
         if step1.get("step_id") == "apply_change":
             # Step 1 re-rendered with errors — caller wants to see those.
             return step1
-        return await flow.async_step_apply_change_details(details)
+        step2_details = {
+            k: v for k, v in details.items()
+            if k != CONF_INSTALLIERTE_LEISTUNG_KW
+        }
+        return await flow.async_step_apply_change_details(step2_details)
 
     @pytest.mark.asyncio
     async def test_creates_new_record_with_all_fields(self):
@@ -444,7 +454,8 @@ class TestApplyChangeWizard:
         )
         assert result["type"].name in ("FORM", "form")
         assert result["errors"] == {CONF_INSTALLIERTE_LEISTUNG_KW: "kw_required"}
-        assert result["step_id"] == "apply_change_details"
+        # v0.13.0 — kW lives on Step 1; the kw_required error re-renders Step 1.
+        assert result["step_id"] == "apply_change"
 
     @pytest.mark.asyncio
     async def test_no_op_change_does_not_duplicate_record(self):
@@ -484,8 +495,12 @@ class TestApplyChangeWizard:
             flow,
             valid_from="2026-04-01",
             utility="aew",
+            # v0.13.0 — kW=50 lands in AEW's upper tier (kw_min=30,
+            # kw_max=3000) which is gated on "Referenzmarktpreis"; the
+            # O4 dry-run accepts this combination. (kW=10 + RMP would
+            # be correctly rejected by the new no_matching_tier check.)
             details={
-                CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+                CONF_INSTALLIERTE_LEISTUNG_KW: 50.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
                 "aew_fixpreis_rmp": "Referenzmarktpreis",
@@ -562,11 +577,229 @@ class TestApplyChangeWizard:
         assert result["type"].name in ("FORM", "form")
         assert result["step_id"] == "apply_change"
         assert result.get("last_step") is False
-        # The schema only has valid_from + utility — no kW/EV/HKN.
+        # v0.13.0: kW now lives on Step 1 too (drives Step 2's EV gate
+        # and find_active_rate_window validation). EV/HKN/user_inputs
+        # remain on Step 2.
         rendered_keys = {str(k) for k in result["data_schema"].schema}
         assert "valid_from" in rendered_keys
         assert CONF_ENERGIEVERSORGER in rendered_keys
-        assert CONF_INSTALLIERTE_LEISTUNG_KW not in rendered_keys
+        assert CONF_INSTALLIERTE_LEISTUNG_KW in rendered_keys
+        assert CONF_EIGENVERBRAUCH_AKTIVIERT not in rendered_keys
+        assert CONF_HKN_AKTIVIERT not in rendered_keys
+
+
+class TestPerPeriodEditor:
+    """v0.13.0 (Phase 2) — when a single user-history entry's effective
+    span covers multiple rate windows with differing ``user_inputs[]``
+    declarations, the Step 2 form renders one section per period
+    (namespaced field keys ``period_<idx>_<key>``), and save splits
+    into N history records — one per period, each carrying the
+    period-scoped user_inputs."""
+
+    def _make_flow(self, options, data=None):
+        from unittest.mock import AsyncMock
+
+        flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
+        flow.hass = MagicMock()
+        flow.hass.async_add_executor_job = AsyncMock(return_value=None)
+        flow_entry = SimpleNamespace(
+            entry_id="test_entry_id",
+            data=data or {"stromnetzeinspeisung_kwh": "sensor.foo"},
+            options=MappingProxyType(options),
+        )
+        flow.handler = "test_entry_id"
+        flow.hass.config_entries.async_get_entry.return_value = flow_entry
+        flow.hass.config_entries.async_get_known_entry.return_value = flow_entry
+        return flow, flow_entry
+
+    def _patch_synthetic_db(self, monkeypatch, rates):
+        """Install a synthetic db with one utility ('syn') and the given
+        rate windows. Patches both tariffs_db.load_tariffs (used by db
+        helpers internally) and config_flow.load_tariffs (re-bound at
+        module import time)."""
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2024-01-01",
+                "valid_to": None,
+                "rules": [
+                    {"kw_min": 0, "kw_max": None, "self_consumption": None,
+                     "min_rp_kwh": 4.0},
+                ],
+            }],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": rates,
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+        # Lookup helpers in tdb call load_tariffs internally; the
+        # find_active_rate_window in cf is imported but uses its own
+        # import-time-bound load_tariffs from tdb. Patch both so all
+        # paths see the synthetic db.
+
+    @pytest.mark.asyncio
+    async def test_renders_namespaced_fields_when_decls_differ(self, monkeypatch):
+        # Two rate windows with different user_inputs decls:
+        # 2026 has key=old_key, 2027 has key=new_key.
+        rates = [
+            {
+                "valid_from": "2026-01-01", "valid_to": "2027-01-01",
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [{
+                    "kw_min": 0, "kw_max": None,
+                    "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                }],
+                "user_inputs": [{
+                    "key": "old_key", "type": "enum", "default": "fix",
+                    "values": ["fix", "rmp"], "label_de": "Old",
+                }],
+            },
+            {
+                "valid_from": "2027-01-01", "valid_to": None,
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [{
+                    "kw_min": 0, "kw_max": None,
+                    "base_model": "fixed_flat", "fixed_rp_kwh": 9.0,
+                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                }],
+                "user_inputs": [{
+                    "key": "new_key", "type": "enum", "default": "fix",
+                    "values": ["fix", "rmp"], "label_de": "New",
+                }],
+            },
+        ]
+        self._patch_synthetic_db(monkeypatch, rates)
+
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: []})
+        # Step 1: pick syn + 2026-04-01 + kW=10
+        await flow.async_step_apply_change({
+            "valid_from": "2026-04-01",
+            CONF_ENERGIEVERSORGER: "syn",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+        })
+        # Render Step 2 (no user_input — initial render).
+        result = await flow.async_step_apply_change_details()
+        assert result["type"].name in ("FORM", "form")
+        rendered_keys = {str(k) for k in result["data_schema"].schema}
+        # Period 0 (2026) namespaced field
+        assert "period_0_old_key" in rendered_keys
+        # Period 1 (2027) namespaced field
+        assert "period_1_new_key" in rendered_keys
+        # No bare unnamespaced keys (multi-period mode replaces them)
+        assert "old_key" not in rendered_keys
+        assert "new_key" not in rendered_keys
+
+    @pytest.mark.asyncio
+    async def test_save_splits_into_n_entries(self, monkeypatch):
+        # Same setup as above; submit Step 2 → expect 2 history records.
+        rates = [
+            {
+                "valid_from": "2026-01-01", "valid_to": "2027-01-01",
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [{
+                    "kw_min": 0, "kw_max": None,
+                    "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                }],
+                "user_inputs": [{
+                    "key": "old_key", "type": "enum", "default": "fix",
+                    "values": ["fix", "rmp"], "label_de": "Old",
+                }],
+            },
+            {
+                "valid_from": "2027-01-01", "valid_to": None,
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [{
+                    "kw_min": 0, "kw_max": None,
+                    "base_model": "fixed_flat", "fixed_rp_kwh": 9.0,
+                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                }],
+                "user_inputs": [{
+                    "key": "new_key", "type": "enum", "default": "fix",
+                    "values": ["fix", "rmp"], "label_de": "New",
+                }],
+            },
+        ]
+        self._patch_synthetic_db(monkeypatch, rates)
+
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: []})
+        await flow.async_step_apply_change({
+            "valid_from": "2026-04-01",
+            CONF_ENERGIEVERSORGER: "syn",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+        })
+        # Submit Step 2 with explicit per-period values.
+        result = await flow.async_step_apply_change_details({
+            "period_0_old_key": "rmp",
+            "period_1_new_key": "fix",
+        })
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        history = result["data"][OPT_CONFIG_HISTORY]
+        # Filter out the 1970 sentinel that _append_history_record
+        # injects when history was empty (the sentinel is fixture-data
+        # noise; the test cares about user-owned records only).
+        user_recs = [r for r in history if r["valid_from"] != "1970-01-01"]
+        assert len(user_recs) == 2, f"got {len(user_recs)} user records, expected 2"
+        # Period 0: user's chosen valid_from (2026-04-01) with old_key="rmp"
+        rec0 = next(r for r in user_recs if r["valid_from"] == "2026-04-01")
+        assert rec0["config"]["user_inputs"] == {"old_key": "rmp"}
+        # Period 1: rate-window boundary (2027-01-01) with new_key="fix"
+        rec1 = next(r for r in user_recs if r["valid_from"] == "2027-01-01")
+        assert rec1["config"]["user_inputs"] == {"new_key": "fix"}
+
+    @pytest.mark.asyncio
+    async def test_pure_rate_change_keeps_single_entry(self, monkeypatch):
+        # Two rate windows, identical user_inputs decls — only fixed rate
+        # differs. Expect single history record (no split).
+        common_decl = [{
+            "key": "k", "type": "enum", "default": "x",
+            "values": ["x", "y"], "label_de": "K",
+        }]
+        rates = [
+            {
+                "valid_from": "2026-01-01", "valid_to": "2027-01-01",
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [{
+                    "kw_min": 0, "kw_max": None,
+                    "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                }],
+                "user_inputs": common_decl,
+            },
+            {
+                "valid_from": "2027-01-01", "valid_to": None,
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [{
+                    "kw_min": 0, "kw_max": None,
+                    "base_model": "fixed_flat", "fixed_rp_kwh": 9.5,
+                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                }],
+                "user_inputs": common_decl,
+            },
+        ]
+        self._patch_synthetic_db(monkeypatch, rates)
+
+        flow, _ = self._make_flow({OPT_CONFIG_HISTORY: []})
+        await flow.async_step_apply_change({
+            "valid_from": "2026-04-01",
+            CONF_ENERGIEVERSORGER: "syn",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+        })
+        result = await flow.async_step_apply_change_details({"k": "x"})
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        history = result["data"][OPT_CONFIG_HISTORY]
+        # Filter out the 1970 sentinel injected when history was empty.
+        user_recs = [r for r in history if r["valid_from"] != "1970-01-01"]
+        assert len(user_recs) == 1
 
 
 class TestRecomputeHistoryEstimate:

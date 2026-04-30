@@ -41,7 +41,8 @@
     "error": {
       "kw_required": "Installed power (kW) must be greater than 0.",
       "no_active_rate": "Selected utility has no active rate window for this date.",
-      "settlement_period_unsupported": "Selected utility uses hourly Day-Ahead settlement (Vernehmlassung 2025/59), which is not yet supported."
+      "settlement_period_unsupported": "Selected utility uses hourly Day-Ahead settlement (Vernehmlassung 2025/59), which is not yet supported.",
+      "no_matching_tier": "Your installed power and selection don't match any available tariff tier for this utility/date. Adjust the kW or change the user-input choice."
     }
   },
   "options": {
@@ -75,7 +76,7 @@
       },
       "apply_change_details": {
         "title": "Apply config change — {utility_name} from {valid_from}",
-        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
@@ -105,7 +106,7 @@
       },
       "add_new_row": {
         "title": "Add transition — {utility_name} from {valid_from}",
-        "description": "Plant details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Plant details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
@@ -114,7 +115,7 @@
       },
       "edit_row": {
         "title": "Edit transition — {utility_name} from {valid_from}",
-        "description": "Update plant details for **{utility_name}** effective **{valid_from}**, or tick **Delete this record** to remove the row.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Update plant details for **{utility_name}** effective **{valid_from}**, or tick **Delete this record** to remove the row.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
@@ -159,7 +160,8 @@
       "reimport_failed": "Operation failed unexpectedly. Check Settings → System → Logs.",
       "cannot_delete_last_record": "Cannot delete the only history record — at least one must remain. Edit it instead.",
       "no_active_rate": "Selected utility has no active rate window for this date.",
-      "settlement_period_unsupported": "Selected utility uses hourly Day-Ahead settlement (Vernehmlassung 2025/59), which is not yet supported."
+      "settlement_period_unsupported": "Selected utility uses hourly Day-Ahead settlement (Vernehmlassung 2025/59), which is not yet supported.",
+      "no_matching_tier": "Your installed power and selection don't match any available tariff tier for this utility/date. Adjust the kW or change the user-input choice."
     }
   },
   "selector": {},
@@ -185,6 +187,20 @@
       },
       "tariffs_last_remote_update": {
         "name": "Tariff database — last remote update"
+      }
+    }
+  },
+  "issues": {
+    "tariff_drift": {
+      "title": "{utility} tariff structure changed",
+      "description": "Your saved configuration covers {period_from} → {period_to}, but the tariff structure has changed in this period. Affected fields: {fields}. Open the repair to reconfigure.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Reconfigure {utility} from {period_from}",
+            "description": "Pick the new value(s) for the {period_from} → {period_to} period. Saving will append a new history entry at {period_from} with your choices."
+          }
+        }
       }
     }
   }

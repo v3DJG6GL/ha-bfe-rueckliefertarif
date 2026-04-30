@@ -128,3 +128,335 @@ class TestBundledStillWorks:
     def test_bundled_loads_with_no_override(self):
         loaded = load_tariffs()
         assert "ekz" in loaded["utilities"]
+
+
+class TestScanHistoryForDrift:
+    """v0.13.0 (Phase 3) — drift scanner. Walks one config entry's
+    OPT_CONFIG_HISTORY against the current tariff schema; emits a
+    descriptor per stale (entry × period) pair."""
+
+    def _make_entry(self, history):
+        from types import SimpleNamespace
+
+        from custom_components.bfe_rueckliefertarif.const import OPT_CONFIG_HISTORY
+        return SimpleNamespace(
+            entry_id="test_entry_id",
+            options={OPT_CONFIG_HISTORY: history},
+        )
+
+    def _patch_db(self, monkeypatch, rates):
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2024-01-01",
+                "valid_to": None,
+                "rules": [{"kw_min": 0, "kw_max": None,
+                           "self_consumption": None, "min_rp_kwh": 4.0}],
+            }],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": rates,
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+
+    def test_no_drift_when_stored_matches_current(self, monkeypatch):
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        rates = [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [{
+                "key": "k", "type": "enum", "default": "x",
+                "values": ["x", "y"], "label_de": "K",
+            }],
+        }]
+        self._patch_db(monkeypatch, rates)
+
+        entry = self._make_entry([
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {"energieversorger": "syn",
+                        "user_inputs": {"k": "x"}}},
+        ])
+        assert _scan_history_for_drift(entry) == []
+
+    def test_added_key_reported_as_missing(self, monkeypatch):
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        rates = [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [
+                {"key": "k", "type": "enum", "default": "x",
+                 "values": ["x", "y"], "label_de": "K"},
+                {"key": "new_opt", "type": "boolean", "default": False,
+                 "label_de": "New"},
+            ],
+        }]
+        self._patch_db(monkeypatch, rates)
+
+        entry = self._make_entry([
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {"energieversorger": "syn",
+                        "user_inputs": {"k": "x"}}},
+        ])
+        descs = _scan_history_for_drift(entry)
+        assert len(descs) == 1
+        assert descs[0]["missing_keys"] == ["new_opt"]
+        assert descs[0]["stale_values"] == []
+        assert descs[0]["utility"] == "syn"
+
+    def test_stale_value_reported(self, monkeypatch):
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        rates = [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [{
+                "key": "k", "type": "enum", "default": "new1",
+                "values": ["new1", "new2"], "label_de": "K",
+            }],
+        }]
+        self._patch_db(monkeypatch, rates)
+
+        entry = self._make_entry([
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {"energieversorger": "syn",
+                        "user_inputs": {"k": "old"}}},
+        ])
+        descs = _scan_history_for_drift(entry)
+        assert len(descs) == 1
+        assert descs[0]["missing_keys"] == []
+        assert descs[0]["stale_values"] == ["k"]
+
+    def test_removed_key_does_not_fire(self, monkeypatch):
+        # Stored has key "k"; current rate window declares NO user_inputs.
+        # Stored value becomes inert noise; no repair issue should fire.
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        rates = [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [],
+        }]
+        self._patch_db(monkeypatch, rates)
+
+        entry = self._make_entry([
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {"energieversorger": "syn",
+                        "user_inputs": {"k": "x"}}},
+        ])
+        assert _scan_history_for_drift(entry) == []
+
+    def test_pure_rate_change_does_not_fire(self, monkeypatch):
+        # Same user_inputs decls across both windows; only fixed_rp_kwh differs.
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        common_decl = [{
+            "key": "k", "type": "enum", "default": "x",
+            "values": ["x", "y"], "label_de": "K",
+        }]
+        rates = [
+            {
+                "valid_from": "2026-01-01", "valid_to": "2027-01-01",
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [],
+                "user_inputs": common_decl,
+            },
+            {
+                "valid_from": "2027-01-01", "valid_to": None,
+                "settlement_period": "quartal", "cap_mode": False,
+                "power_tiers": [],
+                "user_inputs": common_decl,
+            },
+        ]
+        self._patch_db(monkeypatch, rates)
+
+        entry = self._make_entry([
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {"energieversorger": "syn",
+                        "user_inputs": {"k": "x"}}},
+        ])
+        assert _scan_history_for_drift(entry) == []
+
+    def test_sentinel_record_skipped(self, monkeypatch):
+        # 1970-01-01 sentinel records are skipped (they have None values).
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        rates = [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [{
+                "key": "k", "type": "enum", "default": "x",
+                "values": ["x", "y"], "label_de": "K",
+            }],
+        }]
+        self._patch_db(monkeypatch, rates)
+
+        entry = self._make_entry([
+            {"valid_from": "1970-01-01", "valid_to": None,
+             "config": {"energieversorger": None, "user_inputs": None}},
+        ])
+        assert _scan_history_for_drift(entry) == []
+
+    def test_empty_history_returns_empty(self):
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            _scan_history_for_drift,
+        )
+
+        entry = self._make_entry([])
+        assert _scan_history_for_drift(entry) == []
+
+
+class TestTariffDriftRepairFlow:
+    """v0.13.0 (Phase 3) — repair flow that resolves a drift issue by
+    appending a new history entry at period_from with the user's picks."""
+
+    def _patch_db(self, monkeypatch, rates):
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2024-01-01",
+                "valid_to": None,
+                "rules": [{"kw_min": 0, "kw_max": None,
+                           "self_consumption": None, "min_rp_kwh": 4.0}],
+            }],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": rates,
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+
+    @pytest.mark.asyncio
+    async def test_save_appends_entry_with_patched_user_inputs(self, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from custom_components.bfe_rueckliefertarif.const import (
+            CONF_ENERGIEVERSORGER,
+            CONF_USER_INPUTS,
+            OPT_CONFIG_HISTORY,
+        )
+        from custom_components.bfe_rueckliefertarif.repairs import (
+            TariffDriftRepairFlow,
+        )
+
+        # Synthetic rate window: declares a renamed key the stored entry doesn't have.
+        rates = [{
+            "valid_from": "2027-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [],
+            "user_inputs": [{
+                "key": "renamed", "type": "enum", "default": "fix",
+                "values": ["fix", "rmp"], "label_de": "K",
+            }],
+        }]
+        self._patch_db(monkeypatch, rates)
+
+        # Pre-existing history with a 2026 record carrying the OLD key.
+        existing_history = [
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {
+                 CONF_ENERGIEVERSORGER: "syn",
+                 "installierte_leistung_kw": 10.0,
+                 "eigenverbrauch_aktiviert": True,
+                 "hkn_aktiviert": False,
+                 "abrechnungs_rhythmus": "quartal",
+                 CONF_USER_INPUTS: {"old_key": "fix"},
+             }},
+        ]
+        entry = SimpleNamespace(
+            entry_id="entry_42",
+            data={"stromnetzeinspeisung_kwh": "sensor.foo"},
+            options={OPT_CONFIG_HISTORY: existing_history},
+        )
+
+        descriptor = {
+            "entry_id": "entry_42",
+            "entry_idx": 0,
+            "utility": "syn",
+            "period_from": "2027-01-01",
+            "period_to": None,
+            "missing_keys": ["renamed"],
+            "stale_values": [],
+        }
+
+        flow = TariffDriftRepairFlow(descriptor)
+        flow.hass = MagicMock()
+        flow.hass.config.language = "en"
+        flow.hass.config_entries.async_get_entry.return_value = entry
+
+        # Submit the form with the user's new pick.
+        result = await flow.async_step_init({"renamed": "rmp"})
+
+        # Flow completes via async_create_entry.
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        # async_update_entry was called with new options containing a
+        # new record at 2027-01-01 with renamed=rmp.
+        flow.hass.config_entries.async_update_entry.assert_called_once()
+        new_options = flow.hass.config_entries.async_update_entry.call_args.kwargs[
+            "options"
+        ]
+        history = new_options[OPT_CONFIG_HISTORY]
+        new_rec = next(r for r in history if r["valid_from"] == "2027-01-01")
+        assert new_rec["config"][CONF_USER_INPUTS] == {
+            "old_key": "fix",  # preserved from base
+            "renamed": "rmp",  # newly picked
+        }
+
+    @pytest.mark.asyncio
+    async def test_aborts_when_no_rate_window(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from custom_components.bfe_rueckliefertarif.repairs import (
+            TariffDriftRepairFlow,
+        )
+
+        # No rate window for the period we're trying to fix.
+        self._patch_db(monkeypatch, [])
+
+        descriptor = {
+            "entry_id": "entry_42",
+            "entry_idx": 0,
+            "utility": "syn",
+            "period_from": "2027-01-01",
+            "period_to": None,
+            "missing_keys": ["k"],
+            "stale_values": [],
+        }
+        flow = TariffDriftRepairFlow(descriptor)
+        flow.hass = MagicMock()
+
+        result = await flow.async_step_init()
+        assert result["type"].name in ("ABORT", "abort")
+        assert result["reason"] == "no_rate_window"

@@ -17,13 +17,24 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .tariffs_db import load_tariffs, set_override_path
+from .const import (
+    CONF_ENERGIEVERSORGER,
+    CONF_USER_INPUTS,
+    DOMAIN,
+    OPT_CONFIG_HISTORY,
+)
+from .tariffs_db import (
+    compute_user_inputs_periods,
+    load_tariffs,
+    set_override_path,
+)
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
@@ -117,7 +128,22 @@ class TariffsDataCoordinator:
             "Remote tariffs.json refreshed (schema_version=%s)",
             data.get("schema_version"),
         )
+
+        # v0.13.0 (Phase 3) — scan all this domain's entries for stale
+        # user_inputs against the freshly-fetched tariff schema and
+        # surface repair issues. Wrapped so issue-creation failures
+        # don't fail the refresh.
+        try:
+            self._create_drift_issues_for_all_entries()
+        except Exception as exc:
+            _LOGGER.warning("Drift scan after refresh failed: %s", exc)
+
         return True
+
+    def _create_drift_issues_for_all_entries(self) -> None:
+        """Iterate domain entries; surface drift issues for each."""
+        for entry in self._hass.config_entries.async_entries(DOMAIN):
+            _create_drift_issues(self._hass, entry)
 
     def _is_fresh(self) -> bool:
         if self.last_remote_update is None:
@@ -181,3 +207,133 @@ class TariffsDataCoordinator:
             raise ValueError("utilities must be a non-empty dict")
         if not isinstance(data["federal_minimum"], list) or not data["federal_minimum"]:
             raise ValueError("federal_minimum must be a non-empty list")
+
+
+# ----- v0.13.0 (Phase 3) — drift detection ----------------------------------
+
+
+def _scan_history_for_drift(entry: ConfigEntry) -> list[dict]:
+    """Walk a config entry's ``OPT_CONFIG_HISTORY`` and return a descriptor
+    per stale entry × rate-window-period.
+
+    Drift signals (per the v0.13.0 decision tracker A4.3 / A4.4):
+      - **missing_key**: a current rate window declares a ``user_inputs[]``
+        key that is NOT present in the stored ``user_inputs`` dict. The
+        user has a new decision to make (added opt-in, renamed key).
+      - **stale_value**: a stored enum value is not in the current
+        declaration's ``values`` list. The user must re-pick.
+
+    Removed-key drift (stored key no longer declared) does NOT fire — the
+    stored value becomes inert noise; no user action is needed.
+
+    Returns a list of dicts, each with keys: ``entry_idx``, ``utility``,
+    ``period_from`` (date), ``period_to`` (date | None), ``missing_keys``,
+    ``stale_values``.
+    """
+    descriptors: list[dict] = []
+    history = list((entry.options or {}).get(OPT_CONFIG_HISTORY) or [])
+    if not history:
+        return descriptors
+
+    sorted_history = sorted(history, key=lambda r: r.get("valid_from") or "")
+    for idx, rec in enumerate(sorted_history):
+        valid_from_str = rec.get("valid_from")
+        if not valid_from_str or valid_from_str == "1970-01-01":
+            continue
+        cfg = rec.get("config") or {}
+        utility = cfg.get(CONF_ENERGIEVERSORGER)
+        if not utility:
+            continue
+        stored_inputs = cfg.get(CONF_USER_INPUTS) or {}
+
+        try:
+            span_from = date.fromisoformat(valid_from_str)
+        except ValueError:
+            continue
+        span_to: date | None = None
+        if idx + 1 < len(sorted_history):
+            next_vf = sorted_history[idx + 1].get("valid_from")
+            if next_vf:
+                try:
+                    span_to = date.fromisoformat(next_vf)
+                except ValueError:
+                    pass
+
+        try:
+            periods = compute_user_inputs_periods(utility, span_from, span_to)
+        except (KeyError, ValueError, LookupError):
+            continue
+        for period_from, period_to, rep_rate in periods:
+            decls = rep_rate.get("user_inputs") or []
+            missing_keys: list[str] = []
+            stale_values: list[str] = []
+            for decl in decls:
+                key = decl.get("key")
+                if key is None:
+                    continue
+                if key not in stored_inputs:
+                    missing_keys.append(key)
+                    continue
+                if decl.get("type") == "enum":
+                    valid_values = set(decl.get("values") or [])
+                    if valid_values and stored_inputs[key] not in valid_values:
+                        stale_values.append(key)
+            if missing_keys or stale_values:
+                descriptors.append({
+                    "entry_idx": idx,
+                    "utility": utility,
+                    "period_from": period_from,
+                    "period_to": period_to,
+                    "missing_keys": missing_keys,
+                    "stale_values": stale_values,
+                })
+    return descriptors
+
+
+def _create_drift_issues(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Scan one config entry; surface each drift descriptor as an HA
+    repair issue. Idempotent: re-runs replace earlier issues with the
+    same ``issue_id`` (HA's issue registry semantics)."""
+    from homeassistant.helpers.issue_registry import (
+        IssueSeverity,
+        async_create_issue,
+    )
+
+    descriptors = _scan_history_for_drift(entry)
+    for desc in descriptors:
+        period_from_iso = desc["period_from"].isoformat()
+        period_to_iso = (
+            desc["period_to"].isoformat()
+            if desc["period_to"] is not None else "open"
+        )
+        issue_id = (
+            f"drift_{entry.entry_id}_{desc['entry_idx']}_{period_from_iso}"
+        )
+        async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=True,
+            severity=IssueSeverity.WARNING,
+            translation_key="tariff_drift",
+            translation_placeholders={
+                "utility": desc["utility"],
+                "period_from": period_from_iso,
+                "period_to": period_to_iso,
+                "fields": ", ".join(
+                    sorted(set(desc["missing_keys"] + desc["stale_values"]))
+                ),
+            },
+            data={
+                "entry_id": entry.entry_id,
+                "entry_idx": desc["entry_idx"],
+                "utility": desc["utility"],
+                "period_from": period_from_iso,
+                "period_to": (
+                    desc["period_to"].isoformat()
+                    if desc["period_to"] is not None else None
+                ),
+                "missing_keys": desc["missing_keys"],
+                "stale_values": desc["stale_values"],
+            },
+        )

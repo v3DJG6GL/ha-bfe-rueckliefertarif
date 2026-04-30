@@ -41,7 +41,8 @@
     "error": {
       "kw_required": "Installierte Leistung (kW) muss grösser als 0 sein.",
       "no_active_rate": "Der gewählte Versorger hat für dieses Datum kein aktives Tarif-Fenster.",
-      "settlement_period_unsupported": "Der gewählte Versorger nutzt stündliche Day-Ahead-Abrechnung (Vernehmlassung 2025/59), die noch nicht unterstützt wird."
+      "settlement_period_unsupported": "Der gewählte Versorger nutzt stündliche Day-Ahead-Abrechnung (Vernehmlassung 2025/59), die noch nicht unterstützt wird.",
+      "no_matching_tier": "Deine installierte Leistung und Auswahl passen für diesen Versorger und Zeitraum zu keiner Tarifstufe. Passe kW oder die Auswahl an."
     }
   },
   "options": {
@@ -75,7 +76,7 @@
       },
       "apply_change_details": {
         "title": "Konfigurationsänderung — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** ausfüllen. Versorgerseitige Werte (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** ausfüllen. Versorgerseitige Werte (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
@@ -105,7 +106,7 @@
       },
       "add_new_row": {
         "title": "Übergang hinzufügen — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
@@ -114,7 +115,7 @@
       },
       "edit_row": {
         "title": "Übergang bearbeiten — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** aktualisieren oder **Diesen Eintrag löschen** ankreuzen, um die Zeile zu entfernen.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** aktualisieren oder **Diesen Eintrag löschen** ankreuzen, um die Zeile zu entfernen.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
@@ -159,7 +160,8 @@
       "reimport_failed": "Vorgang unerwartet fehlgeschlagen. Prüfe Einstellungen → System → Logs.",
       "cannot_delete_last_record": "Der letzte Verlaufseintrag kann nicht gelöscht werden — mindestens einer muss bleiben. Stattdessen bearbeiten.",
       "no_active_rate": "Der gewählte Versorger hat für dieses Datum kein aktives Tarif-Fenster.",
-      "settlement_period_unsupported": "Der gewählte Versorger nutzt stündliche Day-Ahead-Abrechnung (Vernehmlassung 2025/59), die noch nicht unterstützt wird."
+      "settlement_period_unsupported": "Der gewählte Versorger nutzt stündliche Day-Ahead-Abrechnung (Vernehmlassung 2025/59), die noch nicht unterstützt wird.",
+      "no_matching_tier": "Deine installierte Leistung und Auswahl passen für diesen Versorger und Zeitraum zu keiner Tarifstufe. Passe kW oder die Auswahl an."
     }
   },
   "selector": {},
@@ -185,6 +187,20 @@
       },
       "tariffs_last_remote_update": {
         "name": "Tarif-Datenbank — letztes Remote-Update"
+      }
+    }
+  },
+  "issues": {
+    "tariff_drift": {
+      "title": "{utility}: Tarif-Struktur geändert",
+      "description": "Deine gespeicherte Konfiguration deckt den Zeitraum {period_from} → {period_to} ab. Die Tarif-Struktur hat sich in diesem Zeitraum geändert. Betroffene Felder: {fields}. Öffne die Reparatur zum Anpassen.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "{utility} ab {period_from} neu konfigurieren",
+            "description": "Wähle den neuen Wert für den Zeitraum {period_from} → {period_to}. Beim Speichern wird ein neuer History-Eintrag mit Start {period_from} angelegt."
+          }
+        }
       }
     }
   }

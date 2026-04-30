@@ -406,15 +406,19 @@ class TestEditRowWizard:
         assert step1["type"].name in ("FORM", "form")
         assert step1["step_id"] == "add_pick_row"
 
+        # v0.13.0 — kW lives on Step 1 alongside utility + valid_from.
         step1_submit = await flow.async_step_add_pick_row(
-            {"valid_from": "2026-04-01", CONF_ENERGIEVERSORGER: "ekz"}
+            {
+                "valid_from": "2026-04-01",
+                CONF_ENERGIEVERSORGER: "ekz",
+                CONF_INSTALLIERTE_LEISTUNG_KW: 12.0,
+            }
         )
         # Should auto-route to Step 2.
         assert step1_submit["step_id"] == "add_new_row"
 
-        # Step 2 (details + save)
+        # Step 2 (details + save) — no kW field anymore; carried from Step 1.
         step2_submit = await flow.async_step_add_new_row({
-            CONF_INSTALLIERTE_LEISTUNG_KW: 12.0,
             CONF_EIGENVERBRAUCH_AKTIVIERT: True,
             CONF_HKN_AKTIVIERT: False,
         })
@@ -456,15 +460,18 @@ class TestEditRowWizard:
         step1 = await flow.async_step_edit_pick_row()
         assert step1["step_id"] == "edit_pick_row"
 
-        # Submit Step 1 unchanged → routes to Step 2 (edit_row).
+        # v0.13.0 — kW lives on Step 1; tweak it here and Step 2 inherits.
         step1_submit = await flow.async_step_edit_pick_row(
-            {"valid_from": "2026-02-01", CONF_ENERGIEVERSORGER: "ekz"}
+            {
+                "valid_from": "2026-02-01",
+                CONF_ENERGIEVERSORGER: "ekz",
+                CONF_INSTALLIERTE_LEISTUNG_KW: 15.5,
+            }
         )
         assert step1_submit["step_id"] == "edit_row"
 
-        # Step 2: tweak kW, submit → save replaces history[0].
+        # Step 2: no kW field anymore. Submit → save replaces history[0].
         step2_submit = await flow.async_step_edit_row({
-            CONF_INSTALLIERTE_LEISTUNG_KW: 15.5,
             CONF_EIGENVERBRAUCH_AKTIVIERT: True,
             CONF_HKN_AKTIVIERT: True,
             "delete": False,
@@ -652,7 +659,10 @@ class TestResolveTarifUrls:
                 }
             },
         }
+        # config_flow.py imports load_tariffs at module load, so we must
+        # patch both names. Same for find_active (used inside the helper).
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
 
         # No user_inputs → only the unconditional URL passes.
         out = cf._resolve_tarif_urls("syn", "2026-06-01", None)
@@ -667,3 +677,218 @@ class TestResolveTarifUrls:
         # With non-matching user_inputs → only unconditional.
         out = cf._resolve_tarif_urls("syn", "2026-06-01", {"model": "rmp"})
         assert [e["url"] for e in out] == ["https://example.test/always.pdf"]
+
+
+class TestSelfConsumptionRelevant:
+    """v0.13.0 — A2.1 data-gate for the self-consumption form field.
+
+    True iff at least one rule the resolver would consume actually
+    distinguishes on ``self_consumption`` for this (utility, kW, date).
+    """
+
+    def test_relevant_when_federal_rule_distinguishes(self, monkeypatch):
+        """30-150 kW band of bundled federal_minimum has a 'mit/ohne EV' split."""
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _self_consumption_relevant,
+        )
+
+        # Bundled federal_minimum has self_consumption=true/false for
+        # the 30–<150 kW band. So at kW=50, EV bool changes which rule
+        # is selected.
+        assert _self_consumption_relevant("ekz", "2026-04-01", 50.0) is True
+
+    def test_irrelevant_when_federal_rule_uses_null(self, monkeypatch):
+        """≥150 kW band uses self_consumption=null → field is inert."""
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _self_consumption_relevant,
+        )
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01",
+                "valid_to": None,
+                "rules": [
+                    {"kw_min": 0, "kw_max": None, "self_consumption": None,
+                     "min_rp_kwh": 4.0},
+                ],
+            }],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": [],
+                }
+            },
+        }
+        # config_flow.py imports load_tariffs at module load, so we must
+        # patch both names. Same for find_active (used inside the helper).
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+        assert _self_consumption_relevant("syn", "2026-04-01", 200.0) is False
+
+    def test_irrelevant_when_no_federal_record(self, monkeypatch):
+        """valid_from before any federal_minimum → no rule path. No
+        cap_rules either → False (inert)."""
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _self_consumption_relevant,
+        )
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01",
+                "valid_to": None,
+                "rules": [
+                    {"kw_min": 0, "kw_max": None, "self_consumption": True,
+                     "min_rp_kwh": 4.0},
+                ],
+            }],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": [
+                        {
+                            "valid_from": "2025-01-01",
+                            "valid_to": "2026-01-01",
+                            "settlement_period": "quartal",
+                            "cap_mode": False,
+                            "power_tiers": [
+                                {"kw_min": 0, "kw_max": None,
+                                 "base_model": "fixed_flat",
+                                 "fixed_rp_kwh": 8.0,
+                                 "hkn_rp_kwh": 0.0,
+                                 "hkn_structure": "none"},
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        # config_flow.py imports load_tariffs at module load, so we must
+        # patch both names. Same for find_active (used inside the helper).
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+        # 2025-04-01 is before the only federal_minimum record (2026-01-01).
+        assert _self_consumption_relevant("syn", "2025-04-01", 10.0) is False
+
+    def test_relevant_via_cap_rules(self, monkeypatch):
+        """Federal rule has self_consumption=null but cap_rules distinguish
+        → field IS relevant via the cap-rule path."""
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _self_consumption_relevant,
+        )
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01",
+                "valid_to": None,
+                "rules": [
+                    {"kw_min": 0, "kw_max": None, "self_consumption": None,
+                     "min_rp_kwh": 4.0},
+                ],
+            }],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "homepage": "https://example.test",
+                    "rates": [
+                        {
+                            "valid_from": "2026-01-01",
+                            "valid_to": None,
+                            "settlement_period": "quartal",
+                            "cap_mode": True,
+                            "cap_rules": [
+                                {"kw_min": 0, "kw_max": None,
+                                 "self_consumption": True, "cap_rp_kwh": 12.0},
+                                {"kw_min": 0, "kw_max": None,
+                                 "self_consumption": False, "cap_rp_kwh": 8.0},
+                            ],
+                            "power_tiers": [
+                                {"kw_min": 0, "kw_max": None,
+                                 "base_model": "fixed_flat",
+                                 "fixed_rp_kwh": 8.0,
+                                 "hkn_rp_kwh": 0.0,
+                                 "hkn_structure": "none"},
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        # config_flow.py imports load_tariffs at module load, so we must
+        # patch both names. Same for find_active (used inside the helper).
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+        assert _self_consumption_relevant("syn", "2026-04-01", 10.0) is True
+
+
+class TestFindTierDryRun:
+    """v0.13.0 — A2.3 / O4 defensive check at form submit. AEW kW=10 +
+    'Referenzmarktpreis' is the canonical hole: no covering tier."""
+
+    def test_resolvable_combination_passes(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _find_tier_dry_run,
+        )
+        # AEW kW=10 + AEW Fixpreis matches tier 0 (kw 0-30, fixpreis).
+        assert _find_tier_dry_run(
+            "aew", "2026-04-01", 10.0,
+            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+        ) is True
+
+    def test_aew_kw10_rmp_combination_rejected(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _find_tier_dry_run,
+        )
+        # The canonical AEW hole: kW=10 + Referenzmarktpreis covers
+        # neither tier 0 (clause mismatch) nor tier 1 (kW out of range).
+        assert _find_tier_dry_run(
+            "aew", "2026-04-01", 10.0,
+            {"aew_fixpreis_rmp": "Referenzmarktpreis"},
+        ) is False
+
+    def test_no_rate_window_returns_true_permissive(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _find_tier_dry_run,
+        )
+        # When no rate window covers the date, the no_active_rate
+        # error path handles it; the dry-run is permissive (True) so
+        # we don't double-error on the same condition.
+        assert _find_tier_dry_run(
+            "aew", "1999-04-01", 10.0, None,
+        ) is True
+
+
+class TestHknPositiveWhitelist:
+    """v0.13.0 — A2.2 the HKN toggle renders only when the active rate
+    window's hkn_structure is exactly ``additive_optin``. Bundled, none,
+    or lookup-failure (None) all hide the field."""
+
+    @pytest.mark.parametrize(
+        "structure,expected_visible",
+        [
+            ("additive_optin", True),
+            ("bundled", False),
+            ("none", False),
+            (None, False),
+            ("unknown_future_value", False),
+        ],
+    )
+    def test_gate(self, structure, expected_visible):
+        from custom_components.bfe_rueckliefertarif.config_flow import _tariff_schema
+
+        schema = _tariff_schema({}, hkn_structure=structure)
+        rendered_keys = {str(k) for k in schema.schema}
+        assert (CONF_HKN_AKTIVIERT in rendered_keys) is expected_visible

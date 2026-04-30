@@ -268,6 +268,104 @@ def find_active_rate_window(
     return find_active(utility.get("rates", []), on_date)
 
 
+def user_inputs_decl_signature(rate: dict | None) -> tuple:
+    """Stable hashable signature of a rate window's ``user_inputs[]``
+    declarations.
+
+    Two windows produce equal signatures iff their declarations are
+    materially equivalent for form-rendering purposes — same keys, same
+    types, same defaults, same enum value sets. Differences in i18n
+    label fields (label_de / value_labels_*) intentionally do NOT
+    affect the signature: they don't change which questions the form
+    asks or which stored values are valid, only how those choices look.
+
+    Returns ``()`` for windows with no ``user_inputs[]`` (or with an
+    empty list). Used by ``compute_user_inputs_periods`` to group
+    consecutive rate windows that the per-period editor can render
+    as a single section.
+    """
+    decls = rate.get("user_inputs") if rate else None
+    if not decls:
+        return ()
+    sig = []
+    for d in decls:
+        key = d.get("key")
+        type_ = d.get("type")
+        default = d.get("default")
+        # values is a list for enum, absent for boolean. Hash via a
+        # frozenset so order doesn't matter (defensive against curator
+        # reorderings that don't actually change the choice space).
+        values = frozenset(d.get("values") or ())
+        sig.append((key, type_, default, values))
+    # Sort by key so two windows with the same decls in different
+    # array order produce equal signatures.
+    return tuple(sorted(sig, key=lambda t: t[0] or ""))
+
+
+def compute_user_inputs_periods(
+    utility_key: str,
+    span_from: date,
+    span_to: date | None,
+) -> list[tuple[date, date | None, dict]]:
+    """Walk a utility's rate windows that overlap ``[span_from, span_to)``
+    and group consecutive windows with equal ``user_inputs_decl_signature``
+    into periods.
+
+    Each returned tuple is ``(period_from, period_to, representative_rate)``:
+    - ``period_from`` is clamped to ``span_from`` for the first period.
+    - ``period_to`` is clamped to ``span_to`` for the last period; ``None``
+      means open (the entry is the latest in user history and the last
+      rate window has no ``valid_to``).
+    - ``representative_rate`` is the FIRST rate window in the group; since
+      grouped windows have equal signatures, any one works for rendering
+      the form's user_input fields. Notes/tarif_urls in subsequent
+      grouped windows are NOT merged — the editor shows the
+      representative window's content.
+
+    Returns an empty list when the utility doesn't exist or has no rate
+    windows overlapping the span. Single-element list when the entire
+    span is covered by one signature (the common case today).
+    """
+    db = load_tariffs()
+    utility = db.get("utilities", {}).get(utility_key)
+    if utility is None:
+        return []
+    rates = utility.get("rates") or []
+
+    eff_span_to = span_to if span_to is not None else date.max
+    overlapping: list[tuple[date, date, dict]] = []
+    for r in rates:
+        rf = date.fromisoformat(r["valid_from"])
+        rt = date.fromisoformat(r["valid_to"]) if r.get("valid_to") else date.max
+        # Half-open intersection: max(rf, span_from) < min(rt, eff_span_to)
+        if max(rf, span_from) < min(rt, eff_span_to):
+            overlapping.append((rf, rt, r))
+
+    if not overlapping:
+        return []
+    overlapping.sort(key=lambda triple: triple[0])
+
+    periods: list[tuple[date, date | None, dict]] = []
+    i = 0
+    while i < len(overlapping):
+        sig_i = user_inputs_decl_signature(overlapping[i][2])
+        j = i
+        while j + 1 < len(overlapping):
+            if user_inputs_decl_signature(overlapping[j + 1][2]) != sig_i:
+                break
+            j += 1
+        first_rf, _first_rt, first_rate = overlapping[i]
+        _last_rf, last_rt, _last_rate = overlapping[j]
+        period_from = max(first_rf, span_from)
+        # Map sentinel date.max back to None (= open) for callers.
+        last_to_clamped = min(last_rt, eff_span_to)
+        period_to = None if last_to_clamped == date.max else last_to_clamped
+        periods.append((period_from, period_to, first_rate))
+        i = j + 1
+
+    return periods
+
+
 def evaluate_when(
     clause: dict, *, season: str | None, user_inputs: dict | None
 ) -> bool:

@@ -41,7 +41,8 @@
     "error": {
       "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
       "no_active_rate": "Le fournisseur sélectionné n'a pas de fenêtre tarifaire active pour cette date.",
-      "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge."
+      "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge.",
+      "no_matching_tier": "Votre puissance installée et votre sélection ne correspondent à aucun palier tarifaire pour ce fournisseur / cette date. Ajustez le kW ou modifiez le choix."
     }
   },
   "options": {
@@ -75,7 +76,7 @@
       },
       "apply_change_details": {
         "title": "Changement de configuration — {utility_name} dès {valid_from}",
-        "description": "Renseignez les paramètres pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Renseignez les paramètres pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -105,7 +106,7 @@
       },
       "add_new_row": {
         "title": "Ajouter une transition — {utility_name} dès {valid_from}",
-        "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -114,7 +115,7 @@
       },
       "edit_row": {
         "title": "Modifier la transition — {utility_name} dès {valid_from}",
-        "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+        "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -159,7 +160,8 @@
       "reimport_failed": "Échec inattendu de l'opération. Consultez Paramètres → Système → Journaux.",
       "cannot_delete_last_record": "Impossible de supprimer le seul enregistrement de l'historique — au moins un doit rester. Modifiez-le à la place.",
       "no_active_rate": "Le fournisseur sélectionné n'a pas de fenêtre tarifaire active pour cette date.",
-      "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge."
+      "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge.",
+      "no_matching_tier": "Votre puissance installée et votre sélection ne correspondent à aucun palier tarifaire pour ce fournisseur / cette date. Ajustez le kW ou modifiez le choix."
     }
   },
   "selector": {},
@@ -185,6 +187,20 @@
       },
       "tariffs_last_remote_update": {
         "name": "Base de tarifs — dernière mise à jour distante"
+      }
+    }
+  },
+  "issues": {
+    "tariff_drift": {
+      "title": "{utility}: structure tarifaire modifiée",
+      "description": "Votre configuration couvre la période {period_from} → {period_to}, mais la structure tarifaire a changé. Champs concernés : {fields}. Ouvrez la réparation pour ajuster.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Reconfigurer {utility} dès {period_from}",
+            "description": "Choisissez la nouvelle valeur pour la période {period_from} → {period_to}. L'enregistrement créera une nouvelle entrée d'historique débutant le {period_from}."
+          }
+        }
       }
     }
   }

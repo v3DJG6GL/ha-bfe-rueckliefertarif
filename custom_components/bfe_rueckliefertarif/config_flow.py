@@ -47,8 +47,11 @@ from .const import (  # noqa: E402  — intentionally below _LOGGER guard
     build_history_config,
 )
 from .tariffs_db import (  # noqa: E402
+    compute_user_inputs_periods,
     find_active,
     find_active_rate_window,
+    find_rule,
+    find_tier_for,
     list_utility_keys,
     load_tariffs,
     match_applies_when,
@@ -207,7 +210,7 @@ def _tariff_schema(
             default=d.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True),
         ): selector.BooleanSelector(),
     }
-    if hkn_structure not in ("bundled", "none"):
+    if hkn_structure == "additive_optin":
         schema_dict[
             vol.Required(
                 CONF_HKN_AKTIVIERT,
@@ -338,6 +341,63 @@ def _active_hkn_structure(utility_key: str, valid_from_iso: str) -> str | None:
         return None
 
 
+def _self_consumption_relevant(
+    utility_key: str, valid_from_iso: str, kw: float
+) -> bool:
+    """Return True iff the self-consumption bool actually changes resolver
+    output for this (utility, valid_from, kW). False → hide the form
+    field because the resolver will pick the same rule regardless.
+
+    Identity comparison: ``find_rule`` returns the rule dict by reference
+    from the input list. Same dict for both EV values means a
+    ``self_consumption=null`` rule matched both, so the user's choice is
+    inert. Different dicts (or one None) means the choice matters.
+
+    Permissive on lookup failure — show the field if we can't tell.
+    """
+    try:
+        db = load_tariffs()
+        valid_date = date.fromisoformat(valid_from_iso)
+    except (OSError, KeyError, ValueError):
+        return True
+
+    fed_record = find_active(db.get("federal_minimum") or [], valid_date)
+    if fed_record is not None:
+        rules = fed_record.get("rules") or []
+        if find_rule(rules, kw, True) is not find_rule(rules, kw, False):
+            return True
+
+    utility = db.get("utilities", {}).get(utility_key)
+    if utility is not None:
+        rate = find_active(utility.get("rates") or [], valid_date)
+        if rate is not None and rate.get("cap_mode") and rate.get("cap_rules"):
+            cap_rules = rate["cap_rules"]
+            if find_rule(cap_rules, kw, True) is not find_rule(cap_rules, kw, False):
+                return True
+
+    return False
+
+
+def _find_tier_dry_run(
+    utility_key: str, valid_from_iso: str, kw: float, user_inputs: dict | None
+) -> bool:
+    """O4 — return True iff ``find_tier_for`` resolves a tier for these
+    args. False → save would fail at runtime (e.g. AEW kW=10 + RMP);
+    reject at form submit instead.
+
+    Permissive on lookup failure (no rate window, unknown utility): the
+    real failure surfaces via the existing ``no_active_rate`` path, not
+    here.
+    """
+    try:
+        rate = find_active_rate_window(utility_key, date.fromisoformat(valid_from_iso))
+    except (ValueError, KeyError):
+        return True
+    if rate is None:
+        return True
+    return find_tier_for(rate.get("power_tiers") or [], kw, user_inputs) is not None
+
+
 _NOTE_SEVERITY_PREFIX: dict[str, str] = {
     # Variation-selector forms force emoji presentation (coloured icon)
     # rather than the stark monochrome glyph (the bare "ℹ" easily reads
@@ -369,6 +429,35 @@ def _pick_note_text(text_dict: dict[str, str] | None, lang: str) -> str | None:
     return next(iter(text_dict.values()), None)
 
 
+def _render_rate_notes(rate: dict, at_date: date, lang: str) -> str:
+    """Render the notes-block markdown for a specific rate window at a
+    specific date. Extracted from ``_notes_block`` so the per-period
+    editor (Phase 2) can call it once per period without re-loading
+    the db.
+    """
+    raw_notes = rate.get("notes") or []
+    blocks: list[str] = []
+    for n in raw_notes:
+        nf = n.get("valid_from")
+        nt = n.get("valid_to")
+        f = date.fromisoformat(nf) if nf else date.min
+        t = date.fromisoformat(nt) if nt else date.max
+        if not (f <= at_date < t):
+            continue
+        text = _pick_note_text(n.get("text"), lang)
+        if not text:
+            continue
+        severity = n.get("severity", "info")
+        prefix = _NOTE_SEVERITY_PREFIX.get(severity, _NOTE_SEVERITY_PREFIX["info"])
+        sev_dict = _NOTE_SEVERITY_LABEL.get(severity, _NOTE_SEVERITY_LABEL["info"])
+        sev_label = sev_dict.get(lang) or sev_dict["en"]
+        text_lines = text.splitlines() or [""]
+        first = f"> {prefix} **{sev_label}:** {text_lines[0]}"
+        rest = [f"> {ln}" for ln in text_lines[1:]]
+        blocks.append("\n".join([first, *rest]))
+    return "\n\n".join(blocks)
+
+
 def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
     """Markdown block rendered for utility notes active at ``valid_from_iso``.
 
@@ -389,37 +478,13 @@ def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
         rate = find_active(utility["rates"], at_date)
         if rate is None:
             return ""
-        raw_notes = rate.get("notes") or []
     except (KeyError, ValueError, LookupError):
         return ""
 
     lang = "en"
     if hass is not None:
         lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
-
-    blocks: list[str] = []
-    for n in raw_notes:
-        nf = n.get("valid_from")
-        nt = n.get("valid_to")
-        f = date.fromisoformat(nf) if nf else date.min
-        t = date.fromisoformat(nt) if nt else date.max
-        if not (f <= at_date < t):
-            continue
-        text = _pick_note_text(n.get("text"), lang)
-        if not text:
-            continue
-        severity = n.get("severity", "info")
-        prefix = _NOTE_SEVERITY_PREFIX.get(severity, _NOTE_SEVERITY_PREFIX["info"])
-        sev_dict = _NOTE_SEVERITY_LABEL.get(severity, _NOTE_SEVERITY_LABEL["info"])
-        sev_label = sev_dict.get(lang) or sev_dict["en"]
-        text_lines = text.splitlines() or [""]
-        first = f"> {prefix} **{sev_label}:** {text_lines[0]}"
-        rest = [f"> {ln}" for ln in text_lines[1:]]
-        blocks.append("\n".join([first, *rest]))
-
-    if not blocks:
-        return ""
-    return "\n\n".join(blocks)
+    return _render_rate_notes(rate, at_date, lang)
 
 
 # Locale-aware heading for the tarif_urls block. v0.12.0 (schema v1.2.0).
@@ -679,25 +744,31 @@ def _pick_value_label(decl: dict, value: str, lang: str) -> str:
     return str(labels.get(value, value))
 
 
-def _add_user_input_fields(
+def _add_user_input_fields_namespaced(
     schema_dict: dict,
     decl_list: tuple[dict, ...],
     defaults_user_inputs: dict,
     lang: str,
+    prefix: str = "",
 ) -> None:
     """Append one ``vol.Required`` selector per declared user_input.
 
-    ``type="enum"`` → dropdown; values list comes from the declaration.
-    ``type="boolean"`` → toggle.
+    v0.13.0 — Phase 2: ``prefix`` namespaces the form key (e.g.
+    ``"period_0_"``) so multi-period editors can ask the same logical
+    user_input multiple times without form-key collision. ``defaults_
+    user_inputs`` is keyed by the ORIGINAL declaration key (not the
+    prefixed form key), so call sites pass the per-period default dict
+    de-namespaced.
 
-    Defaults: existing record's value if present, else ``decl["default"]``.
-    Labels read from the schema (``label_<lang>``) — translations/*.json
-    are NOT consulted for declared user inputs.
+    ``type="enum"`` → dropdown; values list comes from the declaration.
+    ``type="boolean"`` → toggle. Defaults: existing record's value if
+    present, else ``decl["default"]``.
     """
     for decl in decl_list:
         key = decl["key"]
         decl_default = decl.get("default")
         chosen = defaults_user_inputs.get(key, decl_default)
+        prefixed_key = f"{prefix}{key}"
         if decl["type"] == "enum":
             values = decl.get("values", []) or []
             options = [
@@ -708,7 +779,7 @@ def _add_user_input_fields(
                 for v in values
             ]
             schema_dict[
-                vol.Required(key, default=chosen)
+                vol.Required(prefixed_key, default=chosen)
             ] = selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=options,
@@ -717,8 +788,122 @@ def _add_user_input_fields(
             )
         elif decl["type"] == "boolean":
             schema_dict[
-                vol.Required(key, default=bool(chosen))
+                vol.Required(prefixed_key, default=bool(chosen))
             ] = selector.BooleanSelector()
+
+
+def _add_user_input_fields(
+    schema_dict: dict,
+    decl_list: tuple[dict, ...],
+    defaults_user_inputs: dict,
+    lang: str,
+) -> None:
+    """Single-period variant — see ``_add_user_input_fields_namespaced``.
+    Kept as a thin wrapper so existing call sites stay unchanged.
+    """
+    _add_user_input_fields_namespaced(
+        schema_dict, decl_list, defaults_user_inputs, lang, prefix=""
+    )
+
+
+_PERIOD_LABEL: dict[str, str] = {
+    "de": "Zeitraum", "en": "Period", "fr": "Période",
+}
+_PERIOD_OPEN: dict[str, str] = {
+    "de": "offen", "en": "open", "fr": "ouvert",
+}
+
+
+def _period_prefix(idx: int) -> str:
+    """Key prefix for the i-th period's user_input form fields."""
+    return f"period_{idx}_"
+
+
+def _format_periods_block(
+    periods: list[tuple],
+    period_user_inputs: list[dict] | None,
+    lang: str,
+) -> str:
+    """v0.13.0 — Phase 2: render the multi-period editor's per-period
+    markdown summary (header + notes + tarif_urls). Returns ``""`` for
+    single-period (caller falls back to the single-period
+    ``notes_block`` + ``tarif_urls_block`` placeholders).
+
+    ``period_user_inputs[i]`` is the i-th period's currently-selected
+    user_inputs (used for tarif_urls ``applies_when`` filtering). Passing
+    ``None`` shows only unconditional links.
+    """
+    if len(periods) <= 1:
+        return ""
+    period_label = _PERIOD_LABEL.get(lang) or _PERIOD_LABEL["en"]
+    open_label = _PERIOD_OPEN.get(lang) or _PERIOD_OPEN["en"]
+    blocks: list[str] = []
+    for idx, (period_from, period_to, rep_rate) in enumerate(periods):
+        end_str = period_to.isoformat() if period_to is not None else open_label
+        blocks.append(
+            f"### {period_label} {idx + 1}: {period_from.isoformat()} → {end_str}"
+        )
+        notes_md = _render_rate_notes(rep_rate, period_from, lang)
+        if notes_md:
+            blocks.append(notes_md)
+        ui = period_user_inputs[idx] if period_user_inputs and idx < len(period_user_inputs) else None
+        urls = []
+        for entry in rep_rate.get("tarif_urls") or []:
+            if match_applies_when(entry.get("applies_when"), ui):
+                urls.append(entry)
+        urls_md = _format_tarif_urls_block(urls, lang)
+        if urls_md:
+            blocks.append(urls_md)
+    return "\n\n".join(blocks)
+
+
+def _split_user_inputs_per_period(
+    periods: list[tuple],
+    user_input: dict,
+) -> list[dict]:
+    """Extract per-period user_inputs dicts from a Step 2 form payload
+    that namespaces keys with ``period_<idx>_<key>``. Each returned dict
+    contains the period's declared user_input keys with values pulled
+    from ``user_input`` (or the schema-declared default when missing).
+    """
+    out: list[dict] = []
+    for idx, (_pf, _pt, rep_rate) in enumerate(periods):
+        prefix = _period_prefix(idx)
+        decls = rep_rate.get("user_inputs") or []
+        period_dict: dict = {}
+        for decl in decls:
+            key = decl["key"]
+            period_dict[key] = user_input.get(
+                f"{prefix}{key}", decl.get("default")
+            )
+        out.append(period_dict)
+    return out
+
+
+def _validate_user_inputs_namespaced(
+    periods: list[tuple], user_input: dict
+) -> dict[str, str]:
+    """Validate enum and boolean per-period values; returns errors dict
+    keyed by the namespaced form-key (so HA highlights the correct
+    field on re-render)."""
+    errors: dict[str, str] = {}
+    for idx, (_pf, _pt, rep_rate) in enumerate(periods):
+        prefix = _period_prefix(idx)
+        decls = rep_rate.get("user_inputs") or []
+        for decl in decls:
+            key = decl["key"]
+            prefixed = f"{prefix}{key}"
+            if prefixed not in user_input:
+                continue
+            value = user_input[prefixed]
+            if decl["type"] == "enum":
+                allowed = set(decl.get("values") or [])
+                if value not in allowed:
+                    errors[prefixed] = "invalid_user_input_value"
+            elif decl["type"] == "boolean":
+                if not isinstance(value, bool):
+                    errors[prefixed] = "invalid_user_input_value"
+    return errors
 
 
 def _validate_user_inputs(
@@ -844,8 +1029,24 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     except (KeyError, LookupError):
                         errors["base"] = "no_active_rate"
                     else:
-                        self._data.update(user_input)
-                        return await self.async_step_entities()
+                        # v0.13.0 — O4 defensive check: dry-run find_tier_for
+                        # against the schema-default user_inputs. Catches the
+                        # case where (kW, default user_input) lands outside
+                        # any covering tier (AEW kW=50 + default fixpreis).
+                        decl_list = _resolve_user_inputs_decl(
+                            utility_key, user_input[CONF_VALID_FROM]
+                        )
+                        ui_payload = _user_inputs_payload(decl_list, user_input)
+                        if not _find_tier_dry_run(
+                            utility_key,
+                            user_input[CONF_VALID_FROM],
+                            float(user_input[CONF_INSTALLIERTE_LEISTUNG_KW]),
+                            ui_payload,
+                        ):
+                            errors["base"] = "no_matching_tier"
+                        else:
+                            self._data.update(user_input)
+                            return await self.async_step_entities()
 
         defaults = user_input if user_input is not None else self._data
         # Gate the HKN toggle on the chosen utility's hkn_structure.
@@ -970,9 +1171,23 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["valid_from"] = "invalid_valid_from"
             if not errors:
+                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
+                if kw <= 0:
+                    errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
+            if not errors:
+                # v0.13.0 — Step 1 validation: reject if (utility, valid_from)
+                # doesn't resolve to a rate window. Catches the error here
+                # rather than at Step 2 submit (where it used to surface).
+                if find_active_rate_window(
+                    user_input[CONF_ENERGIEVERSORGER],
+                    date.fromisoformat(picked_from),
+                ) is None:
+                    errors["valid_from"] = "no_active_rate"
+            if not errors:
                 self._apply_pick = {
                     CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     "valid_from": picked_from,
+                    CONF_INSTALLIERTE_LEISTUNG_KW: kw,
                 }
                 return await self.async_step_apply_change_details()
 
@@ -984,6 +1199,11 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         default_utility = (
             user_input.get(CONF_ENERGIEVERSORGER) if user_input is not None
             else (open_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0])
+        )
+        default_kw = (
+            user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+            if user_input is not None
+            else open_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
         )
         schema = vol.Schema({
             vol.Required("valid_from", default=default_valid_from):
@@ -1000,6 +1220,16 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+            vol.Required(
+                CONF_INSTALLIERTE_LEISTUNG_KW,
+                default=default_kw,
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=10000, step=0.1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kW",
+                )
+            ),
         })
         return self.async_show_form(
             step_id="apply_change",
@@ -1016,31 +1246,39 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_apply_change_details(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 2 of the apply-change wizard: kW / EV / HKN / user_inputs.
+        """Step 2 of the apply-change wizard: EV / HKN / user_inputs.
 
-        Notes block, tarif_urls block, and dynamic ``user_inputs[]``
-        fields are rendered against the gate the user picked in Step 1
-        (``self._apply_pick``). The save logic, no-op detection, and
-        history normalisation are unchanged from the pre-split version.
+        v0.13.0 (Phase 2) — when the entry's effective span covers
+        multiple rate windows with differing ``user_inputs[]`` decls,
+        renders one section of namespaced fields per period
+        (``period_<idx>_<key>``) and saves N split history entries.
+        Single-period (the common case) preserves the v0.12.1 behaviour.
         """
         pick = getattr(self, "_apply_pick", None)
         if pick is None:
-            # Defensive — fall back to Step 1 if state was lost.
             return await self.async_step_apply_change()
         gate_utility: str = pick[CONF_ENERGIEVERSORGER]
         gate_valid_from: str = pick["valid_from"]
+        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KW])
 
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         open_rec = next((r for r in history if r.get("valid_to") is None), None)
         open_cfg = (open_rec or {}).get("config") or {}
 
+        # apply_change inserts the new entry as the latest in user-history,
+        # so its effective span is [gate_valid_from, ∞).
+        span_from = date.fromisoformat(gate_valid_from)
+        periods = compute_user_inputs_periods(gate_utility, span_from, None)
+        is_multi = len(periods) > 1
+
         errors: dict[str, str] = {}
         decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
 
         if user_input is not None:
-            tariff_errs = _validate_tariff(user_input)
-            errors.update(tariff_errs)
-            errors.update(_validate_user_inputs(decl_list, user_input))
+            if is_multi:
+                errors.update(_validate_user_inputs_namespaced(periods, user_input))
+            else:
+                errors.update(_validate_user_inputs(decl_list, user_input))
 
             derived_billing: str | None = None
             if not errors:
@@ -1051,47 +1289,86 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 except (KeyError, LookupError):
                     errors["base"] = "no_active_rate"
 
+            if is_multi:
+                period_user_inputs = _split_user_inputs_per_period(periods, user_input)
+            else:
+                period_user_inputs = [_user_inputs_payload(decl_list, user_input)]
+
+            # O4 defensive check — for multi-period, dry-run each period's
+            # (period_from, kW, period_user_inputs) to catch any combination
+            # that won't resolve a tier when the resolver hits that period.
+            if not errors:
+                for idx, (pf, _pt, _rep) in enumerate(periods):
+                    if not _find_tier_dry_run(
+                        gate_utility, pf.isoformat(), gate_kw, period_user_inputs[idx]
+                    ):
+                        errors["base"] = "no_matching_tier"
+                        break
+
             if not errors:
                 hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-                new_config = {
-                    CONF_ENERGIEVERSORGER: gate_utility,
-                    CONF_INSTALLIERTE_LEISTUNG_KW: float(
-                        user_input[CONF_INSTALLIERTE_LEISTUNG_KW]
-                    ),
-                    CONF_EIGENVERBRAUCH_AKTIVIERT: bool(
-                        user_input[CONF_EIGENVERBRAUCH_AKTIVIERT]
-                    ),
-                    CONF_HKN_AKTIVIERT: _force_hkn_for_save(
-                        hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
-                    ),
-                    CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
-                    CONF_USER_INPUTS: _user_inputs_payload(decl_list, user_input),
-                }
-
-                def _eq_cfg(a: dict, b: dict) -> bool:
-                    a2 = {**a, CONF_USER_INPUTS: a.get(CONF_USER_INPUTS) or {}}
-                    b2 = {**b, CONF_USER_INPUTS: b.get(CONF_USER_INPUTS) or {}}
-                    return a2 == b2
-                if (
-                    open_rec
-                    and open_rec["valid_from"] == gate_valid_from
-                    and _eq_cfg(open_rec["config"], new_config)
-                ):
-                    return self.async_create_entry(
-                        title="", data=dict(self.config_entry.options or {})
-                    )
-
-                new_record = {
-                    "valid_from": gate_valid_from,
-                    "valid_to": None,
-                    "config": new_config,
-                }
-                history = [
-                    r for r in history if r.get("valid_from") != gate_valid_from
-                ]
-                history = _append_history_record(
-                    history, new_record, dict(self.config_entry.data)
+                show_eigenverbrauch = _self_consumption_relevant(
+                    gate_utility, gate_valid_from, gate_kw
                 )
+                ev_value = bool(
+                    user_input.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
+                ) if show_eigenverbrauch else bool(
+                    open_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
+                )
+                hkn_value = _force_hkn_for_save(
+                    hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
+                )
+
+                # Build N records — one per period. The first record uses
+                # the user's chosen valid_from; subsequent records use the
+                # rate-window boundary (period_from). For single-period this
+                # collapses to a single record at gate_valid_from (same as
+                # v0.12.1 behaviour).
+                new_records: list[dict] = []
+                for idx, (pf, _pt, _rep) in enumerate(periods):
+                    record_valid_from = (
+                        gate_valid_from if idx == 0 else pf.isoformat()
+                    )
+                    new_records.append({
+                        "valid_from": record_valid_from,
+                        "valid_to": None,
+                        "config": {
+                            CONF_ENERGIEVERSORGER: gate_utility,
+                            CONF_INSTALLIERTE_LEISTUNG_KW: gate_kw,
+                            CONF_EIGENVERBRAUCH_AKTIVIERT: ev_value,
+                            CONF_HKN_AKTIVIERT: hkn_value,
+                            CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
+                            CONF_USER_INPUTS: period_user_inputs[idx],
+                        },
+                    })
+
+                # No-op detection only applies for single-period — multi-
+                # period always writes (we can't compare N new records to
+                # the existing single open_rec without ambiguity).
+                if not is_multi:
+                    def _eq_cfg(a: dict, b: dict) -> bool:
+                        a2 = {**a, CONF_USER_INPUTS: a.get(CONF_USER_INPUTS) or {}}
+                        b2 = {**b, CONF_USER_INPUTS: b.get(CONF_USER_INPUTS) or {}}
+                        return a2 == b2
+                    if (
+                        open_rec
+                        and open_rec["valid_from"] == gate_valid_from
+                        and _eq_cfg(open_rec["config"], new_records[0]["config"])
+                    ):
+                        return self.async_create_entry(
+                            title="", data=dict(self.config_entry.options or {})
+                        )
+
+                # Drop stale records that share valid_from with any of the
+                # new records (avoids duplicates after normalize).
+                new_valid_froms = {r["valid_from"] for r in new_records}
+                history = [
+                    r for r in history if r.get("valid_from") not in new_valid_froms
+                ]
+                for rec in new_records:
+                    history = _append_history_record(
+                        history, rec, dict(self.config_entry.data)
+                    )
                 normalized = _normalize_history(history)
                 new_options = {
                     **dict(self.config_entry.options or {}),
@@ -1106,24 +1383,21 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             else (open_cfg or build_history_config(self.config_entry.data))
         )
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
+        show_eigenverbrauch = _self_consumption_relevant(
+            gate_utility, gate_valid_from, gate_kw
+        )
 
-        schema_dict: dict[Any, Any] = {
-            vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW,
-                default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=10000, step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kW",
+        schema_dict: dict[Any, Any] = {}
+        if show_eigenverbrauch:
+            schema_dict[
+                vol.Required(
+                    CONF_EIGENVERBRAUCH_AKTIVIERT,
+                    default=bool(
+                        defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
+                    ),
                 )
-            ),
-            vol.Required(
-                CONF_EIGENVERBRAUCH_AKTIVIERT,
-                default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
-            ): selector.BooleanSelector(),
-        }
-        if hkn_structure not in ("bundled", "none"):
+            ] = selector.BooleanSelector()
+        if hkn_structure == "additive_optin":
             schema_dict[
                 vol.Required(
                     CONF_HKN_AKTIVIERT,
@@ -1135,7 +1409,35 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         lang = (
             getattr(self.hass.config, "language", None) or "de"
         ).split("-")[0].lower()
-        _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
+
+        if is_multi:
+            # Per-period user_input fields with namespaced keys.
+            for idx, (_pf, _pt, rep_rate) in enumerate(periods):
+                period_decls = tuple(rep_rate.get("user_inputs") or ())
+                # Defaults for period idx: form re-render uses prior submission;
+                # initial render seeds period 0 from the open record's
+                # user_inputs and subsequent periods from schema defaults.
+                if user_input is not None:
+                    period_defaults = {
+                        d["key"]: user_input.get(
+                            f"{_period_prefix(idx)}{d['key']}", d.get("default")
+                        )
+                        for d in period_decls
+                    }
+                else:
+                    period_defaults = decl_defaults if idx == 0 else {}
+                _add_user_input_fields_namespaced(
+                    schema_dict, period_decls, period_defaults, lang,
+                    prefix=_period_prefix(idx),
+                )
+            periods_block = _format_periods_block(
+                periods,
+                _split_user_inputs_per_period(periods, user_input or {}),
+                lang,
+            )
+        else:
+            _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
+            periods_block = ""
 
         return self.async_show_form(
             step_id="apply_change_details",
@@ -1148,13 +1450,20 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     _format_config_summary(open_cfg) if open_cfg else "—"
                 ),
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
-                "notes_block": _notes_block(gate_utility, gate_valid_from, self.hass),
-                "tarif_urls_block": _format_tarif_urls_block(
-                    _resolve_tarif_urls(
-                        gate_utility, gate_valid_from, decl_defaults
-                    ),
-                    lang,
+                "notes_block": (
+                    "" if is_multi
+                    else _notes_block(gate_utility, gate_valid_from, self.hass)
                 ),
+                "tarif_urls_block": (
+                    "" if is_multi
+                    else _format_tarif_urls_block(
+                        _resolve_tarif_urls(
+                            gate_utility, gate_valid_from, decl_defaults
+                        ),
+                        lang,
+                    )
+                ),
+                "periods_block": periods_block,
                 **_source_links(self.hass),
             },
         )
@@ -1253,9 +1562,22 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["valid_from"] = "invalid_valid_from"
             if not errors:
+                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
+                if kw <= 0:
+                    errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
+            if not errors:
+                # v0.13.0 — Step 1 validation: reject if (utility, valid_from)
+                # doesn't resolve to a rate window.
+                if find_active_rate_window(
+                    user_input[CONF_ENERGIEVERSORGER],
+                    date.fromisoformat(picked_from),
+                ) is None:
+                    errors["valid_from"] = "no_active_rate"
+            if not errors:
                 self._row_pick = {
                     CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     "valid_from": picked_from,
+                    CONF_INSTALLIERTE_LEISTUNG_KW: kw,
                 }
                 if is_edit:
                     return await self.async_step_edit_row()
@@ -1265,6 +1587,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         if existing is not None:
             default_utility = existing["config"].get(CONF_ENERGIEVERSORGER)
             default_valid_from = existing["valid_from"]
+            default_kw = existing["config"].get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
         else:
             open_rec = next(
                 (r for r in history if r.get("valid_to") is None), None
@@ -1274,6 +1597,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             )
             default_utility = cfg.get(CONF_ENERGIEVERSORGER)
             default_valid_from = _quarter_start_today()
+            default_kw = cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
 
         utility_keys = list_utility_keys()
         schema = vol.Schema({
@@ -1291,6 +1615,16 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         for k in utility_keys
                     ],
                     mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(
+                CONF_INSTALLIERTE_LEISTUNG_KW,
+                default=default_kw,
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=10000, step=0.1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kW",
                 )
             ),
         })
@@ -1329,6 +1663,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             return await self._pick_row(idx, None)
         gate_utility: str = pick[CONF_ENERGIEVERSORGER]
         gate_valid_from: str = pick["valid_from"]
+        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KW])
 
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         _LOGGER.debug(
@@ -1337,6 +1672,23 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         )
         is_edit = idx is not None and 0 <= idx < len(history)
         existing = history[idx] if is_edit else None
+
+        # v0.13.0 (Phase 2) — compute the entry's effective span. span_to
+        # is the next history entry's valid_from in chronological order
+        # (excluding the entry being edited so we don't pin span_to to
+        # the entry's own valid_from). None = open-ended.
+        span_from = date.fromisoformat(gate_valid_from)
+        span_to: date | None = None
+        for r in sorted(
+            (h for h in history if h is not existing),
+            key=lambda h: h.get("valid_from") or "",
+        ):
+            rf_iso = r.get("valid_from")
+            if rf_iso and rf_iso > gate_valid_from:
+                span_to = date.fromisoformat(rf_iso)
+                break
+        periods = compute_user_inputs_periods(gate_utility, span_from, span_to)
+        is_multi = len(periods) > 1
 
         errors: dict[str, str] = {}
         decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
@@ -1359,7 +1711,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     )
                     return await self.async_step_manage_history()
 
-            errors.update(_validate_user_inputs(decl_list, user_input))
+            if is_multi:
+                errors.update(_validate_user_inputs_namespaced(periods, user_input))
+            else:
+                errors.update(_validate_user_inputs(decl_list, user_input))
 
             derived_billing: str | None = None
             if not errors:
@@ -1372,45 +1727,72 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 except (KeyError, LookupError):
                     errors["base"] = "no_active_rate"
 
+            if is_multi:
+                period_user_inputs = _split_user_inputs_per_period(periods, user_input)
+            else:
+                period_user_inputs = [_user_inputs_payload(decl_list, user_input)]
+
+            # O4 defensive check — for multi-period, dry-run each period.
+            if not errors:
+                for p_idx, (pf, _pt, _rep) in enumerate(periods):
+                    if not _find_tier_dry_run(
+                        gate_utility, pf.isoformat(), gate_kw, period_user_inputs[p_idx]
+                    ):
+                        errors["base"] = "no_matching_tier"
+                        break
+
             if not errors:
                 hkn_structure = _active_hkn_structure(
                     gate_utility, gate_valid_from
                 )
-                new_config = {
-                    CONF_ENERGIEVERSORGER: gate_utility,
-                    CONF_INSTALLIERTE_LEISTUNG_KW: float(
-                        user_input[CONF_INSTALLIERTE_LEISTUNG_KW]
-                    ),
-                    CONF_EIGENVERBRAUCH_AKTIVIERT: bool(
-                        user_input[CONF_EIGENVERBRAUCH_AKTIVIERT]
-                    ),
-                    CONF_HKN_AKTIVIERT: _force_hkn_for_save(
-                        hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
-                    ),
-                    CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
-                    CONF_USER_INPUTS: _user_inputs_payload(
-                        decl_list, user_input
-                    ),
-                }
-                # Replace at idx (edit) or append (add). Normalize de-
-                # duplicates by valid_from, so editing a row's valid_from
-                # to clash with another row will collapse them.
-                if is_edit:
-                    history[idx] = {
-                        "valid_from": gate_valid_from,
-                        "valid_to": None,
-                        "config": new_config,
-                    }
-                else:
-                    history = _append_history_record(
-                        history,
-                        {
-                            "valid_from": gate_valid_from,
-                            "valid_to": None,
-                            "config": new_config,
-                        },
-                        dict(self.config_entry.data),
+                show_eigenverbrauch = _self_consumption_relevant(
+                    gate_utility, gate_valid_from, gate_kw
+                )
+                ev_default = bool(
+                    (existing["config"] if existing else {}).get(
+                        CONF_EIGENVERBRAUCH_AKTIVIERT, True
                     )
+                )
+                ev_value = bool(
+                    user_input.get(CONF_EIGENVERBRAUCH_AKTIVIERT, ev_default)
+                ) if show_eigenverbrauch else ev_default
+                hkn_value = _force_hkn_for_save(
+                    hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
+                )
+
+                # Build N records, one per period.
+                new_records: list[dict] = []
+                for p_idx, (pf, _pt, _rep) in enumerate(periods):
+                    record_valid_from = (
+                        gate_valid_from if p_idx == 0 else pf.isoformat()
+                    )
+                    new_records.append({
+                        "valid_from": record_valid_from,
+                        "valid_to": None,
+                        "config": {
+                            CONF_ENERGIEVERSORGER: gate_utility,
+                            CONF_INSTALLIERTE_LEISTUNG_KW: gate_kw,
+                            CONF_EIGENVERBRAUCH_AKTIVIERT: ev_value,
+                            CONF_HKN_AKTIVIERT: hkn_value,
+                            CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
+                            CONF_USER_INPUTS: period_user_inputs[p_idx],
+                        },
+                    })
+
+                if is_edit:
+                    # Replace at idx with the first record; subsequent
+                    # records are appended. Normalize de-duplicates by
+                    # valid_from at the end.
+                    history[idx] = new_records[0]
+                    for rec in new_records[1:]:
+                        history = _append_history_record(
+                            history, rec, dict(self.config_entry.data)
+                        )
+                else:
+                    for rec in new_records:
+                        history = _append_history_record(
+                            history, rec, dict(self.config_entry.data)
+                        )
                 normalized = _normalize_history(history)
                 _LOGGER.debug(
                     "_edit_row save: writing %d record(s) to OPT_CONFIG_HISTORY",
@@ -1440,23 +1822,20 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             )
 
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-        schema_dict: dict[Any, Any] = {
-            vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW,
-                default=defaults_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=10000, step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kW",
+        show_eigenverbrauch = _self_consumption_relevant(
+            gate_utility, gate_valid_from, gate_kw
+        )
+        schema_dict: dict[Any, Any] = {}
+        if show_eigenverbrauch:
+            schema_dict[
+                vol.Required(
+                    CONF_EIGENVERBRAUCH_AKTIVIERT,
+                    default=bool(
+                        defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
+                    ),
                 )
-            ),
-            vol.Required(
-                CONF_EIGENVERBRAUCH_AKTIVIERT,
-                default=bool(defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
-            ): selector.BooleanSelector(),
-        }
-        if hkn_structure not in ("bundled", "none"):
+            ] = selector.BooleanSelector()
+        if hkn_structure == "additive_optin":
             schema_dict[
                 vol.Required(
                     CONF_HKN_AKTIVIERT,
@@ -1468,7 +1847,31 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         lang = (
             getattr(self.hass.config, "language", None) or "de"
         ).split("-")[0].lower()
-        _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
+
+        if is_multi:
+            for p_idx, (_pf, _pt, rep_rate) in enumerate(periods):
+                period_decls = tuple(rep_rate.get("user_inputs") or ())
+                if user_input is not None:
+                    period_defaults = {
+                        d["key"]: user_input.get(
+                            f"{_period_prefix(p_idx)}{d['key']}", d.get("default")
+                        )
+                        for d in period_decls
+                    }
+                else:
+                    period_defaults = decl_defaults if p_idx == 0 else {}
+                _add_user_input_fields_namespaced(
+                    schema_dict, period_decls, period_defaults, lang,
+                    prefix=_period_prefix(p_idx),
+                )
+            periods_block = _format_periods_block(
+                periods,
+                _split_user_inputs_per_period(periods, user_input or {}),
+                lang,
+            )
+        else:
+            _add_user_input_fields(schema_dict, decl_list, decl_defaults, lang)
+            periods_block = ""
 
         if is_edit:
             schema_dict[vol.Optional("delete", default=False)] = (
@@ -1483,15 +1886,22 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 "utility_name": _utility_display_name(gate_utility),
                 "valid_from": gate_valid_from,
                 "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
-                "notes_block": _notes_block(
-                    gate_utility, gate_valid_from, self.hass
+                "notes_block": (
+                    "" if is_multi
+                    else _notes_block(
+                        gate_utility, gate_valid_from, self.hass
+                    )
                 ),
-                "tarif_urls_block": _format_tarif_urls_block(
-                    _resolve_tarif_urls(
-                        gate_utility, gate_valid_from, decl_defaults
-                    ),
-                    lang,
+                "tarif_urls_block": (
+                    "" if is_multi
+                    else _format_tarif_urls_block(
+                        _resolve_tarif_urls(
+                            gate_utility, gate_valid_from, decl_defaults
+                        ),
+                        lang,
+                    )
                 ),
+                "periods_block": periods_block,
             },
         )
 
