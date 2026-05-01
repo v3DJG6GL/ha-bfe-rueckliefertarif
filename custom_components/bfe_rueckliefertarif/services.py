@@ -736,39 +736,6 @@ _MONTH_ABBR_EN = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
-def _summarize_months(months: list[int] | None) -> str:
-    """Compact month-list summary: ``[4,5,6,7,8,9]`` → ``"Apr–Sep"``,
-    ``[10,11,12,1,2,3]`` → ``"Oct–Mar"``, ``[3, 6, 9]`` → ``"Mar, Jun, Sep"``.
-    """
-    if not months:
-        return "—"
-    if len(months) == 1:
-        return _MONTH_ABBR_EN[months[0]]
-    # Detect contiguous run (allowing wrap from 12 → 1).
-    is_run = True
-    for i in range(1, len(months)):
-        prev = months[i - 1]
-        cur = months[i]
-        expected = 1 if prev == 12 else prev + 1
-        if cur != expected:
-            is_run = False
-            break
-    if is_run:
-        return f"{_MONTH_ABBR_EN[months[0]]}–{_MONTH_ABBR_EN[months[-1]]}"
-    return ", ".join(_MONTH_ABBR_EN[m] for m in months)
-
-
-def _seasonal_summary(seasonal: dict | None) -> str | None:
-    """Pretty-print a rate-window's seasonal block as
-    ``"summer: Apr–Sep; winter: Oct–Mar"`` or ``None`` when no overlay.
-    """
-    if not seasonal:
-        return None
-    summer = _summarize_months(seasonal.get("summer_months"))
-    winter = _summarize_months(seasonal.get("winter_months"))
-    return f"summer: {summer}; winter: {winter}"
-
-
 def _format_segment_label(seg_id: str | None, meta: dict | None) -> str:
     """Build the period-cell label for one sub-row.
 
@@ -1899,92 +1866,118 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     (today's value); otherwise it reads "Active — cap …" (the snapshot's
     value at import time).
     """
+    notes_lang = c.get("notes_lang") or "en"
     lines: list[str] = []
-    utility_key = c.get("utility_key") or "(unknown)"
-    utility_name = c.get("utility_name") or utility_key
-    # v0.17.0 — drop the slug; only show the human-readable name. The slug
-    # was redundant once name_de is curated for every utility in the bundled
-    # data file. Falls back to the slug only when no name is available.
-    lines.append(f"- **Utility:** {utility_name}")
 
-    lines.extend(_render_tariff_model_lines(c))
+    # v0.17.1 — Pass 1: user-defined Configuration sub-bullets at the top.
+    # Groups Installed power + Self-consumption + HKN opt-in + each
+    # user_input under a single Configuration parent so user-controllable
+    # values aren't interleaved with utility-defined descriptors.
+    config_subs: list[str] = []
 
     kw = c.get("kw")
     if kw is not None:
-        lines.append(f"- **Installed power:** {kw:.1f} kW")
+        config_subs.append(f"    - **Installed power:** {kw:.1f} kW")
     else:
-        lines.append("- **Installed power:** —")
+        config_subs.append("    - **Installed power:** —")
 
-    # v0.16.0 — annotate EV line as "(no effect on rates)" when the
-    # resolver is independent of the user's choice for this (utility,
-    # valid_from, kW). Pre-v0.16.0 snapshots lack `valid_from` → predicate
-    # is skipped → plain "Yes"/"No" (no regression).
+    # v0.17.1 — Issue 8.1: suppress Self-consumption line entirely when
+    # the user's choice has no effect on rates for this (utility, valid_from,
+    # kW). Pre-v0.16.0 snapshots lack `valid_from` → relevance can't be
+    # determined → permissive default keeps the line (no regression).
     ev = c.get("eigenverbrauch")
-    if ev is None:
-        ev_str = "—"
-    else:
-        ev_str = "Yes" if ev else "No"
+    if ev is not None:
         utility_key = c.get("utility_key")
         valid_from = c.get("valid_from")
+        relevant = True
         if utility_key and valid_from and kw is not None:
             try:
                 from .tariffs_db import self_consumption_relevant
-                if not self_consumption_relevant(utility_key, valid_from, float(kw)):
-                    ev_str = f"{ev_str} (no effect on rates)"
+                relevant = self_consumption_relevant(
+                    utility_key, valid_from, float(kw)
+                )
             except Exception:
-                # Permissive: leave plain Yes/No on any lookup failure.
+                # Permissive: keep showing on any lookup failure.
                 pass
-    lines.append(f"- **Eigenverbrauch (self-consumption):** {ev_str}")
+        if relevant:
+            config_subs.append(
+                f"    - **Self-consumption:** {'Yes' if ev else 'No'}"
+            )
 
-    # v0.16.1 — gate HKN line on hkn_structure. For utilities where the
-    # user can't choose (bundled / none), "HKN opt-in: No" is misleading;
-    # render a structure-aware line instead. Pre-v0.16.1 snapshots have
-    # no hkn_structure → fall back to v0.16.0 Yes/No rendering.
+    # v0.16.1/v0.17.1 — gate HKN line on hkn_structure. Same 3-way split
+    # as v0.16.1, just reparented under Configuration.
     hkn_structure = c.get("hkn_structure")
     hkn_optin = c.get("hkn_optin")
     if hkn_structure == "additive_optin":
         if hkn_optin:
             hkn_rp = c.get("hkn_rp_kwh")
             if hkn_rp is not None:
-                lines.append(
-                    f"- **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
+                config_subs.append(
+                    f"    - **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
                 )
             else:
-                lines.append("- **HKN opt-in:** Yes")
+                config_subs.append("    - **HKN opt-in:** Yes")
         elif hkn_optin is False:
-            lines.append("- **HKN opt-in:** No")
+            config_subs.append("    - **HKN opt-in:** No")
         else:
-            lines.append("- **HKN opt-in:** —")
+            config_subs.append("    - **HKN opt-in:** —")
     elif hkn_structure == "bundled":
-        lines.append(
-            "- **HKN:** bundled in base rate (no opt-in available)"
+        config_subs.append(
+            "    - **HKN:** bundled in base rate (no opt-in available)"
         )
     elif hkn_structure == "none":
-        lines.append("- **HKN:** not paid by utility")
+        config_subs.append("    - **HKN:** not paid by utility")
     else:
         # Legacy snapshot pre-v0.16.1.
         if hkn_optin:
             hkn_rp = c.get("hkn_rp_kwh")
             if hkn_rp is not None:
-                lines.append(
-                    f"- **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
+                config_subs.append(
+                    f"    - **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
                 )
             else:
-                lines.append("- **HKN opt-in:** Yes")
+                config_subs.append("    - **HKN opt-in:** Yes")
         elif hkn_optin is False:
-            lines.append("- **HKN opt-in:** No")
+            config_subs.append("    - **HKN opt-in:** No")
         else:
-            lines.append("- **HKN opt-in:** —")
+            config_subs.append("    - **HKN opt-in:** —")
 
-    billing = c.get("billing")
-    lines.append(f"- **Billing period:** {billing or '—'}")
+    # v0.17.1 — each user_input becomes its own sub-bullet under
+    # Configuration (replaces the pre-0.17.1 collated "Active user inputs:"
+    # one-liner). Localised label via user_input_label; value via
+    # _format_user_input_value.
+    ui = c.get("user_inputs")
+    if isinstance(ui, dict) and ui:
+        decls = c.get("user_inputs_decl") or []
+        decl_by_key = {d.get("key"): d for d in decls if isinstance(d, dict)}
+        for k, v in sorted(ui.items()):
+            decl = decl_by_key.get(k, {})
+            label = user_input_label(decl, notes_lang) if decl else k
+            value_str = _format_user_input_value(decl, v, notes_lang)
+            config_subs.append(f"    - **{label}:** {value_str}")
+
+    if config_subs:
+        lines.append("- **Configuration:**")
+        lines.extend(config_subs)
+
+    # Pass 2: utility/tariff descriptors below.
+    utility_key = c.get("utility_key") or "(unknown)"
+    utility_name = c.get("utility_name") or utility_key
+    # v0.17.0 — drop the slug; only show the human-readable name.
+    lines.append(f"- **Utility:** {utility_name}")
+
+    lines.extend(_render_tariff_model_lines(c))
 
     floor_source = c.get("floor_source")
     floor_label = c.get("floor_label")
     fed_floor = c.get("floor_rp_kwh")
     utl_floor = c.get("utility_floor_rp_kwh")
     if floor_source == "utility":
-        fed_str = f"federal {fed_floor:.2f} Rp/kWh" if fed_floor is not None else "no federal floor"
+        fed_str = (
+            f"federal {fed_floor:.2f} Rp/kWh"
+            if fed_floor is not None
+            else "no federal floor"
+        )
         lines.append(
             f"- **Utility floor:** {utl_floor:.2f} Rp/kWh "
             f"(dominant over {fed_str})"
@@ -1995,6 +1988,8 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
             f"- **Federal floor (Mindestvergütung):** {floor_label}{suffix}"
         )
 
+    # v0.17.1 — Issue 8.4: drop the "Off" branch. Cap mode is only emitted
+    # when actually active. Mirrors HKN: don't echo state with no impact.
     cap_mode = c.get("cap_mode")
     if cap_mode:
         cap_v = c.get("cap_rp_kwh")
@@ -2006,8 +2001,6 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
             f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — {cap_label} "
             f"{cap_str} ({kw_str}, EV={cap_ev_str})"
         )
-    elif cap_mode is False:
-        lines.append("- **Cap mode (Anrechenbarkeitsgrenze):** Off")
 
     tv = c.get("tariffs_version")
     ts = c.get("tariffs_source")
@@ -2015,36 +2008,11 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
         src = f" ({ts})" if ts else ""
         lines.append(f"- **Tariff data:** v{tv}{src}")
 
-    # v0.9.9 — seasonal applied marker + per-rate-window notes.
-    seasonal_summary = _seasonal_summary(c.get("seasonal"))
-    if seasonal_summary is not None:
-        lines.append(f"- **Seasonal rates:** Yes ({seasonal_summary})")
-    elif "seasonal" in c:
-        # Distinguish "explicitly absent" (rate window has no seasonal block)
-        # from "key was not threaded through" (legacy snapshot — silent).
-        lines.append("- **Seasonal rates:** No")
-
-    notes_lang = c.get("notes_lang") or "en"
-    # v0.16.1 — Notes section dropped from the recompute notification per
-    # user request ("huge overkill"). Notes still surface in the data file
-    # and in config_flow's other notification paths.
-
-    # v0.16.0 / v0.16.1 — Active user inputs line uses label_de /
-    # value_labels_de from the rate window's declarations when present.
-    # Falls back to raw ``key=value`` for legacy snapshots without decls.
-    ui = c.get("user_inputs")
-    if isinstance(ui, dict) and ui:
-        decls = c.get("user_inputs_decl") or []
-        decl_by_key = {d.get("key"): d for d in decls if isinstance(d, dict)}
-        parts: list[str] = []
-        for k, v in sorted(ui.items()):
-            decl = decl_by_key.get(k, {})
-            label = user_input_label(decl, notes_lang) if decl else k
-            value_str = _format_user_input_value(decl, v, notes_lang)
-            parts.append(f"{label}: {value_str}")
-        lines.append(
-            "- **Active user inputs:** " + " · ".join(parts)
-        )
+    # v0.17.1 — Issues 8.2 + 8.3: dropped "Billing period:" + "Seasonal rates:"
+    # main bullets. Period is encoded in the tariff-model sub-bullet
+    # (Abrechnungsperiode for fixed_*; in the model name itself for rmp_*);
+    # seasonal info is encoded in the model name ("(saisonal)") + Sommer/Winter
+    # rate sub-bullets. Both main bullets duplicated this info.
 
     lines.extend(
         _render_bonuses_lines(

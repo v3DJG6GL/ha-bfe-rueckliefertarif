@@ -3072,15 +3072,18 @@ class TestRenderConfigBlockShared:
         today_block = "\n".join(_render_active_today_block(c))
         group_block = "\n".join(_render_config_block(c, is_today=False))
 
-        # Both blocks contain the same set of label lines (differing only on
-        # the "current cap" vs "cap" wording, intentionally).
+        # v0.17.1 — Both blocks contain the same set of label lines under
+        # the new grouped layout (differing only on the "current cap" vs
+        # "cap" wording, intentionally). "Billing period" + "Seasonal rates"
+        # main bullets dropped (Issues 8.2 + 8.3); the period info now lives
+        # in the Tariff-model sub-bullets.
         for label in (
             "**Utility:**",
             "**Tariff model:**",
-            "**Installed power:**",
-            "**Eigenverbrauch (self-consumption):**",
-            "**HKN opt-in:**",
-            "**Billing period:**",
+            "- **Configuration:**",
+            "    - **Installed power:**",
+            "    - **Self-consumption:**",
+            "    - **HKN opt-in:**",
             "**Federal floor (Mindestvergütung):**",
             "**Cap mode (Anrechenbarkeitsgrenze):**",
             "**Tariff data:**",

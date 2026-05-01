@@ -359,9 +359,12 @@ class TestFormatRecomputeNotification:
         # v0.17.0 — tariff model line uses localised label; rmp_quartal
         # encodes settlement in the model name itself.
         assert "**Tariff model:** Reference market price (quarterly)" in body
-        assert "**Installed power:** 25.0 kW" in body
-        assert "**Eigenverbrauch (self-consumption):** Yes" in body
-        assert "**HKN opt-in:** Yes (3.00 Rp/kWh additive)" in body
+        # v0.17.1 — Installed power, Self-consumption, HKN opt-in are now
+        # 4-space-indented sub-bullets under a Configuration parent.
+        assert "- **Configuration:**" in body
+        assert "    - **Installed power:** 25.0 kW" in body
+        assert "    - **Self-consumption:** Yes" in body
+        assert "    - **HKN opt-in:** Yes (3.00 Rp/kWh additive)" in body
         assert "**Federal floor (Mindestvergütung):** <30 kW (6.00 Rp/kWh)" in body
         # Cap value is now embedded in the line.
         assert (
@@ -403,15 +406,17 @@ class TestFormatRecomputeNotification:
         _, body = _format_recompute_notification(report)
         assert "| 2026Q1 |" in body
 
-    def test_cap_off_renders_simple_off(self):
+    def test_cap_off_omitted_entirely(self):
+        # v0.17.1 — Issue 8.4: when cap_mode is False, the line is dropped
+        # entirely (mirrors HKN: don't echo state with no impact).
         rows = [_row("2026Q1", 10.0, 100.0, 10.0)]
         report = _RecomputeReport(
             rows=rows, quarters_recomputed=1,
             config=_config_dict(cap_mode=False, cap_rp_kwh=None),
         )
         _, body = _format_recompute_notification(report)
-        assert "**Cap mode (Anrechenbarkeitsgrenze):** Off" in body
-        assert "current cap" not in body  # only emitted when active
+        assert "Cap mode (Anrechenbarkeitsgrenze):" not in body
+        assert "current cap" not in body
 
     def test_truncation_at_24_periods(self):
         rows = [_row(f"2026-{m:02d}", 10.0, 100.0, 10.0) for m in range(12, 0, -1)]
@@ -648,7 +653,10 @@ class TestPerConfigGrouping:
         assert "**Tariff model:** Reference market price (quarterly)" in body
         assert "**Tariff model:** Fixed flat rate" in body
         assert "Cap mode (Anrechenbarkeitsgrenze):** Active — cap 10.96 Rp/kWh" in body
-        assert "Cap mode (Anrechenbarkeitsgrenze):** Off" in body
+        # v0.17.1 — cap_mode=False (age_sa group) emits no cap line at all.
+        # The "today" block (from _config_dict default) has cap_mode=True →
+        # one occurrence; ekz group has cap_mode=True → another. age_sa = 0.
+        assert body.count("Cap mode (Anrechenbarkeitsgrenze):") == 2
 
     def test_grouping_preserves_newest_first_order(self):
         rows = [
@@ -735,7 +743,11 @@ class TestNotesAndSeasonalConfigBlock:
         _, body = _format_recompute_notification(report)
         assert "**Notes:**" not in body
 
-    def test_config_block_seasonal_yes_renders_summer_winter_split(self):
+    def test_config_block_seasonal_main_bullet_dropped(self):
+        # v0.17.1 — Issue 8.3: the "Seasonal rates: Yes (summer: ... ; winter: ...)"
+        # main bullet is dropped. Seasonal info is encoded in the tariff-model
+        # name itself ("Fixpreis (saisonal)" / "Fixed flat rate (seasonal)")
+        # and Sommer/Winter rate sub-bullets under Tariff model.
         rows = [_row("2026Q2", 10.00, 100.0, 10.00)]
         cfg = _config_dict(
             seasonal={
@@ -745,16 +757,16 @@ class TestNotesAndSeasonalConfigBlock:
         )
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
-        assert "**Seasonal rates:** Yes" in body
-        assert "summer: Apr–Sep" in body
-        assert "winter: Oct–Mar" in body
+        assert "**Seasonal rates:**" not in body
 
-    def test_config_block_seasonal_no_when_explicit_none(self):
+    def test_config_block_seasonal_main_bullet_dropped_when_explicit_none(self):
+        # v0.17.1 — same as above; rate window with no seasonal block also
+        # produces no main bullet. (Pre-0.17.1 emitted "Seasonal rates: No".)
         rows = [_row("2026Q2", 10.00, 100.0, 10.00)]
         cfg = _config_dict(seasonal=None)
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
-        assert "**Seasonal rates:** No" in body
+        assert "**Seasonal rates:**" not in body
 
 
 class TestBonusesConfigBlock:
@@ -1050,37 +1062,122 @@ class TestUserInputsRendering:
     """
 
     def test_config_block_renders_user_inputs_line(self):
-        # No declarations → raw key fallback, but v0.16.1 format uses
-        # ``key: value`` separated by " · " (renderer-format change).
+        # v0.17.1: each user_input is its own sub-bullet under Configuration
+        # (replaces the pre-0.17.1 collated "Active user inputs:" one-liner).
         cfg = _config_dict(user_inputs={
             "regio_top40_opted_in": True,
             "ekz_segment": "kleq30_mit_ev",
         })
         lines = _render_config_block(cfg)
-        ui_line = next(
-            (line for line in lines if "Active user inputs:" in line), None
-        )
-        assert ui_line is not None
         # Sorted alphabetically — ekz_segment first, regio_top40 second.
-        assert "ekz_segment: kleq30_mit_ev" in ui_line
-        assert "regio_top40_opted_in: True" in ui_line
+        assert any(
+            line == "    - **ekz_segment:** kleq30_mit_ev" for line in lines
+        )
+        assert any(
+            line == "    - **regio_top40_opted_in:** True" for line in lines
+        )
 
     def test_config_block_omits_user_inputs_when_empty(self):
         cfg = _config_dict(user_inputs={})
         lines = _render_config_block(cfg)
-        assert not any("Active user inputs:" in line for line in lines)
+        # No user_input sub-bullets when the dict is empty.
+        assert not any("regio_top40" in line or "ekz_segment" in line for line in lines)
 
     def test_config_block_omits_user_inputs_when_missing_key(self):
         # Legacy snapshot — no `user_inputs` key at all.
         cfg = _config_dict()
         lines = _render_config_block(cfg)
-        assert not any("Active user inputs:" in line for line in lines)
+        assert not any("regio_top40" in line or "ekz_segment" in line for line in lines)
 
     def test_config_block_omits_user_inputs_when_not_a_dict(self):
         # Defensive — corrupted snapshot stored a list.
         cfg = _config_dict(user_inputs=["broken"])
         lines = _render_config_block(cfg)
+        assert not any("regio_top40" in line or "ekz_segment" in line for line in lines)
+
+
+# ----- v0.17.1 — Issue 8.5: grouped Configuration layout ----------------------
+
+
+class TestGroupedConfigurationLayout:
+    """v0.17.1 — Issue 8.5: user-defined values (Installed power,
+    Self-consumption, HKN opt-in, user_inputs) are grouped under a
+    `**Configuration:**` parent at the TOP of the bullet list. Utility/
+    tariff descriptors (Utility, Tariff model, Federal floor, Cap mode,
+    Tariff data) follow as top-level bullets.
+    """
+
+    def test_configuration_parent_emitted_above_utility(self):
+        cfg = _config_dict()
+        lines = _render_config_block(cfg)
+        body = "\n".join(lines)
+        cfg_idx = body.find("- **Configuration:**")
+        utility_idx = body.find("- **Utility:**")
+        assert cfg_idx != -1, "Configuration parent missing"
+        assert utility_idx != -1, "Utility line missing"
+        assert cfg_idx < utility_idx, (
+            "Configuration parent must precede Utility line"
+        )
+
+    def test_configuration_subs_use_4space_indent(self):
+        cfg = _config_dict()
+        lines = _render_config_block(cfg)
+        # All sub-bullets under Configuration use 4-space indent (matches
+        # _render_tariff_model_lines indentation; valid CommonMark nesting).
+        sub_lines = [
+            line for line in lines
+            if line.startswith("    - **") and (
+                "Installed power" in line
+                or "Self-consumption" in line
+                or "HKN opt-in" in line
+            )
+        ]
+        assert len(sub_lines) >= 2, (
+            f"Expected ≥2 indented sub-bullets, got: {sub_lines}"
+        )
+
+    def test_billing_period_main_bullet_dropped(self):
+        # v0.17.1 — Issue 8.2: "Billing period: quartal" main bullet is gone.
+        # The period info is in the Tariff-model sub-bullet (Abrechnungsperiode)
+        # for fixed_* models or in the model name for rmp_*.
+        cfg = _config_dict(billing="quartal", base_model="fixed_flat",
+                           settlement_period="quartal")
+        lines = _render_config_block(cfg)
+        assert not any(line.startswith("- **Billing period:") for line in lines)
+
+    def test_user_inputs_become_individual_subs_under_configuration(self):
+        decls = [{"key": "regio_top40_opted_in", "type": "boolean",
+                  "label_de": "Wahltarif TOP-40 abonniert"}]
+        cfg = _config_dict(
+            user_inputs={"regio_top40_opted_in": True},
+            user_inputs_decl=decls,
+            notes_lang="de",
+        )
+        lines = _render_config_block(cfg)
+        # The pre-0.17.1 collated "Active user inputs:" line is gone.
         assert not any("Active user inputs:" in line for line in lines)
+        # The localised label appears as its own sub-bullet under Configuration.
+        assert any(
+            line == "    - **Wahltarif TOP-40 abonniert:** Ja" for line in lines
+        )
+
+    def test_user_input_sub_appears_after_hkn_in_configuration(self):
+        # Within Configuration, ordering is: Installed power, Self-consumption,
+        # HKN opt-in/structure, then user_inputs (alphabetical by key).
+        decls = [{"key": "regio_top40_opted_in", "type": "boolean",
+                  "label_de": "Wahltarif TOP-40 abonniert"}]
+        cfg = _config_dict(
+            hkn_structure="additive_optin", hkn_optin=True, hkn_rp_kwh=4.0,
+            user_inputs={"regio_top40_opted_in": True},
+            user_inputs_decl=decls,
+        )
+        lines = _render_config_block(cfg)
+        body = "\n".join(lines)
+        kw_idx = body.find("**Installed power:**")
+        hkn_idx = body.find("**HKN opt-in:**")
+        ui_idx = body.find("**Wahltarif TOP-40 abonniert:**")
+        utility_idx = body.find("- **Utility:**")
+        assert kw_idx < hkn_idx < ui_idx < utility_idx
 
     def test_per_group_heading_includes_bonuses_from_sample_row(self):
         # Two groups, each with a sample bonus declaration. Both groups'
@@ -1124,30 +1221,40 @@ class TestUserInputsRendering:
 
 
 class TestEigenverbrauchAnnotation:
-    """v0.16.0: when EV doesn't change the resolved rate (e.g. EWZ
-    fixed_ht_nt with no cap_rules), the recompute notification's
-    Eigenverbrauch line is annotated as "(no effect on rates)" instead
-    of asserting "Yes" outright.
+    """v0.17.1 — Issue 8.1: Self-consumption line is suppressed entirely
+    when ``self_consumption_relevant()`` returns False. Pre-v0.17.1 the line
+    was always emitted with a "(no effect on rates)" annotation; that
+    annotation is now gone (the absent line carries the same signal).
+
+    Also v0.17.1: line label is now "Self-consumption" (no "Eigenverbrauch"
+    prefix) and lives under the Configuration parent as a sub-bullet.
     """
 
-    def test_ev_line_plain_when_relevant(self):
+    @staticmethod
+    def _ev_line(lines):
+        return next(
+            (line for line in lines if "**Self-consumption:**" in line),
+            None,
+        )
+
+    def test_ev_line_emitted_when_relevant(self):
         # EKZ at 50 kW falls in federal floor 30-150 kW band where rules
-        # differ on self_consumption — predicate returns True → plain "Yes".
+        # differ on self_consumption — predicate returns True → line emitted.
         cfg = _config_dict(
             utility_key="ekz", valid_from="2026-04-01", kw=50.0,
             eigenverbrauch=True,
         )
         lines = _render_config_block(cfg)
-        ev_line = next(
-            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
-            None,
-        )
+        ev_line = self._ev_line(lines)
         assert ev_line is not None
-        assert ev_line.endswith(" Yes")
+        assert ev_line.endswith("Yes")
+        # 4-space sub-bullet indent under Configuration
+        assert ev_line.startswith("    - ")
 
-    def test_ev_line_annotated_when_irrelevant(self, monkeypatch):
+    def test_ev_line_suppressed_when_irrelevant(self, monkeypatch):
         # Synthetic tariff: federal floor uses self_consumption=null AND
-        # the utility has no cap_rules → predicate returns False.
+        # the utility has no cap_rules → predicate returns False → line
+        # is dropped entirely (Issue 8.1).
         from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
         synthetic = {
             "schema_version": "1.2.0",
@@ -1177,34 +1284,24 @@ class TestEigenverbrauchAnnotation:
             eigenverbrauch=True,
         )
         lines = _render_config_block(cfg)
-        ev_line = next(
-            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
-            None,
-        )
-        assert ev_line is not None
-        assert "Yes (no effect on rates)" in ev_line
+        assert self._ev_line(lines) is None
 
-    def test_ev_line_falls_back_to_plain_when_valid_from_missing(self):
-        # Legacy snapshot lacks `valid_from` → predicate skipped → plain "Yes".
+    def test_ev_line_emitted_when_valid_from_missing(self):
+        # Legacy snapshot lacks `valid_from` → relevance can't be computed →
+        # permissive default keeps the line (no regression).
         cfg = _config_dict(eigenverbrauch=True)
         cfg.pop("valid_from", None)
         lines = _render_config_block(cfg)
-        ev_line = next(
-            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
-            None,
-        )
+        ev_line = self._ev_line(lines)
         assert ev_line is not None
-        assert ev_line.endswith(" Yes")  # No annotation.
+        assert ev_line.endswith("Yes")
 
-    def test_ev_line_dash_when_ev_is_none(self):
+    def test_ev_line_suppressed_when_ev_is_none(self):
+        # v0.17.1: ev=None means the user hasn't set EV; suppress entirely
+        # rather than emit a "—" placeholder under Configuration.
         cfg = _config_dict(eigenverbrauch=None)
         lines = _render_config_block(cfg)
-        ev_line = next(
-            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
-            None,
-        )
-        assert ev_line is not None
-        assert ev_line.endswith(" —")
+        assert self._ev_line(lines) is None
 
 
 # ----- v0.16.0 — Issue 4.1: fingerprint canonicalization ---------------------
@@ -1455,8 +1552,11 @@ class TestUserInputsLabelTranslation:
             notes_lang="de",
         )
         lines = _render_config_block(cfg)
-        ui_line = next(line for line in lines if "Active user inputs:" in line)
-        assert "Wahltarif TOP-40 abonniert: Nein" in ui_line
+        # v0.17.1: each user_input is its own sub-bullet under Configuration
+        # (replaces the pre-0.17.1 collated "Active user inputs:" line).
+        assert any(
+            line == "    - **Wahltarif TOP-40 abonniert:** Nein" for line in lines
+        )
 
     def test_uses_label_en_and_yes_no_for_boolean(self):
         cfg = _config_dict(
@@ -1465,8 +1565,9 @@ class TestUserInputsLabelTranslation:
             notes_lang="en",
         )
         lines = _render_config_block(cfg)
-        ui_line = next(line for line in lines if "Active user inputs:" in line)
-        assert "Wahltarif TOP-40 subscribed: Yes" in ui_line
+        assert any(
+            line == "    - **Wahltarif TOP-40 subscribed:** Yes" for line in lines
+        )
 
     def test_uses_value_labels_for_enum(self):
         cfg = _config_dict(
@@ -1475,8 +1576,9 @@ class TestUserInputsLabelTranslation:
             notes_lang="de",
         )
         lines = _render_config_block(cfg)
-        ui_line = next(line for line in lines if "Active user inputs:" in line)
-        assert "Segment: ≤30 kW mit Eigenverbrauch" in ui_line
+        assert any(
+            line == "    - **Segment:** ≤30 kW mit Eigenverbrauch" for line in lines
+        )
 
     def test_falls_back_to_key_when_no_decl(self):
         cfg = _config_dict(
@@ -1484,9 +1586,8 @@ class TestUserInputsLabelTranslation:
             user_inputs_decl=None,
         )
         lines = _render_config_block(cfg)
-        ui_line = next(line for line in lines if "Active user inputs:" in line)
         # No decl → raw key, raw value (str(bool) → "True").
-        assert "unknown_key: True" in ui_line
+        assert any(line == "    - **unknown_key:** True" for line in lines)
 
 
 # ----- v0.16.1 — HKN-structure-aware line ------------------------------------

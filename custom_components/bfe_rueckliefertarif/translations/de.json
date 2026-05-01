@@ -22,7 +22,11 @@
         "description": "Trag deine Anlagedaten für **{utility_name}** ab **{valid_from}** ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
-          "hkn_aktiviert": "HKN an Versorger verkaufen?"
+          "hkn_aktiviert": "HKN an Versorger verkaufen?",
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "supply_product": "Bezug Ökostrom-Produkt",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         },
         "data_description": {
           "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** wenn ein Teil deiner PV-Produktion vor Ort verbraucht wird (typische Wohn- / Gewerbeanlage). **Nein** für Volleinspeisung (gesamte Produktion ins Netz).\n\nBeeinflusst das Mindestvergütungsband — bei 30–<150 kW ist der Unterschied erheblich (degressiv 180÷kW mit Eigenverbrauch vs. flat 6.20 Rp/kWh ohne).",
@@ -43,6 +47,38 @@
           "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
           "plant_name": "## Anlagen-Name\nStabiler Anzeigename dieser PV-Anlage — z. B. `Dach Süd`, `Garage Carport`. Erscheint als Integrations-Titel in **Einstellungen → Geräte & Dienste** und liefert den Standardwert für das Namens-Präfix unten.\n\n**Bleibt bei späterem Versorgerwechsel gleich** (Versorgerwechsel laufen über *Konfigurieren → Konfigurationsänderung anwenden*).",
           "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** dieser Integration vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`).\n\n**Leer lassen**, um aus dem Anlagen-Namen abzuleiten (z. B. `dach_sud_rueckliefertarif`). *Nur explizit setzen* für einen eigenen Wert oder bei Kollision mit einer existierenden Entity."
+        }
+      },
+      "apply_change_details": {
+        "data": {
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "supply_product": "Bezug Ökostrom-Produkt",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
+        }
+      },
+      "add_new_row": {
+        "data": {
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "supply_product": "Bezug Ökostrom-Produkt",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
+        }
+      },
+      "edit_row": {
+        "data": {
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "supply_product": "Bezug Ökostrom-Produkt",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
+        }
+      },
+      "pick_user_inputs": {
+        "data": {
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "supply_product": "Bezug Ökostrom-Produkt",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         }
       }
     },

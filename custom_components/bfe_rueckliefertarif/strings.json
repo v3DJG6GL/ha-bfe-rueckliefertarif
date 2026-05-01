@@ -22,7 +22,11 @@
         "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "eigenverbrauch_aktiviert": "Self-consumption enabled",
-          "hkn_aktiviert": "Sell HKN to your utility?"
+          "hkn_aktiviert": "Sell HKN to your utility?",
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "supply_product": "Eco-electricity product subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         },
         "data_description": {
           "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** if any portion of your PV production is consumed on-site (typical residential / commercial setup). **No** for full feed-in plants (Volleinspeisung) where 100% of production goes to the grid.\n\nThis flag affects the federal floor band you fall into — for 30–<150 kW plants the difference is significant (degressive 180÷kW with self-consumption vs. flat 6.20 Rp/kWh without).",
@@ -43,6 +47,38 @@
           "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
           "plant_name": "## Plant name\nA stable display name for this PV plant — e.g. `Rooftop South`, `Garage Carport`. Used as the integration's title in **Settings → Devices & Services** and as the default for the entity name prefix below.\n\n**Stays the same even if you switch utility later** (utility changes happen via *Configure → Apply config change*).",
           "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** (e.g. `sensor.PREFIX_basisverguetung`).\n\n**Leave empty** to auto-derive from the plant name (e.g. `rooftop_south_rueckliefertarif`). *Only set explicitly* if you want a custom value or the default would collide with an existing entity."
+        }
+      },
+      "apply_change_details": {
+        "data": {
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "supply_product": "Eco-electricity product subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
+        }
+      },
+      "add_new_row": {
+        "data": {
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "supply_product": "Eco-electricity product subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
+        }
+      },
+      "edit_row": {
+        "data": {
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "supply_product": "Eco-electricity product subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
+        }
+      },
+      "pick_user_inputs": {
+        "data": {
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "supply_product": "Eco-electricity product subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       }
     },
