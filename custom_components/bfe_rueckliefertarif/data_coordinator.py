@@ -44,8 +44,14 @@ _LOGGER = logging.getLogger(__name__)
 REMOTE_URL = (
     "https://raw.githubusercontent.com/v3DJG6GL/bfe-tariffs-data/main/tariffs.json"
 )
+# v0.15.0 — fetched alongside tariffs.json so schema bumps land without a
+# HACS release. Falls back to the bundled schema on any failure.
+REMOTE_SCHEMA_URL = (
+    "https://raw.githubusercontent.com/v3DJG6GL/bfe-tariffs-data/main/schemas/tariffs-v1.schema.json"
+)
 CACHE_FILENAME = "bfe_rueckliefertarif_tariffs.json"
 META_FILENAME = "bfe_rueckliefertarif_tariffs.meta.json"
+SCHEMA_CACHE_FILENAME = "bfe_rueckliefertarif_tariffs.schema.json"
 REFRESH_INTERVAL = timedelta(days=1)
 FETCH_TIMEOUT_S = 30
 
@@ -63,8 +69,15 @@ class TariffsDataCoordinator:
         storage_dir = Path(hass.config.path(".storage"))
         self._cache_path = storage_dir / CACHE_FILENAME
         self._meta_path = storage_dir / META_FILENAME
+        self._schema_cache_path = storage_dir / SCHEMA_CACHE_FILENAME
         self.last_remote_update: datetime | None = None
         self.last_error: str | None = None
+        # v0.15.0 — schema fetch state (parallel to tariffs fetch state).
+        self.last_schema_error: str | None = None
+        self.last_schema_source: str = "bundled"
+        # v0.15.0 — surface tariffs.json's own version markers to users.
+        self.last_data_version: str | None = None
+        self.last_data_updated: str | None = None
 
     async def async_load(self) -> None:
         """Initial load on integration setup. Never raises — fallback is bundled."""
@@ -74,6 +87,8 @@ class TariffsDataCoordinator:
                 self.last_remote_update = datetime.fromisoformat(meta["fetched_at"])
             except (KeyError, ValueError):
                 self.last_remote_update = None
+            self.last_data_version = meta.get("data_version")
+            self.last_data_updated = meta.get("last_updated")
 
         if self._cache_path.is_file() and self._is_fresh():
             set_override_path(self._cache_path)
@@ -91,9 +106,30 @@ class TariffsDataCoordinator:
             await self.async_refresh()
 
     async def async_refresh(self) -> bool:
-        """Fetch + validate + cache. Return True iff successful."""
+        """Fetch + validate + cache. Return True iff tariffs fetch succeeded.
+
+        v0.15.0: schema is fetched first (per the design — schema bumps in
+        the data repo land without a HACS release). Schema-fetch failure is
+        non-fatal: validation falls back to the bundled schema.
+        """
         import aiohttp
 
+        # 1. Schema first. On any failure, fall back to bundled.
+        remote_schema = await self._fetch_remote_schema()
+        if remote_schema is not None:
+            await self._hass.async_add_executor_job(
+                self._write_schema_cache, remote_schema
+            )
+            self.last_schema_source = "remote"
+            self.last_schema_error = None
+            schema_to_use = remote_schema
+        else:
+            self.last_schema_source = "bundled"
+            schema_to_use = await self._hass.async_add_executor_job(
+                self._load_bundled_schema
+            )
+
+        # 2. Tariffs.json fetch.
         try:
             async with aiohttp.ClientSession() as session, session.get(
                 REMOTE_URL, timeout=aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S)
@@ -106,17 +142,23 @@ class TariffsDataCoordinator:
             set_override_path(None)
             return False
 
+        # 3. Validate against the resolved schema (remote-or-bundled).
         try:
-            await self._hass.async_add_executor_job(self._validate, data)
+            await self._hass.async_add_executor_job(
+                self._validate, data, schema_to_use
+            )
         except Exception as exc:
             _LOGGER.warning(
-                "Remote tariffs.json failed schema validation: %s — using bundled", exc
+                "Remote tariffs.json failed schema validation (%s schema): %s — using bundled",
+                self.last_schema_source, exc,
             )
             self.last_error = str(exc)
             set_override_path(None)
             return False
 
-        # Persist cache + metadata.
+        # 4. Persist cache + metadata, record version markers.
+        self.last_data_version = data.get("data_version")
+        self.last_data_updated = data.get("last_updated")
         await self._hass.async_add_executor_job(self._write_cache, data)
         self.last_remote_update = datetime.now(UTC)
         self.last_error = None
@@ -125,8 +167,10 @@ class TariffsDataCoordinator:
         # — which may be a sync code path in the event loop — hits memory.
         await self._hass.async_add_executor_job(load_tariffs)
         _LOGGER.info(
-            "Remote tariffs.json refreshed (schema_version=%s)",
-            data.get("schema_version"),
+            "Remote tariffs.json refreshed (data_version=%s, last_updated=%s, "
+            "schema_version=%s, schema_source=%s)",
+            self.last_data_version, self.last_data_updated,
+            data.get("schema_version"), self.last_schema_source,
         )
 
         # v0.13.0 (Phase 3) — scan all this domain's entries for stale
@@ -139,6 +183,63 @@ class TariffsDataCoordinator:
             _LOGGER.warning("Drift scan after refresh failed: %s", exc)
 
         return True
+
+    async def _fetch_remote_schema(self) -> dict[str, Any] | None:
+        """Fetch + meta-validate the canonical schema from the data repo.
+
+        Returns the parsed schema dict on success, None on any failure
+        (HTTP error, malformed JSON, fails Draft 2020-12 meta-schema).
+        Sets ``last_schema_error`` on failure for surface-up to UI.
+        """
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as session, session.get(
+                REMOTE_SCHEMA_URL,
+                timeout=aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S),
+            ) as resp:
+                resp.raise_for_status()
+                schema = await resp.json(content_type=None)
+        except Exception as exc:
+            _LOGGER.warning(
+                "Remote tariffs schema fetch failed: %s — using bundled", exc
+            )
+            self.last_schema_error = str(exc)
+            return None
+
+        try:
+            await self._hass.async_add_executor_job(self._meta_validate, schema)
+        except Exception as exc:
+            _LOGGER.warning(
+                "Remote tariffs schema failed meta-schema validation: %s — using bundled",
+                exc,
+            )
+            self.last_schema_error = str(exc)
+            return None
+
+        return schema
+
+    @staticmethod
+    def _meta_validate(schema: dict[str, Any]) -> None:
+        """Verify the fetched schema is itself a well-formed Draft 2020-12 schema."""
+        import jsonschema
+
+        jsonschema.Draft202012Validator.check_schema(schema)
+
+    @staticmethod
+    def _load_bundled_schema() -> dict[str, Any]:
+        """Sync read of the bundled schema. Run in executor."""
+        schema_path = Path(__file__).parent / "schemas" / "tariffs-v1.schema.json"
+        with open(schema_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_schema_cache(self, schema: dict[str, Any]) -> None:
+        """Run in executor — atomic write of the fetched schema."""
+        self._schema_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._schema_cache_path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(schema, f, indent=2, ensure_ascii=False)
+        tmp.replace(self._schema_cache_path)
 
     def _create_drift_issues_for_all_entries(self) -> None:
         """Iterate domain entries; surface drift issues for each."""
@@ -172,20 +273,32 @@ class TariffsDataCoordinator:
             json.dump(data, f, indent=2, ensure_ascii=False)
         tmp.replace(self._cache_path)
 
-        meta = {"fetched_at": datetime.now(UTC).isoformat()}
+        meta = {
+            "fetched_at": datetime.now(UTC).isoformat(),
+            "data_version": data.get("data_version"),
+            "last_updated": data.get("last_updated"),
+        }
         meta_tmp = self._meta_path.with_suffix(".meta.json.tmp")
         with open(meta_tmp, "w", encoding="utf-8") as f:
             json.dump(meta, f)
         meta_tmp.replace(self._meta_path)
 
-    def _validate(self, data: dict[str, Any]) -> None:
-        """Schema-validate the fetched data against tariffs-v1.schema.json.
+    def _validate(
+        self,
+        data: dict[str, Any],
+        schema: dict[str, Any] | None = None,
+    ) -> None:
+        """Schema-validate the fetched data.
 
         ``jsonschema`` is a dev dep but is also pulled in by HA's voluptuous
         bridge in many setups. If it isn't available, we fall back to a
         loose structural check (top-level keys present) so v0.5 still works
         on minimal HA setups; the bundled file always validates so the user
         is never worse off.
+
+        If ``schema`` is None, loads the bundled schema (preserves the
+        original single-arg behavior for any caller that doesn't care
+        about the remote-schema flow).
         """
         try:
             import jsonschema
@@ -193,9 +306,8 @@ class TariffsDataCoordinator:
             self._loose_validate(data)
             return
 
-        schema_path = Path(__file__).parent / "schemas" / "tariffs-v1.schema.json"
-        with open(schema_path, encoding="utf-8") as f:
-            schema = json.load(f)
+        if schema is None:
+            schema = self._load_bundled_schema()
         jsonschema.Draft202012Validator(schema).validate(data)
 
     @staticmethod

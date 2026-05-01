@@ -2337,10 +2337,18 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     bfe_line += "; no new quarters since last import."
                 # Line 2: tariff data refresh status.
                 if result.get("tariffs_refreshed"):
-                    version = result.get("tariffs_version") or "unknown"
+                    data_v = result.get("tariffs_data_version") or "?"
+                    last_updated = result.get("tariffs_data_last_updated") or "?"
+                    schema_src = result.get("tariffs_schema_source") or "?"
                     tariffs_line = (
-                        f"Tariff data refreshed (v{version} from companion repo)."
+                        f"Tariff data refreshed (data v{data_v}, "
+                        f"last_updated={last_updated}, schema={schema_src})."
                     )
+                    schema_err = result.get("tariffs_schema_error")
+                    if schema_err:
+                        tariffs_line += (
+                            f" Note: schema fetch fell back to bundled ({schema_err})."
+                        )
                 elif result.get("tariffs_error"):
                     tariffs_line = (
                         f"Tariff data refresh failed: {result['tariffs_error']} "

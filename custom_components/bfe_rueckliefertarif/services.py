@@ -1264,6 +1264,10 @@ async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
         "tariffs_refreshed": tariffs_refreshed,
         "tariffs_version": tariffs_version,
         "tariffs_error": tariffs_error,
+        "tariffs_data_version": tdc.last_data_version if tdc else None,
+        "tariffs_data_last_updated": tdc.last_data_updated if tdc else None,
+        "tariffs_schema_source": tdc.last_schema_source if tdc else None,
+        "tariffs_schema_error": tdc.last_schema_error if tdc else None,
     }
 
 

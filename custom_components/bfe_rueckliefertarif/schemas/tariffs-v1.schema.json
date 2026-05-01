@@ -8,6 +8,7 @@
   "properties": {
     "$schema":        { "type": "string" },
     "schema_version": { "type": "string", "pattern": "^1\\.\\d+\\.\\d+$" },
+    "data_version":   { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "last_updated":   { "type": "string", "format": "date" },
     "notes":          { "type": "string" },
 
@@ -227,18 +228,27 @@
           "comment": "fixed_ht_nt requires HT/NT pair.",
           "if":   { "properties": { "base_model": { "const": "fixed_ht_nt" } }, "required": ["base_model"] },
           "then": { "required": ["fixed_ht_rp_kwh", "fixed_nt_rp_kwh"] }
+        },
+        {
+          "comment": "additive_optin requires hkn_rp_kwh OR non-empty hkn_cases.",
+          "if":   { "properties": { "hkn_structure": { "const": "additive_optin" } }, "required": ["hkn_structure"] },
+          "then": {
+            "anyOf": [
+              { "required": ["hkn_rp_kwh"], "properties": { "hkn_rp_kwh": { "type": "number" } } },
+              { "required": ["hkn_cases"], "properties": { "hkn_cases": { "type": "array", "minItems": 1 } } }
+            ]
+          }
         }
       ]
     },
 
     "bonus": {
       "type": "object",
-      "required": ["kind", "name", "applies_when"],
+      "required": ["kind", "name"],
       "additionalProperties": true,
       "properties": {
         "kind":           { "type": "string", "enum": ["additive_rp_kwh", "multiplier_pct"] },
         "name":           { "type": "string", "minLength": 1 },
-        "applies_when":   { "type": "string", "enum": ["always", "opt_in"] },
         "rate_rp_kwh":    { "type": "number" },
         "multiplier_pct": { "type": "number" },
         "when":           { "$ref": "#/$defs/when_clause" },

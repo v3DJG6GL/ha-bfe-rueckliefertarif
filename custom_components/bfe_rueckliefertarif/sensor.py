@@ -291,6 +291,10 @@ class TariffsDataLastUpdateSensor(_BaseSensor):
         return {
             "source": get_source(),
             "last_error": tdc.last_error if tdc else None,
+            "data_version": tdc.last_data_version if tdc else None,
+            "data_last_updated": tdc.last_data_updated if tdc else None,
+            "schema_source": tdc.last_schema_source if tdc else None,
+            "last_schema_error": tdc.last_schema_error if tdc else None,
         }
 
 

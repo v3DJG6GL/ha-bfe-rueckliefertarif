@@ -460,3 +460,256 @@ class TestTariffDriftRepairFlow:
         result = await flow.async_step_init()
         assert result["type"].name in ("ABORT", "abort")
         assert result["reason"] == "no_rate_window"
+
+
+class TestRemoteSchemaFetch:
+    """v0.15.0 — schema is fetched alongside tariffs.json. Schema-fetch
+    failure is non-fatal: validation falls back to the bundled schema."""
+
+    @pytest.fixture
+    def minimal_tariffs(self):
+        """Minimal v1.4.x-shape tariffs payload that validates against the
+        canonical schema. Includes data_version + last_updated for the
+        version-tracking assertions."""
+        return {
+            "schema_version": "1.4.0",
+            "data_version": "0.0.2",
+            "last_updated": "2026-05-01",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01", "valid_to": None,
+                "rules": [{
+                    "kw_min": 0, "kw_max": 30,
+                    "self_consumption": None, "min_rp_kwh": 6.0,
+                }],
+            }],
+            "utilities": {"test": {
+                "name_de": "Test",
+                "homepage": "https://example.com",
+                "rates": [{
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal",
+                    "power_tiers": [{
+                        "kw_min": 0, "kw_max": None,
+                        "base_model": "rmp_quartal",
+                        "hkn_rp_kwh": 0.0,
+                        "hkn_structure": "none",
+                    }],
+                    "cap_mode": False,
+                }],
+            }},
+        }
+
+    @pytest.fixture
+    def canonical_schema(self):
+        from pathlib import Path
+        schema_path = (
+            Path(__file__).parent.parent
+            / "custom_components" / "bfe_rueckliefertarif"
+            / "schemas" / "tariffs-v1.schema.json"
+        )
+        with open(schema_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _make_coordinator(self, tmp_path):
+        """Build a TariffsDataCoordinator with a minimal stub HA-side."""
+        from types import SimpleNamespace
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            TariffsDataCoordinator,
+        )
+
+        async def _exec(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        config = SimpleNamespace(path=lambda *a: str(tmp_path))
+        config_entries = SimpleNamespace(async_entries=lambda _domain: [])
+        hass = SimpleNamespace(
+            config=config,
+            config_entries=config_entries,
+            async_add_executor_job=_exec,
+            data={},
+        )
+        return TariffsDataCoordinator(hass)
+
+    @pytest.mark.asyncio
+    async def test_fetch_schema_success_uses_remote_for_validation(
+        self, tmp_path, canonical_schema, minimal_tariffs
+    ):
+        from aioresponses import aioresponses
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            REMOTE_SCHEMA_URL,
+            REMOTE_URL,
+        )
+
+        coord = self._make_coordinator(tmp_path)
+        with aioresponses() as m:
+            m.get(REMOTE_SCHEMA_URL, payload=canonical_schema)
+            m.get(REMOTE_URL, payload=minimal_tariffs)
+            ok = await coord.async_refresh()
+
+        assert ok is True
+        assert coord.last_schema_source == "remote"
+        assert coord.last_schema_error is None
+        assert coord._schema_cache_path.is_file()
+        assert coord.last_data_version == "0.0.2"
+        assert coord.last_data_updated == "2026-05-01"
+
+    @pytest.mark.asyncio
+    async def test_fetch_schema_http_error_falls_back_to_bundled(
+        self, tmp_path, minimal_tariffs
+    ):
+        from aioresponses import aioresponses
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            REMOTE_SCHEMA_URL,
+            REMOTE_URL,
+        )
+
+        coord = self._make_coordinator(tmp_path)
+        with aioresponses() as m:
+            m.get(REMOTE_SCHEMA_URL, status=500)
+            m.get(REMOTE_URL, payload=minimal_tariffs)
+            ok = await coord.async_refresh()
+
+        assert ok is True
+        assert coord.last_schema_source == "bundled"
+        assert coord.last_schema_error is not None
+        assert coord.last_error is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_schema_malformed_json_falls_back_to_bundled(
+        self, tmp_path, minimal_tariffs
+    ):
+        from aioresponses import aioresponses
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            REMOTE_SCHEMA_URL,
+            REMOTE_URL,
+        )
+
+        coord = self._make_coordinator(tmp_path)
+        with aioresponses() as m:
+            m.get(REMOTE_SCHEMA_URL, body="<html>not json</html>",
+                  content_type="text/html")
+            m.get(REMOTE_URL, payload=minimal_tariffs)
+            ok = await coord.async_refresh()
+
+        assert ok is True
+        assert coord.last_schema_source == "bundled"
+        assert coord.last_schema_error is not None
+
+    @pytest.mark.asyncio
+    async def test_fetch_schema_fails_meta_schema_falls_back_to_bundled(
+        self, tmp_path, minimal_tariffs
+    ):
+        from aioresponses import aioresponses
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            REMOTE_SCHEMA_URL,
+            REMOTE_URL,
+        )
+
+        coord = self._make_coordinator(tmp_path)
+        # Valid JSON, but not a valid Draft 2020-12 schema (`type` enum violation).
+        invalid_schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
+                          "type": "nonexistent"}
+        with aioresponses() as m:
+            m.get(REMOTE_SCHEMA_URL, payload=invalid_schema)
+            m.get(REMOTE_URL, payload=minimal_tariffs)
+            ok = await coord.async_refresh()
+
+        assert ok is True
+        assert coord.last_schema_source == "bundled"
+        assert coord.last_schema_error is not None
+
+    @pytest.mark.asyncio
+    async def test_data_version_and_last_updated_recorded_on_refresh(
+        self, tmp_path, canonical_schema, minimal_tariffs
+    ):
+        from aioresponses import aioresponses
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            REMOTE_SCHEMA_URL,
+            REMOTE_URL,
+        )
+
+        coord = self._make_coordinator(tmp_path)
+        with aioresponses() as m:
+            m.get(REMOTE_SCHEMA_URL, payload=canonical_schema)
+            m.get(REMOTE_URL, payload=minimal_tariffs)
+            await coord.async_refresh()
+
+        # Meta file persists the version markers so async_load() can
+        # populate state on cache-fresh restart without re-parsing tariffs.
+        with open(coord._meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        assert meta["data_version"] == "0.0.2"
+        assert meta["last_updated"] == "2026-05-01"
+
+    @pytest.mark.asyncio
+    async def test_load_uses_meta_data_version_on_fresh_cache(
+        self, tmp_path, minimal_tariffs
+    ):
+        from datetime import UTC, datetime
+
+        coord = self._make_coordinator(tmp_path)
+        # Pre-create cache + meta as if a recent refresh succeeded.
+        coord._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(coord._cache_path, "w", encoding="utf-8") as f:
+            json.dump(minimal_tariffs, f)
+        with open(coord._meta_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "fetched_at": datetime.now(UTC).isoformat(),
+                "data_version": "0.0.2",
+                "last_updated": "2026-05-01",
+            }, f)
+
+        await coord.async_load()
+        # Cache fresh → no aiohttp call needed; state populated from meta.
+        assert coord.last_data_version == "0.0.2"
+        assert coord.last_data_updated == "2026-05-01"
+
+    @pytest.mark.asyncio
+    async def test_remote_schema_fail_then_data_invalid_under_bundled_returns_false(
+        self, tmp_path
+    ):
+        """Schema fetch fails AND tariffs.json violates the bundled schema
+        → async_refresh returns False, falls back to bundled tariffs."""
+        from aioresponses import aioresponses
+
+        from custom_components.bfe_rueckliefertarif.data_coordinator import (
+            REMOTE_SCHEMA_URL,
+            REMOTE_URL,
+        )
+        from custom_components.bfe_rueckliefertarif.tariffs_db import get_source
+
+        # Tariffs payload that violates v1.4.x: rate without required `cap_mode`.
+        bad_tariffs = {
+            "schema_version": "1.4.0",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01", "valid_to": None,
+                "rules": [{"kw_min": 0, "kw_max": 30,
+                           "self_consumption": None, "min_rp_kwh": 6.0}],
+            }],
+            "utilities": {"test": {
+                "name_de": "Test",
+                "homepage": "https://example.com",
+                "rates": [{
+                    # Missing required `cap_mode` and `power_tiers`.
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal",
+                }],
+            }},
+        }
+
+        coord = self._make_coordinator(tmp_path)
+        with aioresponses() as m:
+            m.get(REMOTE_SCHEMA_URL, status=500)
+            m.get(REMOTE_URL, payload=bad_tariffs)
+            ok = await coord.async_refresh()
+
+        assert ok is False
+        assert coord.last_error is not None
+        assert coord.last_schema_source == "bundled"
+        assert get_source() == "bundled"
