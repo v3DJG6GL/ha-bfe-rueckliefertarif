@@ -370,6 +370,70 @@ def pick_value_label(decl: dict, value: str, lang: str) -> str:
     return str(labels.get(value, value))
 
 
+# v0.17.0 — display labels for tariff model + settlement period enums.
+# The schema defines these as raw enum strings (no localisation fields),
+# so we hard-code the display tables here. French falls back to English.
+_TARIFF_MODEL_LABELS: dict[str, dict] = {
+    "de": {
+        ("fixed_flat", False): "Fixpreis",
+        ("fixed_flat", True): "Fixpreis (saisonal)",
+        ("fixed_ht_nt", False): "Fixpreis (HT/NT)",
+        ("fixed_ht_nt", True): "Fixpreis (HT/NT, saisonal)",
+        "rmp_quartal": "Referenzmarktpreis (Quartal)",
+        "rmp_monat": "Referenzmarktpreis (Monat)",
+    },
+    "en": {
+        ("fixed_flat", False): "Fixed flat rate",
+        ("fixed_flat", True): "Fixed flat rate (seasonal)",
+        ("fixed_ht_nt", False): "Fixed HT/NT rate",
+        ("fixed_ht_nt", True): "Fixed HT/NT rate (seasonal)",
+        "rmp_quartal": "Reference market price (quarterly)",
+        "rmp_monat": "Reference market price (monthly)",
+    },
+}
+
+_SETTLEMENT_PERIOD_LABELS: dict[str, dict] = {
+    "de": {"quartal": "Quartal", "monat": "Monat", "stunde": "Stunde"},
+    "en": {"quartal": "Quarterly", "monat": "Monthly", "stunde": "Hourly"},
+}
+
+
+def tariff_model_label(
+    base_model: str | None, seasonal: dict | None, lang: str
+) -> str:
+    """Localised display label for a tariff model.
+
+    fixed_flat        → "Fixpreis"  / "Fixed flat rate"
+    fixed_flat + sea  → "Fixpreis (saisonal)" / "Fixed flat rate (seasonal)"
+    fixed_ht_nt       → "Fixpreis (HT/NT)" / "Fixed HT/NT rate"
+    fixed_ht_nt + sea → "Fixpreis (HT/NT, saisonal)" / "Fixed HT/NT rate (seasonal)"
+    rmp_quartal       → "Referenzmarktpreis (Quartal)" / "Reference market price (quarterly)"
+    rmp_monat         → "Referenzmarktpreis (Monat)" / "Reference market price (monthly)"
+
+    Unknown / missing models fall back to the raw enum value (or ``"—"``
+    when ``base_model is None``). Unknown languages fall back to English.
+    """
+    if not base_model:
+        return "—"
+    table = _TARIFF_MODEL_LABELS.get(lang) or _TARIFF_MODEL_LABELS["en"]
+    has_seasonal = bool(seasonal)
+    if base_model in ("fixed_flat", "fixed_ht_nt"):
+        return table.get((base_model, has_seasonal), base_model)
+    return table.get(base_model, base_model)
+
+
+def settlement_period_label(period: str | None, lang: str) -> str:
+    """Localised display label for a settlement_period enum value.
+
+    Unknown / missing periods fall back to the raw value. Unknown
+    languages fall back to English.
+    """
+    if not period:
+        return "—"
+    table = _SETTLEMENT_PERIOD_LABELS.get(lang) or _SETTLEMENT_PERIOD_LABELS["en"]
+    return table.get(period, period)
+
+
 def user_inputs_decl_signature(rate: dict | None) -> tuple:
     """Stable hashable signature of a rate window's ``user_inputs[]``
     declarations.
@@ -734,3 +798,120 @@ def list_utility_keys(data: dict[str, Any] | None = None) -> list[str]:
     """All known utility keys in the order they appear in tariffs.json."""
     db = data if data is not None else load_tariffs()
     return list(db["utilities"].keys())
+
+
+def _utility_display_name_from(util: dict | None) -> str:
+    """Best-effort display name for a parsed utility dict. v0.17.0."""
+    if not isinstance(util, dict):
+        return "—"
+    return (
+        util.get("name_de")
+        or util.get("name_en")
+        or util.get("name_fr")
+        or "—"
+    )
+
+
+def diff_tariffs_data(old: dict | None, new: dict | None) -> dict:
+    """Compare two parsed tariffs.json dicts and return a structured diff
+    surface for the refresh-prices notification (v0.17.0).
+
+    Returns:
+        ``{
+            "added_utilities":     [{"key", "name", "rate_window_dates": [...]}],
+            "removed_utilities":   [{"key", "name"}],
+            "added_rate_windows":  [{"key", "name", "rate_window_dates": [...]}],
+            "modified_rate_windows": [{"key", "name", "rate_window_dates": [...]}],
+            "data_version_changed": (old_v, new_v) | None,
+            "no_changes": bool,
+        }``
+
+    Comparison key for rate windows is ``valid_from``. A window is "added"
+    when its ``valid_from`` is new; "modified" when ``valid_from`` exists in
+    both but the rate-window dict's deep-equal canonical JSON form differs.
+    Removed rate windows are not surfaced (rare, usually a re-keying).
+
+    Robust to ``None`` inputs (treated as empty dicts) so callers can pass
+    a missing pre-snapshot from a fresh install without branching.
+    """
+    old = old or {}
+    new = new or {}
+    old_utils = (old.get("utilities") or {}) if isinstance(old, dict) else {}
+    new_utils = (new.get("utilities") or {}) if isinstance(new, dict) else {}
+
+    added_utilities: list[dict] = []
+    removed_utilities: list[dict] = []
+    added_rate_windows: list[dict] = []
+    modified_rate_windows: list[dict] = []
+
+    for key in new_utils.keys() - old_utils.keys():
+        util = new_utils.get(key) or {}
+        added_utilities.append({
+            "key": key,
+            "name": _utility_display_name_from(util),
+            "rate_window_dates": [
+                r.get("valid_from") for r in (util.get("rates") or [])
+                if isinstance(r, dict) and r.get("valid_from")
+            ],
+        })
+
+    for key in old_utils.keys() - new_utils.keys():
+        util = old_utils.get(key) or {}
+        removed_utilities.append({
+            "key": key,
+            "name": _utility_display_name_from(util),
+        })
+
+    # For utilities present in both: detect added vs modified rate windows
+    # by valid_from. Deep-equality via canonical JSON dump.
+    for key in new_utils.keys() & old_utils.keys():
+        old_util = old_utils.get(key) or {}
+        new_util = new_utils.get(key) or {}
+        old_rates = {
+            r.get("valid_from"): r for r in (old_util.get("rates") or [])
+            if isinstance(r, dict) and r.get("valid_from")
+        }
+        new_rates = {
+            r.get("valid_from"): r for r in (new_util.get("rates") or [])
+            if isinstance(r, dict) and r.get("valid_from")
+        }
+        added_dates = sorted(new_rates.keys() - old_rates.keys())
+        if added_dates:
+            added_rate_windows.append({
+                "key": key,
+                "name": _utility_display_name_from(new_util),
+                "rate_window_dates": added_dates,
+            })
+        modified_dates = []
+        for vf in sorted(new_rates.keys() & old_rates.keys()):
+            old_canon = json.dumps(old_rates[vf], sort_keys=True)
+            new_canon = json.dumps(new_rates[vf], sort_keys=True)
+            if old_canon != new_canon:
+                modified_dates.append(vf)
+        if modified_dates:
+            modified_rate_windows.append({
+                "key": key,
+                "name": _utility_display_name_from(new_util),
+                "rate_window_dates": modified_dates,
+            })
+
+    old_v = old.get("data_version") if isinstance(old, dict) else None
+    new_v = new.get("data_version") if isinstance(new, dict) else None
+    data_version_changed = (old_v, new_v) if old_v != new_v else None
+
+    no_changes = (
+        not added_utilities
+        and not removed_utilities
+        and not added_rate_windows
+        and not modified_rate_windows
+        and data_version_changed is None
+    )
+
+    return {
+        "added_utilities": added_utilities,
+        "removed_utilities": removed_utilities,
+        "added_rate_windows": added_rate_windows,
+        "modified_rate_windows": modified_rate_windows,
+        "data_version_changed": data_version_changed,
+        "no_changes": no_changes,
+    }

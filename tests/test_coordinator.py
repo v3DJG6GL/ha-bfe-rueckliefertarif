@@ -327,3 +327,93 @@ class TestRecomputeNotificationGate:
         assert notify_calls == [], (
             "v0.16.0: notification must NOT fire when nothing changed"
         )
+
+
+class TestUserInputsFingerprint:
+    """v0.17.0 — Issue 1: toggling a user_input boolean (e.g.
+    ``regio_top40_opted_in``) didn't fire the recompute notification
+    because ``_running_q_config_changed`` and ``_snapshot_is_stale`` only
+    checked utility/kw/ev/hkn/billing/version, not user_inputs. Fix: add
+    a final equality check on user_inputs.
+    """
+
+    def _make_tariff_cfg(self, user_inputs: dict):
+        # The gate only reads scalar attrs of ``tariff_cfg`` and a couple of
+        # fields on ``tariff_cfg.resolved`` — SimpleNamespace duck-types
+        # both since ResolvedTariff is a frozen dataclass.
+        rt = SimpleNamespace(utility_key="u", tariffs_json_version="v1")
+        return SimpleNamespace(
+            installierte_leistung_kw=8.0,
+            eigenverbrauch_aktiviert=True,
+            hkn_aktiviert=True,
+            user_inputs=dict(user_inputs),
+            resolved=rt,
+        )
+
+    def test_running_q_config_changed_detects_user_inputs_diff(self):
+        coord = _make_coordinator()
+        prior = {
+            "utility_key": "u",
+            "kw": 8.0,
+            "eigenverbrauch_aktiviert": True,
+            "hkn_optin": True,
+            "billing": "quartal",
+            "tariffs_json_version": "v1",
+            "user_inputs": {"regio_top40_opted_in": False},
+        }
+        tariff_cfg = self._make_tariff_cfg(
+            {"regio_top40_opted_in": True},
+        )
+        cfg = {"abrechnungs_rhythmus": "quartal"}
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._cfg_for_entry",
+            return_value=(cfg, tariff_cfg),
+        ):
+            from custom_components.bfe_rueckliefertarif.quarters import Quarter
+            assert coord._running_q_config_changed(prior, Quarter(2026, 2))
+
+    def test_running_q_config_changed_unchanged_when_user_inputs_equal(self):
+        coord = _make_coordinator()
+        prior = {
+            "utility_key": "u",
+            "kw": 8.0,
+            "eigenverbrauch_aktiviert": True,
+            "hkn_optin": True,
+            "billing": "quartal",
+            "tariffs_json_version": "v1",
+            "user_inputs": {"regio_top40_opted_in": True},
+        }
+        tariff_cfg = self._make_tariff_cfg(
+            {"regio_top40_opted_in": True},
+        )
+        cfg = {"abrechnungs_rhythmus": "quartal"}
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._cfg_for_entry",
+            return_value=(cfg, tariff_cfg),
+        ):
+            from custom_components.bfe_rueckliefertarif.quarters import Quarter
+            assert not coord._running_q_config_changed(prior, Quarter(2026, 2))
+
+    def test_running_q_config_changed_pre_v0_17_snapshot_no_false_positive(
+        self,
+    ):
+        # Pre-v0.16.0 snapshot lacks "user_inputs" — must not flag stale
+        # when today's tariff_cfg also has no user_inputs declared (e.g.
+        # utility without rate-window user_inputs).
+        coord = _make_coordinator()
+        prior = {
+            "utility_key": "u",
+            "kw": 8.0,
+            "eigenverbrauch_aktiviert": True,
+            "hkn_optin": True,
+            "billing": "quartal",
+            "tariffs_json_version": "v1",
+        }  # no "user_inputs" key
+        tariff_cfg = self._make_tariff_cfg({})  # empty dict
+        cfg = {"abrechnungs_rhythmus": "quartal"}
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._cfg_for_entry",
+            return_value=(cfg, tariff_cfg),
+        ):
+            from custom_components.bfe_rueckliefertarif.quarters import Quarter
+            assert not coord._running_q_config_changed(prior, Quarter(2026, 2))

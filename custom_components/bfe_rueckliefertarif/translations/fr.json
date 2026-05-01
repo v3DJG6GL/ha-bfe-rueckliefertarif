@@ -19,7 +19,7 @@
       },
       "tariff_details": {
         "title": "Configuration du tarif — {utility_name} dès {valid_from}",
-        "description": "Indiquez les paramètres de votre installation pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Indiquez les paramètres de votre installation pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "eigenverbrauch_aktiviert": "Autoconsommation activée",
           "hkn_aktiviert": "Vendre les GO au fournisseur ?"
@@ -85,7 +85,7 @@
       },
       "apply_change_details": {
         "title": "Changement de configuration — {utility_name} dès {valid_from}",
-        "description": "Renseignez les paramètres pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Renseignez les paramètres pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -102,7 +102,11 @@
         "description": "Sélectionnez le fournisseur et la date d'effet. L'étape suivante affichera les options spécifiques au fournisseur.",
         "data": {
           "valid_from": "Actif depuis",
-          "energieversorger": "Fournisseur"
+          "energieversorger": "Fournisseur",
+          "installierte_leistung_kw": "Puissance installée (kW)"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "Puissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale**."
         }
       },
       "edit_pick_row": {
@@ -110,12 +114,16 @@
         "description": "Modifier le fournisseur et/ou la date d'effet de cette transition. L'étape suivante permettra d'ajuster kW / autoconsommation / GO et les champs spécifiques au fournisseur.",
         "data": {
           "valid_from": "Actif depuis",
-          "energieversorger": "Fournisseur"
+          "energieversorger": "Fournisseur",
+          "installierte_leistung_kw": "Puissance installée (kW)"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "Puissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale**."
         }
       },
       "add_new_row": {
         "title": "Ajouter une transition — {utility_name} dès {valid_from}",
-        "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -124,7 +132,7 @@
       },
       "edit_row": {
         "title": "Modifier la transition — {utility_name} dès {valid_from}",
-        "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",

@@ -19,7 +19,7 @@
       },
       "tariff_details": {
         "title": "Tarif konfigurieren — {utility_name} ab {valid_from}",
-        "description": "Trag deine Anlagedaten für **{utility_name}** ab **{valid_from}** ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Trag deine Anlagedaten für **{utility_name}** ab **{valid_from}** ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
           "hkn_aktiviert": "HKN an Versorger verkaufen?"
@@ -85,7 +85,7 @@
       },
       "apply_change_details": {
         "title": "Konfigurationsänderung — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** ausfüllen. Versorgerseitige Werte (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** ausfüllen. Versorgerseitige Werte (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
@@ -102,7 +102,11 @@
         "description": "Wähle den Versorger und das Datum, ab dem dieser Übergang gilt. Im nächsten Schritt erscheinen die versorgerspezifischen Optionen.",
         "data": {
           "valid_from": "Aktiv ab",
-          "energieversorger": "Energieversorger"
+          "energieversorger": "Energieversorger",
+          "installierte_leistung_kw": "Installierte Leistung (kW)"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "DC-Spitzenleistung in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung**."
         }
       },
       "edit_pick_row": {
@@ -110,12 +114,16 @@
         "description": "Versorger und/oder Aktiv-ab-Datum dieses Übergangs anpassen. Im nächsten Schritt kannst du kW / Eigenverbrauch / HKN sowie versorgerspezifische Felder ändern.",
         "data": {
           "valid_from": "Aktiv ab",
-          "energieversorger": "Energieversorger"
+          "energieversorger": "Energieversorger",
+          "installierte_leistung_kw": "Installierte Leistung (kW)"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "DC-Spitzenleistung in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung**."
         }
       },
       "add_new_row": {
         "title": "Übergang hinzufügen — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
@@ -124,7 +132,7 @@
       },
       "edit_row": {
         "title": "Übergang bearbeiten — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** aktualisieren oder **Diesen Eintrag löschen** ankreuzen, um die Zeile zu entfernen.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** aktualisieren oder **Diesen Eintrag löschen** ankreuzen, um die Zeile zu entfernen.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",

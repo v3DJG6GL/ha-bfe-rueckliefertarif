@@ -34,12 +34,13 @@ from custom_components.bfe_rueckliefertarif.quarters import (
 )
 from custom_components.bfe_rueckliefertarif.services import (
     _aggregate_by_period,
+    _canon_fingerprint,
     _format_recompute_notification,
-    _format_tariff_model,
     _RecomputeReport,
     _RecomputeReportRow,
     _render_bonuses_lines,
     _render_config_block,
+    _render_tariff_model_lines,
     _render_when_summary,
 )
 from custom_components.bfe_rueckliefertarif.tariff import classify_ht
@@ -353,8 +354,11 @@ class TestFormatRecomputeNotification:
         title, body = _format_recompute_notification(report)
         assert "3 periods across 2 quarters" in title
         # Header section
-        assert "**Utility:** ekz — Elektrizitätswerke des Kantons Zürich (EKZ)" in body
-        assert "**Tariff model:** rmp_quartal (settlement: quartal)" in body
+        # v0.17.0 — utility line shows only the human-readable name.
+        assert "**Utility:** Elektrizitätswerke des Kantons Zürich (EKZ)" in body
+        # v0.17.0 — tariff model line uses localised label; rmp_quartal
+        # encodes settlement in the model name itself.
+        assert "**Tariff model:** Reference market price (quarterly)" in body
         assert "**Installed power:** 25.0 kW" in body
         assert "**Eigenverbrauch (self-consumption):** Yes" in body
         assert "**HKN opt-in:** Yes (3.00 Rp/kWh additive)" in body
@@ -636,11 +640,13 @@ class TestPerConfigGrouping:
         assert "| 2026Q1 | 10.266 | 0.694 / 3.00 | 10.960 | 586.21 | 64.25 |" in body
         assert "| 2025Q4 | 8.000 | 0.000 | 8.000 | 335.38 | 26.83 |" in body
         # Each group's bullet block carries its own utility identity.
-        assert "Utility:** ekz — EKZ" in body
-        assert "Utility:** age_sa — Acqua Gas Elettricità SA Chiasso" in body
+        # v0.17.0 — utility line dropped the slug prefix.
+        assert "Utility:** EKZ" in body
+        assert "Utility:** Acqua Gas Elettricità SA Chiasso" in body
         # Per-group sub-bullets reflect per-row metadata.
-        assert "**Tariff model:** rmp_quartal" in body
-        assert "**Tariff model:** fixed_flat" in body
+        # v0.17.0 — model labels are now localised.
+        assert "**Tariff model:** Reference market price (quarterly)" in body
+        assert "**Tariff model:** Fixed flat rate" in body
         assert "Cap mode (Anrechenbarkeitsgrenze):** Active — cap 10.96 Rp/kWh" in body
         assert "Cap mode (Anrechenbarkeitsgrenze):** Off" in body
 
@@ -1283,60 +1289,72 @@ class TestFingerprintCoercion:
             rows=rows, quarters_recomputed=2, config=_config_dict()
         )
         _, body = _format_recompute_notification(report)
-        # Per-group blocks now show settlement.
-        assert "Tariff model:** rmp_quartal (settlement: quartal)" in body
-        assert (
-            "Tariff model:** fixed_flat (8.00 Rp/kWh, settlement: quartal)"
-            in body
-        )
+        # v0.17.0 — per-group blocks render localised model labels and
+        # settlement as a sub-bullet (for fixed_*; rmp_* encodes it in
+        # the model name).
+        assert "Tariff model:** Reference market price (quarterly)" in body
+        assert "Tariff model:** Fixed flat rate" in body
+        assert "    - Rate: 8.00 Rp/kWh" in body
+        assert "    - Settlement period: Quarterly" in body
 
 
 # ----- v0.16.0 — Issue 5: Tariff-model rate values ---------------------------
 
 
 class TestTariffModelRateRendering:
-    """v0.16.0: ``Tariff model:`` line shows actual Rp/kWh values for
-    fixed_flat / fixed_ht_nt so the user can sanity-check what's applied.
-    Pure-function tests on ``_format_tariff_model``.
+    """v0.17.0: ``_render_tariff_model_lines`` emits a parent bullet plus
+    localised sub-bullets for rates (and settlement period for fixed_*).
+    Localised model labels — ``Fixpreis`` / ``Fixed flat rate`` etc.
     """
 
-    def test_fixed_flat_plain_renders_rate(self):
-        s = _format_tariff_model({
+    def test_fixed_flat_plain_renders_rate_subbullet_de(self):
+        lines = _render_tariff_model_lines({
             "base_model": "fixed_flat",
             "fixed_rp_kwh": 6.20,
-            "settlement_period": "stunde",
+            "settlement_period": "quartal",
+            "notes_lang": "de",
         })
-        assert s == "fixed_flat (6.20 Rp/kWh, settlement: stunde)"
+        assert lines == [
+            "- **Tariff model:** Fixpreis",
+            "    - Tarif: 6.20 Rp/kWh",
+            "    - Abrechnungsperiode: Quartal",
+        ]
 
-    def test_fixed_flat_seasonal_renders_summer_winter(self):
-        s = _format_tariff_model({
+    def test_fixed_flat_seasonal_renders_summer_winter_de(self):
+        lines = _render_tariff_model_lines({
             "base_model": "fixed_flat",
             "fixed_rp_kwh": 7.6,
             "seasonal": {
-                "summer_months": [4, 5, 6, 7, 8, 9],
-                "winter_months": [10, 11, 12, 1, 2, 3],
                 "summer_rp_kwh": 6.20,
                 "winter_rp_kwh": 9.00,
             },
             "settlement_period": "quartal",
+            "notes_lang": "de",
         })
-        assert s == (
-            "fixed_flat (summer 6.20 / winter 9.00 Rp/kWh, settlement: quartal)"
-        )
+        assert lines == [
+            "- **Tariff model:** Fixpreis (saisonal)",
+            "    - Sommer: 6.20 Rp/kWh",
+            "    - Winter: 9.00 Rp/kWh",
+            "    - Abrechnungsperiode: Quartal",
+        ]
 
-    def test_fixed_ht_nt_plain(self):
-        s = _format_tariff_model({
+    def test_fixed_ht_nt_plain_de(self):
+        lines = _render_tariff_model_lines({
             "base_model": "fixed_ht_nt",
             "fixed_ht_rp_kwh": 12.34,
             "fixed_nt_rp_kwh": 5.67,
             "settlement_period": "quartal",
+            "notes_lang": "de",
         })
-        assert s == (
-            "fixed_ht_nt (HT 12.34 / NT 5.67 Rp/kWh, settlement: quartal)"
-        )
+        assert lines == [
+            "- **Tariff model:** Fixpreis (HT/NT)",
+            "    - HT: 12.34 Rp/kWh",
+            "    - NT: 5.67 Rp/kWh",
+            "    - Abrechnungsperiode: Quartal",
+        ]
 
-    def test_fixed_ht_nt_seasonal(self):
-        s = _format_tariff_model({
+    def test_fixed_ht_nt_seasonal_4_subbullets(self):
+        lines = _render_tariff_model_lines({
             "base_model": "fixed_ht_nt",
             "fixed_ht_rp_kwh": 12.34,
             "fixed_nt_rp_kwh": 5.67,
@@ -1347,31 +1365,53 @@ class TestTariffModelRateRendering:
                 "winter_nt_rp_kwh": 6.50,
             },
             "settlement_period": "quartal",
+            "notes_lang": "de",
         })
-        assert s == (
-            "fixed_ht_nt (HT summer 12.34 / winter 14.00; "
-            "NT summer 5.67 / winter 6.50 Rp/kWh, settlement: quartal)"
-        )
+        assert lines == [
+            "- **Tariff model:** Fixpreis (HT/NT, saisonal)",
+            "    - HT Sommer: 12.34 Rp/kWh",
+            "    - HT Winter: 14.00 Rp/kWh",
+            "    - NT Sommer: 5.67 Rp/kWh",
+            "    - NT Winter: 6.50 Rp/kWh",
+            "    - Abrechnungsperiode: Quartal",
+        ]
 
-    def test_rmp_unchanged(self):
-        s = _format_tariff_model({
+    def test_rmp_quartal_renders_only_model_line_no_subbullets(self):
+        # rmp_*: settlement is encoded in the model name, no sub-bullets.
+        lines = _render_tariff_model_lines({
             "base_model": "rmp_quartal",
             "settlement_period": "quartal",
+            "notes_lang": "en",
         })
-        assert s == "rmp_quartal (settlement: quartal)"
+        assert lines == ["- **Tariff model:** Reference market price (quarterly)"]
 
     def test_legacy_snapshot_no_fixed_fields(self):
         # base_model known but no rate fields (pre-v0.16.0 cache) — should
-        # gracefully render model + settlement, no crash.
-        s = _format_tariff_model({
+        # gracefully render model + settlement only, no crash.
+        lines = _render_tariff_model_lines({
             "base_model": "fixed_flat",
             "settlement_period": "stunde",
+            "notes_lang": "de",
         })
-        assert s == "fixed_flat (settlement: stunde)"
+        assert lines == [
+            "- **Tariff model:** Fixpreis",
+            "    - Abrechnungsperiode: Stunde",
+        ]
 
-    def test_returns_none_when_base_model_missing(self):
-        assert _format_tariff_model({"settlement_period": "quartal"}) is None
-        assert _format_tariff_model({}) is None
+    def test_returns_empty_when_base_model_missing(self):
+        assert _render_tariff_model_lines({"settlement_period": "quartal"}) == []
+        assert _render_tariff_model_lines({}) == []
+
+    def test_unknown_lang_falls_back_to_english(self):
+        lines = _render_tariff_model_lines({
+            "base_model": "fixed_flat",
+            "fixed_rp_kwh": 6.20,
+            "settlement_period": "quartal",
+            "notes_lang": "fr",
+        })
+        assert lines[0] == "- **Tariff model:** Fixed flat rate"
+        assert "    - Rate: 6.20 Rp/kWh" in lines
+        assert "    - Settlement period: Quarterly" in lines
 
 
 # ----- v0.16.1 — user_inputs label translation -------------------------------
@@ -1536,7 +1576,12 @@ class TestBonusPercentFormatting:
         assert "Snow: 2.00 Rp/kWh (always)" in rendered
         assert "long German note" not in rendered
 
-    def test_bonus_when_clause_label_translates(self):
+    def test_bonus_when_clause_dropped_v0_17_0(self):
+        # v0.17.0 — the when-clause is no longer rendered. The bonus's
+        # current state is shown via the ``Active user inputs:`` line above
+        # the Bonuses block; rendering the bonus's *condition* alongside
+        # confused users (e.g. ``when ...=Ja`` while the user actually has
+        # Nein in their config). Issue 2 / v0.17.0.
         lines = _render_bonuses_lines(
             [
                 {"kind": "multiplier_pct", "name": "TOP-40",
@@ -1547,7 +1592,11 @@ class TestBonusPercentFormatting:
             lang="de",
         )
         rendered = "\n".join(lines)
-        assert "when Wahltarif TOP-40 abonniert=Ja" in rendered
+        # Bonus name + percent + applies_when annotation only.
+        assert "TOP-40: +8.00% (opt-in)" in rendered
+        # No when-clause leak.
+        assert "when " not in rendered
+        assert "Wahltarif TOP-40 abonniert" not in rendered
 
     def test_when_summary_label_translates_enum_value(self):
         s = _render_when_summary(
@@ -1623,3 +1672,50 @@ class TestPerGroupSuppression:
         assert "## Per-period results" in body
         assert "## Per-period results (active config)" not in body
         assert "## Configuration in effect:" not in body
+
+
+# ----- v0.17.0 — Issue 1: canon fingerprint user_inputs ---------------------
+
+
+class TestCanonFingerprintUserInputs:
+    """v0.17.0 — Issue 1 fix on the report-grouping side: differing
+    user_inputs (e.g. one period had TOP-40 opted-in, another opted-out)
+    must produce different fingerprints so the per-period grouping can
+    visualise the change.
+    """
+
+    def test_canon_fingerprint_includes_user_inputs(self):
+        a = _canon_fingerprint(
+            "u", 8.0, True, True, "quartal",
+            {"regio_top40_opted_in": True},
+        )
+        b = _canon_fingerprint(
+            "u", 8.0, True, True, "quartal",
+            {"regio_top40_opted_in": False},
+        )
+        assert a != b
+
+    def test_canon_fingerprint_user_inputs_order_invariant(self):
+        a = _canon_fingerprint(
+            "u", 8.0, True, True, "quartal",
+            {"a": 1, "b": 2},
+        )
+        b = _canon_fingerprint(
+            "u", 8.0, True, True, "quartal",
+            {"b": 2, "a": 1},
+        )
+        assert a == b
+
+    def test_canon_fingerprint_none_and_empty_dict_equal(self):
+        # Backwards-compat with pre-v0.16.0 snapshots where user_inputs
+        # field is absent: must match today's empty-dict config.
+        a = _canon_fingerprint("u", 8.0, True, True, "quartal", None)
+        b = _canon_fingerprint("u", 8.0, True, True, "quartal", {})
+        assert a == b
+
+    def test_canon_fingerprint_default_user_inputs_arg(self):
+        # Old call sites that don't pass user_inputs still work and produce
+        # the same canon as passing None.
+        a = _canon_fingerprint("u", 8.0, True, True, "quartal")
+        b = _canon_fingerprint("u", 8.0, True, True, "quartal", None)
+        assert a == b

@@ -546,6 +546,178 @@ def _format_tarif_urls_block(urls: list[dict], lang: str) -> str:
     return "\n".join(lines)
 
 
+# v0.17.0 — heading per language for the user-inputs help block. Falls
+# back to "en" for unknown languages.
+_USER_INPUTS_HELP_HEADING = {
+    "de": "**Versorger-spezifische Optionen:**",
+    "en": "**Utility-specific options:**",
+    "fr": "**Options spécifiques au fournisseur :**",
+}
+
+
+def _user_inputs_help_block(decls: list | tuple | None, lang: str) -> str:
+    """Render a Markdown bullet list from each user_input declaration's
+    ``description_<lang>`` field, prefixed with the field's localised label.
+
+    Returns ``""`` when no decl has a usable description (so the
+    ``{user_inputs_help}`` placeholder collapses cleanly when the rate
+    window has no per-field help text).
+
+    Example output for Regio's ``regio_top40_opted_in`` (lang=de):
+
+        **Versorger-spezifische Optionen:**
+
+        - **Wahltarif TOP-40 abonniert:** Voraussetzungen: dauerhafte
+          Begrenzung der Einspeiseleistung auf 60 % der DC-Maximalleistung;
+          DC-Leistung > 3.7 kWp; Pronovo-Zertifizierung.
+    """
+    if not decls:
+        return ""
+    bullets: list[str] = []
+    for decl in decls:
+        if not isinstance(decl, dict):
+            continue
+        description = pick_localised_label(decl, "description", lang, "")
+        if not description:
+            continue
+        label = pick_localised_label(
+            decl, "label", lang, decl.get("key", "—")
+        )
+        bullets.append(f"- **{label}:** {description}")
+    if not bullets:
+        return ""
+    heading = _USER_INPUTS_HELP_HEADING.get(
+        lang, _USER_INPUTS_HELP_HEADING["en"]
+    )
+    return heading + "\n\n" + "\n".join(bullets)
+
+
+# v0.17.0 — title for the refresh-prices notification. Static, bilingual.
+_REFRESH_NOTIFICATION_TITLE = "Referenzmarktpreise / Tarifdaten aktualisiert"
+
+
+def _format_rate_window_dates(dates: list[str]) -> list[str]:
+    """Group rate-window valid_from dates by year.
+
+    - Single window per year → ``"2026"``
+    - Multiple windows per year → all full dates (``"2026-01-01"``, ``"2026-07-01"``)
+
+    Returns a list of display strings, one per year, in chronological order
+    of the year (newest first when input dates are descending; otherwise
+    by year value).
+    """
+    if not dates:
+        return []
+    by_year: dict[str, list[str]] = {}
+    for d in dates:
+        if not isinstance(d, str) or len(d) < 4:
+            continue
+        year = d[:4]
+        by_year.setdefault(year, []).append(d)
+    out: list[str] = []
+    for year in sorted(by_year.keys(), reverse=True):
+        windows = by_year[year]
+        if len(windows) == 1:
+            out.append(year)
+        else:
+            for w in sorted(windows):
+                out.append(w)
+    return out
+
+
+def _render_refresh_notification(result: dict) -> str:
+    """Build the Markdown body for the refresh-prices notification (v0.17.0).
+
+    Two top-level sections:
+
+    1. **Reference market prices (SFOE)** — BFE OGD CSV poll status. Always
+       present. Shows the count of available BFE-published quarters and any
+       newly-imported quarters this tick.
+
+    2. **Tariff data (bfe-tariffs-data v…)** — companion-repo refresh status.
+       Renders per-utility added/modified rate windows as a nested bullet
+       list. When nothing changed, prints "No changes since last refresh".
+
+    On fetch failure, the tariff-data section reports the error message.
+    """
+    lines: list[str] = []
+
+    # --- Section 1: BFE reference market prices --------------------------
+    avail = result.get("available") or []
+    new = result.get("newly_imported") or []
+    lines.append("## Reference market prices (SFOE)")
+    lines.append("")
+    if avail:
+        lines.append(
+            f"- {len(avail)} quarter(s) available (latest: {max(avail)})"
+        )
+    else:
+        lines.append("- No BFE quarters available yet")
+    if new:
+        lines.append(
+            "- Newly imported: " + ", ".join(str(q) for q in new)
+        )
+    else:
+        lines.append("- No new quarters since last import")
+    lines.append("")
+
+    # --- Section 2: tariff data ------------------------------------------
+    data_v = result.get("tariffs_data_version")
+    version_suffix = f" (bfe-tariffs-data v{data_v})" if data_v else ""
+    lines.append(f"## Tariff data{version_suffix}")
+    lines.append("")
+
+    err = result.get("tariffs_error")
+    if err and not result.get("tariffs_refreshed"):
+        lines.append(f"- Refresh failed: {err}")
+        lines.append("- Using cached tariffs.")
+        return "\n".join(lines)
+
+    diff = result.get("tariffs_diff")
+    if not diff or diff.get("no_changes"):
+        lines.append("- No changes since last refresh")
+        return "\n".join(lines)
+
+    added_utilities = diff.get("added_utilities") or []
+    added_rate_windows = diff.get("added_rate_windows") or []
+    modified_rate_windows = diff.get("modified_rate_windows") or []
+
+    if added_utilities:
+        lines.append("### Newly added utilities")
+        for entry in added_utilities:
+            lines.append(f"- {entry['name']}")
+            for d in _format_rate_window_dates(
+                entry.get("rate_window_dates") or []
+            ):
+                lines.append(f"    - {d}")
+        lines.append("")
+
+    if added_rate_windows:
+        lines.append("### Newly added rate windows")
+        for entry in added_rate_windows:
+            lines.append(f"- {entry['name']}")
+            for d in _format_rate_window_dates(
+                entry.get("rate_window_dates") or []
+            ):
+                lines.append(f"    - {d}")
+        lines.append("")
+
+    if modified_rate_windows:
+        lines.append("### Modified rate windows")
+        for entry in modified_rate_windows:
+            lines.append(f"- {entry['name']}")
+            for d in _format_rate_window_dates(
+                entry.get("rate_window_dates") or []
+            ):
+                lines.append(f"    - {d}")
+        lines.append("")
+
+    # Trailing blank from the last section — strip it.
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines)
+
+
 def _force_hkn_for_save(hkn_structure: str | None, user_hkn: bool) -> bool:
     """Pick the persisted ``hkn_aktiviert`` value given the gate.
 
@@ -1262,6 +1434,10 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         lang,
                     )
                 ),
+                "user_inputs_help": (
+                    "" if is_multi
+                    else _user_inputs_help_block(decl_list, lang)
+                ),
                 "periods_block": periods_block,
                 **_source_links(self.hass),
             },
@@ -1669,6 +1845,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         ),
                         lang,
                     )
+                ),
+                "user_inputs_help": (
+                    "" if is_multi
+                    else _user_inputs_help_block(decl_list, lang)
                 ),
                 "periods_block": periods_block,
                 **_source_links(self.hass),
@@ -2132,6 +2312,10 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         lang,
                     )
                 ),
+                "user_inputs_help": (
+                    "" if is_multi
+                    else _user_inputs_help_block(decl_list, lang)
+                ),
                 "periods_block": periods_block,
             },
         )
@@ -2237,50 +2421,15 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 async_create(
                     self.hass,
                     f"Refresh failed: {exc}",
-                    title="BFE Rückliefertarif",
+                    title=_REFRESH_NOTIFICATION_TITLE,
                     notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_refresh",
                 )
                 errors["base"] = "reimport_failed"
             else:
-                # Line 1: BFE poll status.
-                avail = result["available"]
-                new = result["newly_imported"]
-                bfe_line = f"BFE poll OK — {len(avail)} quarter(s) available"
-                if avail:
-                    bfe_line += f" (latest: {max(avail)})"
-                if new:
-                    bfe_line += (
-                        f"; newly imported: {', '.join(str(q) for q in new)}"
-                    )
-                else:
-                    bfe_line += "; no new quarters since last import."
-                # Line 2: tariff data refresh status.
-                if result.get("tariffs_refreshed"):
-                    data_v = result.get("tariffs_data_version") or "?"
-                    last_updated = result.get("tariffs_data_last_updated") or "?"
-                    schema_src = result.get("tariffs_schema_source") or "?"
-                    tariffs_line = (
-                        f"Tariff data refreshed (data v{data_v}, "
-                        f"last_updated={last_updated}, schema={schema_src})."
-                    )
-                    schema_err = result.get("tariffs_schema_error")
-                    if schema_err:
-                        tariffs_line += (
-                            f" Note: schema fetch fell back to bundled ({schema_err})."
-                        )
-                elif result.get("tariffs_error"):
-                    tariffs_line = (
-                        f"Tariff data refresh failed: {result['tariffs_error']} "
-                        "— using cached tariffs."
-                    )
-                else:
-                    tariffs_line = (
-                        "Tariff data refresh skipped (coordinator not ready)."
-                    )
                 async_create(
                     self.hass,
-                    f"{bfe_line}\n{tariffs_line}",
-                    title="BFE Rückliefertarif",
+                    _render_refresh_notification(result),
+                    title=_REFRESH_NOTIFICATION_TITLE,
                     notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_refresh",
                 )
                 return self.async_create_entry(

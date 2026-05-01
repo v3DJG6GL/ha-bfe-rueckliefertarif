@@ -1237,3 +1237,212 @@ class TestKwAwareUserInputFiltering:
             gate_kw=10.0,
         )
         assert "freeform" not in {str(k) for k in schema_dict}
+
+
+# ----- v0.17.0 — Issue 6.3: user_inputs help block --------------------------
+
+
+class TestUserInputsHelpBlock:
+    """v0.17.0 — surface ``description_de/fr/en`` from rate-window
+    user_input declarations as Markdown help text in config flow forms.
+    """
+
+    def test_returns_empty_when_no_decls(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _user_inputs_help_block,
+        )
+        assert _user_inputs_help_block(None, "de") == ""
+        assert _user_inputs_help_block([], "de") == ""
+
+    def test_returns_empty_when_no_decl_has_description(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _user_inputs_help_block,
+        )
+        decls = [{"key": "k", "type": "boolean", "label_de": "Wahl"}]
+        assert _user_inputs_help_block(decls, "de") == ""
+
+    def test_renders_label_and_description_de(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _user_inputs_help_block,
+        )
+        decls = [
+            {
+                "key": "regio_top40_opted_in",
+                "type": "boolean",
+                "label_de": "Wahltarif TOP-40 abonniert",
+                "description_de": "Voraussetzungen: dauerhafte Begrenzung.",
+            },
+        ]
+        block = _user_inputs_help_block(decls, "de")
+        assert "Versorger-spezifische Optionen" in block
+        assert (
+            "**Wahltarif TOP-40 abonniert:** Voraussetzungen: dauerhafte "
+            "Begrenzung."
+        ) in block
+
+    def test_skips_decls_without_description_field(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _user_inputs_help_block,
+        )
+        decls = [
+            {
+                "key": "with_desc",
+                "label_de": "Mit",
+                "description_de": "Beschreibung.",
+            },
+            {"key": "without_desc", "label_de": "Ohne"},
+        ]
+        block = _user_inputs_help_block(decls, "de")
+        assert "Mit" in block
+        assert "Ohne" not in block
+
+    def test_falls_back_label_when_no_label_de(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _user_inputs_help_block,
+        )
+        decls = [
+            {
+                "key": "raw_key",
+                "description_de": "Nur Beschreibung.",
+            },
+        ]
+        block = _user_inputs_help_block(decls, "de")
+        assert "**raw_key:** Nur Beschreibung." in block
+
+
+# ----- v0.17.0 — Issue 7: refresh-prices notification redesign --------------
+
+
+def _refresh_result(**overrides):
+    base = {
+        "available": [],
+        "newly_imported": [],
+        "tariffs_refreshed": True,
+        "tariffs_data_version": "1.4.1",
+        "tariffs_diff": None,
+        "tariffs_error": None,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestRefreshNotificationRendering:
+    """v0.17.0 — Issue 7: per-utility added/modified/added-rate-window
+    sections in the refresh-prices notification body. Title is bilingual
+    static; sections are English to match the recompute notification.
+    """
+
+    def test_bfe_section_always_present(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _render_refresh_notification,
+        )
+        body = _render_refresh_notification(
+            _refresh_result(
+                available=[1, 2, 3],
+                tariffs_diff={
+                    "added_utilities": [], "removed_utilities": [],
+                    "added_rate_windows": [], "modified_rate_windows": [],
+                    "data_version_changed": None, "no_changes": True,
+                },
+            )
+        )
+        assert "## Reference market prices (SFOE)" in body
+
+    def test_no_changes_message_when_diff_empty(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _render_refresh_notification,
+        )
+        body = _render_refresh_notification(
+            _refresh_result(
+                tariffs_diff={
+                    "added_utilities": [], "removed_utilities": [],
+                    "added_rate_windows": [], "modified_rate_windows": [],
+                    "data_version_changed": None, "no_changes": True,
+                },
+            )
+        )
+        assert "## Tariff data" in body
+        assert "No changes since last refresh" in body
+        assert "### Newly added utilities" not in body
+
+    def test_added_utilities_section(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _render_refresh_notification,
+        )
+        body = _render_refresh_notification(
+            _refresh_result(
+                tariffs_diff={
+                    "added_utilities": [{
+                        "key": "ekz",
+                        "name": "EKZ",
+                        "rate_window_dates": ["2026-01-01", "2025-01-01"],
+                    }],
+                    "removed_utilities": [],
+                    "added_rate_windows": [],
+                    "modified_rate_windows": [],
+                    "data_version_changed": None,
+                    "no_changes": False,
+                },
+            )
+        )
+        assert "### Newly added utilities" in body
+        assert "- EKZ" in body
+        assert "- 2026" in body
+        assert "- 2025" in body
+
+    def test_modified_rate_windows_section(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _render_refresh_notification,
+        )
+        body = _render_refresh_notification(
+            _refresh_result(
+                tariffs_diff={
+                    "added_utilities": [],
+                    "removed_utilities": [],
+                    "added_rate_windows": [],
+                    "modified_rate_windows": [{
+                        "key": "regio_energie_solothurn",
+                        "name": "Regio Energie Solothurn",
+                        "rate_window_dates": ["2024-01-01"],
+                    }],
+                    "data_version_changed": None,
+                    "no_changes": False,
+                },
+            )
+        )
+        assert "### Modified rate windows" in body
+        assert "- Regio Energie Solothurn" in body
+        assert "- 2024" in body
+
+    def test_year_grouping_collapses_single_window(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_rate_window_dates,
+        )
+        # Single window per year → just year
+        assert _format_rate_window_dates(["2026-01-01"]) == ["2026"]
+        assert _format_rate_window_dates(
+            ["2026-01-01", "2025-01-01"]
+        ) == ["2026", "2025"]
+
+    def test_year_expands_when_multiple_windows_in_year(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _format_rate_window_dates,
+        )
+        # Two windows in 2026 → both dates
+        assert _format_rate_window_dates(
+            ["2026-01-01", "2026-07-01", "2025-01-01"]
+        ) == ["2026-01-01", "2026-07-01", "2025"]
+
+    def test_fetch_failure_shows_error(self):
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _render_refresh_notification,
+        )
+        body = _render_refresh_notification(
+            _refresh_result(
+                tariffs_refreshed=False,
+                tariffs_error="HTTP 503",
+                tariffs_diff=None,
+            )
+        )
+        assert "Refresh failed: HTTP 503" in body
+        assert "Using cached tariffs." in body

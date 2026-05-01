@@ -435,6 +435,8 @@ class BfeCoordinator(DataUpdateCoordinator):
             return True
         if snap.get("tariffs_json_version") != rt.tariffs_json_version:
             return True
+        if (snap.get("user_inputs") or {}) != (tariff_cfg.user_inputs or {}):
+            return True
         return False
 
     def _running_q_config_changed(
@@ -473,6 +475,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         if prior_snapshot.get("billing") != cfg.get(CONF_ABRECHNUNGS_RHYTHMUS):
             return True
         if prior_snapshot.get("tariffs_json_version") != rt.tariffs_json_version:
+            return True
+        if (prior_snapshot.get("user_inputs") or {}) != (tariff_cfg.user_inputs or {}):
             return True
         return False
 

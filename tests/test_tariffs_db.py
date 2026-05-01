@@ -1290,3 +1290,256 @@ class TestUserInputLabelHelpers:
         }
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
         assert tdb.resolve_user_inputs_decl("syn", "2026-04-01") == ()
+
+
+# ----- v0.17.0 — tariff_model_label / settlement_period_label ---------------
+
+
+class TestTariffModelLabel:
+    """v0.17.0 — localised display labels for tariff-model enums."""
+
+    def test_de_fixed_flat_plain(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        assert tariff_model_label("fixed_flat", None, "de") == "Fixpreis"
+
+    def test_de_fixed_flat_seasonal(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        assert (
+            tariff_model_label("fixed_flat", {"summer_rp_kwh": 6}, "de")
+            == "Fixpreis (saisonal)"
+        )
+
+    def test_de_fixed_ht_nt_seasonal(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        assert (
+            tariff_model_label("fixed_ht_nt", {"summer_ht_rp_kwh": 1}, "de")
+            == "Fixpreis (HT/NT, saisonal)"
+        )
+
+    def test_en_rmp_quartal(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        assert (
+            tariff_model_label("rmp_quartal", None, "en")
+            == "Reference market price (quarterly)"
+        )
+
+    def test_unknown_model_falls_back_to_raw(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        assert tariff_model_label("foo_bar_xyz", None, "de") == "foo_bar_xyz"
+
+    def test_missing_model_returns_dash(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        assert tariff_model_label(None, None, "de") == "—"
+        assert tariff_model_label("", None, "de") == "—"
+
+    def test_unknown_lang_falls_back_to_english(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            tariff_model_label,
+        )
+        # fr falls back to en table (no French entries yet).
+        assert (
+            tariff_model_label("fixed_flat", None, "fr")
+            == "Fixed flat rate"
+        )
+
+
+class TestSettlementPeriodLabel:
+    """v0.17.0 — localised display labels for settlement_period enums."""
+
+    def test_de_quartal_monat_stunde(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            settlement_period_label,
+        )
+        assert settlement_period_label("quartal", "de") == "Quartal"
+        assert settlement_period_label("monat", "de") == "Monat"
+        assert settlement_period_label("stunde", "de") == "Stunde"
+
+    def test_en_quartal_monat_stunde(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            settlement_period_label,
+        )
+        assert settlement_period_label("quartal", "en") == "Quarterly"
+        assert settlement_period_label("monat", "en") == "Monthly"
+        assert settlement_period_label("stunde", "en") == "Hourly"
+
+    def test_unknown_period_falls_back_to_raw(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            settlement_period_label,
+        )
+        assert settlement_period_label("woche", "de") == "woche"
+
+    def test_missing_period_returns_dash(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            settlement_period_label,
+        )
+        assert settlement_period_label(None, "de") == "—"
+        assert settlement_period_label("", "de") == "—"
+
+
+# ----- v0.17.0 — diff_tariffs_data ------------------------------------------
+
+
+def _utility_dict(name: str, rate_windows: list[dict]) -> dict:
+    return {"name_de": name, "rates": rate_windows}
+
+
+def _rate(valid_from: str, **extra) -> dict:
+    return {"valid_from": valid_from, "settlement_period": "quartal", **extra}
+
+
+class TestDiffTariffsData:
+    """v0.17.0 — refresh-prices notification needs to know what changed
+    between the cached tariffs.json and the freshly-fetched copy.
+    """
+
+    def test_no_changes_returns_no_changes_true(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {
+            "data_version": "1.0.0",
+            "utilities": {
+                "ekz": _utility_dict("EKZ", [_rate("2026-01-01")]),
+            },
+        }
+        new = {
+            "data_version": "1.0.0",
+            "utilities": {
+                "ekz": _utility_dict("EKZ", [_rate("2026-01-01")]),
+            },
+        }
+        diff = diff_tariffs_data(old, new)
+        assert diff["no_changes"] is True
+        assert diff["added_utilities"] == []
+        assert diff["modified_rate_windows"] == []
+
+    def test_added_utility_listed(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {"utilities": {"ekz": _utility_dict("EKZ", [_rate("2026-01-01")])}}
+        new = {
+            "utilities": {
+                "ekz": _utility_dict("EKZ", [_rate("2026-01-01")]),
+                "ewz": _utility_dict("ewz", [_rate("2026-01-01")]),
+            },
+        }
+        diff = diff_tariffs_data(old, new)
+        assert diff["no_changes"] is False
+        assert len(diff["added_utilities"]) == 1
+        assert diff["added_utilities"][0]["key"] == "ewz"
+        assert diff["added_utilities"][0]["name"] == "ewz"
+        assert diff["added_utilities"][0]["rate_window_dates"] == ["2026-01-01"]
+
+    def test_removed_utility_listed(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {
+            "utilities": {
+                "ekz": _utility_dict("EKZ", [_rate("2026-01-01")]),
+                "ewz": _utility_dict("ewz", [_rate("2026-01-01")]),
+            },
+        }
+        new = {"utilities": {"ekz": _utility_dict("EKZ", [_rate("2026-01-01")])}}
+        diff = diff_tariffs_data(old, new)
+        assert len(diff["removed_utilities"]) == 1
+        assert diff["removed_utilities"][0]["key"] == "ewz"
+
+    def test_added_rate_window_for_existing_utility(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {"utilities": {"ekz": _utility_dict("EKZ", [_rate("2024-01-01")])}}
+        new = {
+            "utilities": {
+                "ekz": _utility_dict(
+                    "EKZ", [_rate("2024-01-01"), _rate("2026-01-01")]
+                ),
+            },
+        }
+        diff = diff_tariffs_data(old, new)
+        assert diff["added_utilities"] == []
+        assert len(diff["added_rate_windows"]) == 1
+        assert diff["added_rate_windows"][0]["key"] == "ekz"
+        assert diff["added_rate_windows"][0]["rate_window_dates"] == [
+            "2026-01-01"
+        ]
+
+    def test_modified_rate_window_detected_by_deep_equality(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {
+            "utilities": {
+                "ekz": _utility_dict(
+                    "EKZ", [_rate("2026-01-01", price_floor_rp_kwh=6.0)]
+                ),
+            },
+        }
+        new = {
+            "utilities": {
+                "ekz": _utility_dict(
+                    "EKZ", [_rate("2026-01-01", price_floor_rp_kwh=6.5)]
+                ),
+            },
+        }
+        diff = diff_tariffs_data(old, new)
+        assert len(diff["modified_rate_windows"]) == 1
+        assert diff["modified_rate_windows"][0]["key"] == "ekz"
+        assert (
+            diff["modified_rate_windows"][0]["rate_window_dates"]
+            == ["2026-01-01"]
+        )
+
+    def test_unchanged_rate_window_not_listed(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {
+            "utilities": {
+                "ekz": _utility_dict(
+                    "EKZ", [_rate("2026-01-01", price_floor_rp_kwh=6.0)]
+                ),
+            },
+        }
+        new = {
+            "utilities": {
+                "ekz": _utility_dict(
+                    "EKZ", [_rate("2026-01-01", price_floor_rp_kwh=6.0)]
+                ),
+            },
+        }
+        diff = diff_tariffs_data(old, new)
+        assert diff["modified_rate_windows"] == []
+        assert diff["no_changes"] is True
+
+    def test_data_version_change_recorded(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        old = {"data_version": "1.0.0", "utilities": {}}
+        new = {"data_version": "1.1.0", "utilities": {}}
+        diff = diff_tariffs_data(old, new)
+        assert diff["data_version_changed"] == ("1.0.0", "1.1.0")
+        assert diff["no_changes"] is False
+
+    def test_handles_none_inputs_safely(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            diff_tariffs_data,
+        )
+        diff = diff_tariffs_data(None, None)
+        assert diff["no_changes"] is True
+        assert diff["added_utilities"] == []

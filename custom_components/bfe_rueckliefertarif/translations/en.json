@@ -19,7 +19,7 @@
       },
       "tariff_details": {
         "title": "Tariff configuration — {utility_name} from {valid_from}",
-        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "eigenverbrauch_aktiviert": "Self-consumption enabled",
           "hkn_aktiviert": "Sell HKN to your utility?"
@@ -85,7 +85,7 @@
       },
       "apply_change_details": {
         "title": "Apply config change — {utility_name} from {valid_from}",
-        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
@@ -102,7 +102,11 @@
         "description": "Pick the utility and the date this transition takes effect. The next step shows the utility-specific options.",
         "data": {
           "valid_from": "Active since",
-          "energieversorger": "Utility"
+          "energieversorger": "Utility",
+          "installierte_leistung_kw": "Installed power (kW)"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "DC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band."
         }
       },
       "edit_pick_row": {
@@ -110,12 +114,16 @@
         "description": "Adjust the utility and/or the active-since date for this transition. The next step lets you adjust kW / self-consumption / HKN and any utility-specific fields.",
         "data": {
           "valid_from": "Active since",
-          "energieversorger": "Utility"
+          "energieversorger": "Utility",
+          "installierte_leistung_kw": "Installed power (kW)"
+        },
+        "data_description": {
+          "installierte_leistung_kw": "DC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band."
         }
       },
       "add_new_row": {
         "title": "Add transition — {utility_name} from {valid_from}",
-        "description": "Plant details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Plant details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",
@@ -124,7 +132,7 @@
       },
       "edit_row": {
         "title": "Edit transition — {utility_name} from {valid_from}",
-        "description": "Update plant details for **{utility_name}** effective **{valid_from}**, or tick **Delete this record** to remove the row.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "description": "Update plant details for **{utility_name}** effective **{valid_from}**, or tick **Delete this record** to remove the row.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kw": "Installed power (kW)",
           "eigenverbrauch_aktiviert": "Self-consumption",

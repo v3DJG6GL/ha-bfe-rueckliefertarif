@@ -44,6 +44,8 @@ from .tariffs_db import (
     pick_value_label,
     resolve_tariff_at,
     resolve_user_inputs_decl,
+    settlement_period_label,
+    tariff_model_label,
     user_input_label,
 )
 
@@ -686,11 +688,13 @@ def _render_bonuses_lines(
 
     v0.10.0 / Batch C — list of declared bonuses (display-only).
     v0.11.0 / Batch D — adds the bonus ``kind`` and a ``when={…}`` summary.
-    v0.16.1 — multiplier_pct rendered as ``+8.00%`` / ``−15.00%`` (delta
-    from 100%, matching data-author intent); ``note`` suffix dropped (the
-    bonus name is enough; long German notes from utility tariff sheets
-    duplicate config_flow's notification surfaces); when-clause keys/values
-    label-translated via ``decls`` + ``lang``.
+    v0.16.1 — multiplier_pct rendered as ``+8.00%`` / ``−15.00%``; ``note``
+    suffix dropped.
+    v0.17.0 — when-clause dropped. The condition under which a bonus applies
+    duplicated the ``Active user inputs:`` line above and read as current
+    state (e.g. ``when ...=Ja`` while the user actually has Nein), which
+    confused users. The ``(opt-in)`` / ``(always)`` ``applies_when``
+    annotation stays — compact and unambiguous.
 
     Returns ``[]`` when ``bonuses`` is empty / None.
     """
@@ -724,9 +728,7 @@ def _render_bonuses_lines(
             applies_part = " (opt-in)"
         else:
             applies_part = ""
-        when_summary = _render_when_summary(b.get("when"), decls, lang)
-        when_part = f" when {when_summary}" if when_summary else ""
-        lines.append(f"  - {name}: {value_str}{applies_part}{when_part}")
+        lines.append(f"  - {name}: {value_str}{applies_part}")
     return lines
 
 
@@ -1321,17 +1323,42 @@ async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
     tariffs_refreshed = False
     tariffs_version: str | None = None
     tariffs_error: str | None = None
+
+    # v0.17.0 — snapshot the parsed tariffs.json before & after the refresh
+    # so we can diff added / modified rate windows per utility for the
+    # notification body. ``load_tariffs()`` is mtime-cached; the post-refresh
+    # call returns the freshly-rewritten file. Wrapped defensively so a
+    # failure here never blocks the refresh.
+    from .tariffs_db import diff_tariffs_data, load_tariffs
+
+    old_tariffs: dict | None = None
+    try:
+        old_tariffs = await hass.async_add_executor_job(load_tariffs)
+    except Exception:
+        old_tariffs = None
+
     if tdc is not None:
         tariffs_refreshed = await tdc.async_refresh()
         tariffs_error = tdc.last_error
         if tariffs_refreshed:
             try:
-                from .tariffs_db import load_tariffs
-
                 data = await hass.async_add_executor_job(load_tariffs)
                 tariffs_version = data.get("schema_version")
             except Exception:
                 tariffs_version = None
+
+    new_tariffs: dict | None = None
+    try:
+        new_tariffs = await hass.async_add_executor_job(load_tariffs)
+    except Exception:
+        new_tariffs = None
+
+    tariffs_diff: dict | None = None
+    if old_tariffs is not None and new_tariffs is not None:
+        try:
+            tariffs_diff = diff_tariffs_data(old_tariffs, new_tariffs)
+        except Exception:
+            tariffs_diff = None
 
     return {
         "available": sorted(coordinator.quarterly.keys()),
@@ -1343,6 +1370,7 @@ async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
         "tariffs_data_last_updated": tdc.last_data_updated if tdc else None,
         "tariffs_schema_source": tdc.last_schema_source if tdc else None,
         "tariffs_schema_error": tdc.last_schema_error if tdc else None,
+        "tariffs_diff": tariffs_diff,
     }
 
 
@@ -1675,17 +1703,31 @@ def _build_recompute_report(
 
 
 def _canon_fingerprint(
-    utility_key, kw, ev, hkn_optin, billing
+    utility_key, kw, ev, hkn_optin, billing, user_inputs=None
 ) -> tuple:
     """Canonicalize a config fingerprint so int-vs-float / bool-vs-int /
     None-vs-missing variations don't break equality between the
-    active-today block and per-period rows. v0.16.0."""
+    active-today block and per-period rows. v0.16.0.
+
+    v0.17.0 — adds user_inputs (sorted tuple of (key,value) pairs) so that
+    rate-window-specific toggles like ``regio_top40_opted_in`` participate
+    in row grouping and active-today equality. Pre-v0.16.0 snapshots that
+    lack user_inputs canonicalize to ``()`` and remain equal to today's
+    config when today also has no user_inputs declared.
+    """
+    if isinstance(user_inputs, dict) and user_inputs:
+        ui_canon: tuple = tuple(
+            sorted((str(k), str(v)) for k, v in user_inputs.items())
+        )
+    else:
+        ui_canon = ()
     return (
         str(utility_key) if utility_key is not None else None,
         float(kw) if isinstance(kw, (int, float)) and not isinstance(kw, bool) else None,
         bool(ev) if ev is not None else None,
         bool(hkn_optin) if hkn_optin is not None else None,
         str(billing) if billing else None,
+        ui_canon,
     )
 
 
@@ -1706,6 +1748,7 @@ def _row_config_fingerprint(r: _RecomputeReportRow) -> tuple:
         r.eigenverbrauch_at_period,
         r.hkn_optin_at_period,
         r.billing_at_period,
+        r.user_inputs_at_period,
     )
 
 
@@ -1729,61 +1772,110 @@ def _group_rows_by_config(
     return [(key, buckets[key]) for key in order]
 
 
-def _format_tariff_model(c: dict) -> str | None:
-    """Format the Tariff-model bullet's value with rate values for fixed
-    models. Returns None when ``base_model`` is missing.
+# v0.17.0 — sub-bullet labels for the tariff-model section. French falls
+# back to English (no French rate-tariff vocabulary in the recompute body
+# yet; consistent with existing notification chrome).
+_RATE_SUBLABELS: dict[str, dict[str, str]] = {
+    "de": {
+        "rate": "Tarif",
+        "summer": "Sommer",
+        "winter": "Winter",
+        "ht": "HT",
+        "nt": "NT",
+        "ht_summer": "HT Sommer",
+        "ht_winter": "HT Winter",
+        "nt_summer": "NT Sommer",
+        "nt_winter": "NT Winter",
+        "settlement": "Abrechnungsperiode",
+    },
+    "en": {
+        "rate": "Rate",
+        "summer": "Summer",
+        "winter": "Winter",
+        "ht": "HT",
+        "nt": "NT",
+        "ht_summer": "HT summer",
+        "ht_winter": "HT winter",
+        "nt_summer": "NT summer",
+        "nt_winter": "NT winter",
+        "settlement": "Settlement period",
+    },
+}
 
-    fixed_flat plain         → "fixed_flat (6.20 Rp/kWh)"
-    fixed_flat seasonal      → "fixed_flat (summer 6.20 / winter 9.00 Rp/kWh)"
-    fixed_ht_nt plain        → "fixed_ht_nt (HT 12.34 / NT 5.67 Rp/kWh)"
-    fixed_ht_nt seasonal     → "fixed_ht_nt (HT summer 12.34 / winter 14.00; NT summer 5.67 / winter 6.50 Rp/kWh)"
-    rmp_quartal / rmp_monat  → "rmp_quartal" (no rate suffix; rate is per-quarter from BFE)
 
-    Settlement period is appended in parens. When the model has no rate
-    suffix, settlement renders as ``(settlement: …)``; otherwise as
-    ``(<rates>, settlement: …)``. Legacy snapshots without rate keys
-    fall back gracefully to the model name + settlement only.
+def _render_tariff_model_lines(c: dict) -> list[str]:
+    """Render the Tariff-model bullet plus localised sub-bullets for rates
+    and settlement period. Returns ``[]`` when ``base_model`` is missing.
+
+    v0.17.0 — replaces the old ``_format_tariff_model`` one-liner. Localised
+    model labels (DE: Fixpreis / Fixpreis (HT/NT) / Referenzmarktpreis;
+    EN: Fixed flat rate / Fixed HT/NT rate / Reference market price);
+    sub-bullets break out summer/winter and HT/NT rates, plus settlement.
+
+    fixed_flat (plain):
+        - **Tariff model:** Fixpreis
+            - Tarif: 6.20 Rp/kWh
+            - Abrechnungsperiode: Quartal
+
+    fixed_flat (seasonal):
+        - **Tariff model:** Fixpreis (saisonal)
+            - Sommer: 6.20 Rp/kWh
+            - Winter: 9.00 Rp/kWh
+            - Abrechnungsperiode: Quartal
+
+    fixed_ht_nt (plain): HT + NT sub-bullets + settlement
+    fixed_ht_nt (seasonal): HT/NT × summer/winter (4 sub-bullets) + settlement
+    rmp_*: just the model line (settlement is encoded in the model name)
     """
     base_model = c.get("base_model")
     if not base_model:
-        return None
-    settlement = c.get("settlement_period")
+        return []
+    notes_lang = c.get("notes_lang") or "en"
     seasonal = c.get("seasonal") or {}
+    sub = _RATE_SUBLABELS.get(notes_lang) or _RATE_SUBLABELS["en"]
 
-    rate_suffix: str | None = None
+    model = tariff_model_label(base_model, seasonal, notes_lang)
+    lines: list[str] = [f"- **Tariff model:** {model}"]
+
     if base_model == "fixed_flat":
-        s_summer = seasonal.get("summer_rp_kwh")
-        s_winter = seasonal.get("winter_rp_kwh")
+        s_summer = seasonal.get("summer_rp_kwh") if seasonal else None
+        s_winter = seasonal.get("winter_rp_kwh") if seasonal else None
         if s_summer is not None and s_winter is not None:
-            rate_suffix = f"summer {s_summer:.2f} / winter {s_winter:.2f} Rp/kWh"
+            lines.append(f"    - {sub['summer']}: {s_summer:.2f} Rp/kWh")
+            lines.append(f"    - {sub['winter']}: {s_winter:.2f} Rp/kWh")
         else:
             fr = c.get("fixed_rp_kwh")
             if fr is not None:
-                rate_suffix = f"{fr:.2f} Rp/kWh"
+                lines.append(f"    - {sub['rate']}: {fr:.2f} Rp/kWh")
     elif base_model == "fixed_ht_nt":
-        s_ht_summer = seasonal.get("summer_ht_rp_kwh")
-        s_ht_winter = seasonal.get("winter_ht_rp_kwh")
-        s_nt_summer = seasonal.get("summer_nt_rp_kwh")
-        s_nt_winter = seasonal.get("winter_nt_rp_kwh")
+        s_ht_summer = seasonal.get("summer_ht_rp_kwh") if seasonal else None
+        s_ht_winter = seasonal.get("winter_ht_rp_kwh") if seasonal else None
+        s_nt_summer = seasonal.get("summer_nt_rp_kwh") if seasonal else None
+        s_nt_winter = seasonal.get("winter_nt_rp_kwh") if seasonal else None
         if all(v is not None for v in (s_ht_summer, s_ht_winter, s_nt_summer, s_nt_winter)):
-            rate_suffix = (
-                f"HT summer {s_ht_summer:.2f} / winter {s_ht_winter:.2f}; "
-                f"NT summer {s_nt_summer:.2f} / winter {s_nt_winter:.2f} Rp/kWh"
-            )
+            lines.append(f"    - {sub['ht_summer']}: {s_ht_summer:.2f} Rp/kWh")
+            lines.append(f"    - {sub['ht_winter']}: {s_ht_winter:.2f} Rp/kWh")
+            lines.append(f"    - {sub['nt_summer']}: {s_nt_summer:.2f} Rp/kWh")
+            lines.append(f"    - {sub['nt_winter']}: {s_nt_winter:.2f} Rp/kWh")
         else:
             ht = c.get("fixed_ht_rp_kwh")
             nt = c.get("fixed_nt_rp_kwh")
-            if ht is not None and nt is not None:
-                rate_suffix = f"HT {ht:.2f} / NT {nt:.2f} Rp/kWh"
+            if ht is not None:
+                lines.append(f"    - {sub['ht']}: {ht:.2f} Rp/kWh")
+            if nt is not None:
+                lines.append(f"    - {sub['nt']}: {nt:.2f} Rp/kWh")
 
-    parts: list[str] = []
-    if rate_suffix:
-        parts.append(rate_suffix)
-    if settlement:
-        parts.append(f"settlement: {settlement}")
-    if parts:
-        return f"{base_model} ({', '.join(parts)})"
-    return base_model
+    # Settlement sub-bullet for fixed_* models only — for rmp_*, the
+    # settlement period is encoded in the model name itself
+    # ("Referenzmarktpreis (Quartal)" vs "(Monat)"), so a separate
+    # sub-bullet would be redundant.
+    settlement = c.get("settlement_period")
+    if settlement and base_model.startswith("fixed_"):
+        lines.append(
+            f"    - {sub['settlement']}: {settlement_period_label(settlement, notes_lang)}"
+        )
+
+    return lines
 
 
 def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
@@ -1810,11 +1902,12 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     lines: list[str] = []
     utility_key = c.get("utility_key") or "(unknown)"
     utility_name = c.get("utility_name") or utility_key
-    lines.append(f"- **Utility:** {utility_key} — {utility_name}")
+    # v0.17.0 — drop the slug; only show the human-readable name. The slug
+    # was redundant once name_de is curated for every utility in the bundled
+    # data file. Falls back to the slug only when no name is available.
+    lines.append(f"- **Utility:** {utility_name}")
 
-    model_str = _format_tariff_model(c)
-    if model_str is not None:
-        lines.append(f"- **Tariff model:** {model_str}")
+    lines.extend(_render_tariff_model_lines(c))
 
     kw = c.get("kw")
     if kw is not None:
@@ -2028,7 +2121,9 @@ def _render_group_heading(
     row, the end-of-range is rendered as ``now`` instead of the period's
     last calendar day.
     """
-    utility_key, kw, ev, hkn_optin, billing = fingerprint
+    # v0.17.0 — fingerprint extended with user_inputs (canonicalised tuple);
+    # not used here (sample_row carries the raw dict for rendering).
+    utility_key, kw, ev, hkn_optin, billing, _user_inputs_canon = fingerprint
 
     # Earliest period start, latest period end (or "now" for open groups).
     starts: list[str] = []
@@ -2274,6 +2369,7 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         c.get("eigenverbrauch"),
         c.get("hkn_optin"),
         c.get("billing"),
+        c.get("user_inputs"),
     )
     notes_lang = report.config.get("notes_lang", "en")
 
