@@ -107,7 +107,7 @@ class TestStringsAndTranslations:
 
     @pytest.mark.parametrize(
         "step",
-        ["user", "tariff", "entities"],
+        ["user", "tariff_pick", "tariff_details", "entities"],
     )
     def test_config_steps_present(self, en_strings, de_translations, step):
         for d in (en_strings, de_translations):
@@ -125,18 +125,18 @@ class TestStringsAndTranslations:
             )
 
     @pytest.mark.parametrize(
-        "field",
+        "field,step",
         [
-            CONF_VALID_FROM,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
-            CONF_EIGENVERBRAUCH_AKTIVIERT,
-            CONF_HKN_AKTIVIERT,
+            (CONF_VALID_FROM, "tariff_pick"),
+            (CONF_INSTALLIERTE_LEISTUNG_KW, "tariff_pick"),
+            (CONF_EIGENVERBRAUCH_AKTIVIERT, "tariff_details"),
+            (CONF_HKN_AKTIVIERT, "tariff_details"),
         ],
     )
-    def test_tariff_field_label_and_help(self, en_strings, de_translations, field):
+    def test_tariff_field_label_and_help(self, en_strings, de_translations, field, step):
         for d in (en_strings, de_translations):
-            assert field in d["config"]["step"]["tariff"]["data"]
-            assert field in d["config"]["step"]["tariff"]["data_description"]
+            assert field in d["config"]["step"][step]["data"]
+            assert field in d["config"]["step"][step]["data_description"]
 
     def test_abrechnungs_rhythmus_form_field_dropped(
         self, en_strings, de_translations
@@ -144,7 +144,7 @@ class TestStringsAndTranslations:
         """v0.9.8 — billing toggle is gone from every form (#9). Translations
         must not still ship the field labels or selector options."""
         for d in (en_strings, de_translations):
-            for step in ("tariff",):
+            for step in ("tariff_pick", "tariff_details"):
                 assert CONF_ABRECHNUNGS_RHYTHMUS not in d["config"]["step"][step]["data"]
             for step in ("apply_change", "add_new_row", "edit_row"):
                 assert CONF_ABRECHNUNGS_RHYTHMUS not in d["options"]["step"][step]["data"]
@@ -234,7 +234,8 @@ class TestStringsAndTranslations:
     def test_fr_translations_minimum_keys(self, fr_translations):
         # French has the essentials but may skip detailed help text.
         assert "user" in fr_translations["config"]["step"]
-        assert "tariff" in fr_translations["config"]["step"]
+        assert "tariff_pick" in fr_translations["config"]["step"]
+        assert "tariff_details" in fr_translations["config"]["step"]
         assert "entities" in fr_translations["config"]["step"]
 
 
@@ -892,3 +893,269 @@ class TestHknPositiveWhitelist:
         schema = _tariff_schema({}, hkn_structure=structure)
         rendered_keys = {str(k) for k in schema.schema}
         assert (CONF_HKN_AKTIVIERT in rendered_keys) is expected_visible
+
+
+class TestKwAwareUserInputFiltering:
+    """v0.14.0 — _add_user_input_fields_namespaced filters enum/boolean
+    candidate values via constraint-aware probing of _find_tier_dry_run.
+    Impossible (kW × user_input) combos never reach the form."""
+
+    def _enum_options(self, schema_dict: dict, key: str) -> list[str]:
+        """Pull the rendered enum option values for ``key`` out of the
+        schema dict the helper builds."""
+        from homeassistant.helpers import selector as ha_selector
+
+        for k, v in schema_dict.items():
+            if str(k) == key:
+                assert isinstance(v, ha_selector.SelectSelector)
+                return [opt["value"] for opt in v.config["options"]]
+        raise KeyError(f"key {key!r} not in schema_dict")
+
+    def _aew_2026_decl(self) -> dict:
+        return {
+            "key": "aew_fixpreis_rmp",
+            "type": "enum",
+            "default": "AEW Fixpreis",
+            "values": ["AEW Fixpreis", "Referenzmarktpreis"],
+        }
+
+    def test_aew_kw31_filters_to_rmp_only(self):
+        # AEW 2026: tier 0 covers [0, 30) with "AEW Fixpreis"; tier 1
+        # covers [30, 3000) with "Referenzmarktpreis". At kW=31 only tier 1
+        # resolves, so "AEW Fixpreis" must be filtered out.
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _add_user_input_fields_namespaced,
+        )
+
+        schema_dict: dict = {}
+        _add_user_input_fields_namespaced(
+            schema_dict,
+            (self._aew_2026_decl(),),
+            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            "de",
+            gate_utility="aew",
+            gate_valid_from="2026-04-01",
+            gate_kw=31.0,
+        )
+        assert self._enum_options(schema_dict, "aew_fixpreis_rmp") == [
+            "Referenzmarktpreis"
+        ]
+
+    def test_aew_kw15_filters_to_fixpreis_only(self):
+        # At kW=15 only tier 0 resolves (kw_max=30 excludes tier 1).
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _add_user_input_fields_namespaced,
+        )
+
+        schema_dict: dict = {}
+        _add_user_input_fields_namespaced(
+            schema_dict,
+            (self._aew_2026_decl(),),
+            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            "de",
+            gate_utility="aew",
+            gate_valid_from="2026-04-01",
+            gate_kw=15.0,
+        )
+        assert self._enum_options(schema_dict, "aew_fixpreis_rmp") == [
+            "AEW Fixpreis"
+        ]
+
+    def test_no_gate_args_no_filtering(self):
+        # Backwards compat: caller without gate args sees all candidates.
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _add_user_input_fields_namespaced,
+        )
+
+        schema_dict: dict = {}
+        _add_user_input_fields_namespaced(
+            schema_dict,
+            (self._aew_2026_decl(),),
+            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            "de",
+        )
+        assert self._enum_options(schema_dict, "aew_fixpreis_rmp") == [
+            "AEW Fixpreis",
+            "Referenzmarktpreis",
+        ]
+
+    def test_filter_empty_omits_field(self, monkeypatch):
+        # Synthetic: a utility whose only tier is gated on a value not in
+        # the decl's `values` list. Filter result is empty → field is
+        # omitted entirely (page-level no_matching_tier surfaces it).
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "rates": [{
+                        "valid_from": "2026-01-01",
+                        "valid_to": None,
+                        "settlement_period": "quartal",
+                        "power_tiers": [{
+                            "kw_min": 0.0,
+                            "kw_max": 100.0,
+                            "base_model": "fixed_flat",
+                            "fixed_rp_kwh": 8.0,
+                            "applies_when": {"flavour": "unreachable"},
+                        }],
+                        "user_inputs": [{
+                            "key": "flavour",
+                            "type": "enum",
+                            "default": "a",
+                            "values": ["a", "b"],
+                        }],
+                    }],
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+
+        decl = synthetic["utilities"]["syn"]["rates"][0]["user_inputs"][0]
+        schema_dict: dict = {}
+        cf._add_user_input_fields_namespaced(
+            schema_dict, (decl,), {"flavour": "a"}, "de",
+            gate_utility="syn",
+            gate_valid_from="2026-04-01",
+            gate_kw=10.0,
+        )
+        rendered_keys = {str(k) for k in schema_dict}
+        assert "flavour" not in rendered_keys
+
+    def test_constraint_aware_2field_keeps_both_when_each_reachable(self, monkeypatch):
+        # Two user_input fields: A (enum: x, y), B (boolean). Tiers:
+        #   tier 0 needs A=x AND B=true
+        #   tier 1 needs A=y AND B=false
+        # At a kW where both tiers cover, both candidate values for A
+        # remain (x reachable via B=True; y reachable via B=False), and
+        # both bool values for B remain.
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "rates": [{
+                        "valid_from": "2026-01-01",
+                        "valid_to": None,
+                        "settlement_period": "quartal",
+                        "power_tiers": [
+                            {
+                                "kw_min": 0.0, "kw_max": 100.0,
+                                "base_model": "fixed_flat",
+                                "fixed_rp_kwh": 8.0,
+                                "applies_when": {"a_choice": "x", "b_flag": True},
+                            },
+                            {
+                                "kw_min": 0.0, "kw_max": 100.0,
+                                "base_model": "fixed_flat",
+                                "fixed_rp_kwh": 9.0,
+                                "applies_when": {"a_choice": "y", "b_flag": False},
+                            },
+                        ],
+                        "user_inputs": [
+                            {"key": "a_choice", "type": "enum",
+                             "default": "x", "values": ["x", "y"]},
+                            {"key": "b_flag", "type": "boolean", "default": True},
+                        ],
+                    }],
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+
+        decls = tuple(
+            synthetic["utilities"]["syn"]["rates"][0]["user_inputs"]
+        )
+        schema_dict: dict = {}
+        cf._add_user_input_fields_namespaced(
+            schema_dict, decls,
+            {"a_choice": "x", "b_flag": True}, "de",
+            gate_utility="syn", gate_valid_from="2026-04-01", gate_kw=10.0,
+        )
+        # Both A values reachable.
+        assert self._enum_options(schema_dict, "a_choice") == ["x", "y"]
+        # B rendered (bool selector, both values reachable across siblings).
+        rendered_keys = {str(k) for k in schema_dict}
+        assert "b_flag" in rendered_keys
+
+    def test_constraint_aware_2field_drops_unreachable(self, monkeypatch):
+        # Same fixture as above but with tier 1 removed: only tier 0
+        # remains, so A=y is unreachable for ANY combination of B.
+        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {
+                "syn": {
+                    "name_de": "Syn",
+                    "rates": [{
+                        "valid_from": "2026-01-01",
+                        "valid_to": None,
+                        "settlement_period": "quartal",
+                        "power_tiers": [{
+                            "kw_min": 0.0, "kw_max": 100.0,
+                            "base_model": "fixed_flat",
+                            "fixed_rp_kwh": 8.0,
+                            "applies_when": {"a_choice": "x", "b_flag": True},
+                        }],
+                        "user_inputs": [
+                            {"key": "a_choice", "type": "enum",
+                             "default": "x", "values": ["x", "y"]},
+                            {"key": "b_flag", "type": "boolean", "default": True},
+                        ],
+                    }],
+                }
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
+
+        decls = tuple(
+            synthetic["utilities"]["syn"]["rates"][0]["user_inputs"]
+        )
+        schema_dict: dict = {}
+        cf._add_user_input_fields_namespaced(
+            schema_dict, decls,
+            {"a_choice": "x", "b_flag": True}, "de",
+            gate_utility="syn", gate_valid_from="2026-04-01", gate_kw=10.0,
+        )
+        # Only A=x reachable (A=y has no tier under any B combination).
+        assert self._enum_options(schema_dict, "a_choice") == ["x"]
+
+    def test_text_field_passes_through_unfiltered(self):
+        # Non-gate-affecting types (text/number) are not filtered: they
+        # pass through with the unfiltered candidates list (i.e. the
+        # helper renders them via the bool/enum branches it has, or skips
+        # if neither). Smoke test that gates don't crash on a synthetic
+        # text decl (the helper currently renders only enum + boolean,
+        # so a text decl is silently skipped — assert no exception, no
+        # field added).
+        from custom_components.bfe_rueckliefertarif.config_flow import (
+            _add_user_input_fields_namespaced,
+        )
+
+        schema_dict: dict = {}
+        _add_user_input_fields_namespaced(
+            schema_dict,
+            ({"key": "freeform", "type": "text", "default": ""},),
+            {"freeform": ""}, "de",
+            gate_utility="aew",
+            gate_valid_from="2026-04-01",
+            gate_kw=10.0,
+        )
+        assert "freeform" not in {str(k) for k in schema_dict}

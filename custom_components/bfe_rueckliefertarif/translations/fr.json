@@ -5,18 +5,26 @@
         "title": "BFE Rückliefertarif — Choisir le fournisseur",
         "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. Le *mécanisme* du plafond découle de [OApEl art. 4 al. 3 let. e]({stromvv_url}); les valeurs numériques sont des dérivations publiées par les fournisseurs.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)"
       },
-      "tariff": {
-        "title": "Configuration du tarif ({utility_name})",
-        "description": "{change_advisory}\n\nIndiquez les paramètres de votre installation. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}",
+      "tariff_pick": {
+        "title": "Configuration du tarif ({utility_name}) — date & puissance",
+        "description": "Choisissez la date d'effet de cette configuration et la puissance installée. L'étape suivante affiche les options spécifiques au fournisseur (autoconsommation, GO, champs spécifiques).",
         "data": {
           "valid_from": "Actif depuis",
-          "installierte_leistung_kw": "Puissance installée (kW)",
+          "installierte_leistung_kw": "Puissance installée (kW)"
+        },
+        "data_description": {
+          "valid_from": "## Date de mise en service\nDate à laquelle votre installation PV a été connectée au réseau (ou date de début de cette configuration). Sert d'ancre à l'historique de configuration — les trimestres antérieurs à cette date sont silencieusement ignorés lors du recalcul, car aucune configuration tarifaire ne les couvre.\n\nValeur par défaut : début du trimestre courant. Indiquez la date réelle de mise en service pour un historique d'import propre.",
+          "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026)."
+        }
+      },
+      "tariff_details": {
+        "title": "Configuration du tarif — {utility_name} dès {valid_from}",
+        "description": "Indiquez les paramètres de votre installation pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{periods_block}",
+        "data": {
           "eigenverbrauch_aktiviert": "Autoconsommation activée",
           "hkn_aktiviert": "Vendre les GO au fournisseur ?"
         },
         "data_description": {
-          "valid_from": "## Date de mise en service\nDate à laquelle votre installation PV a été connectée au réseau (ou date de début de cette configuration). Sert d'ancre à l'historique de configuration — les trimestres antérieurs à cette date sont silencieusement ignorés lors du recalcul, car aucune configuration tarifaire ne les couvre.\n\nValeur par défaut : aujourd'hui. Indiquez la date réelle de mise en service pour un historique d'import propre.",
-          "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026).",
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place. **Non** pour une installation en injection totale (Volleinspeisung).",
           "hkn_aktiviert": "## Opt-in GO (Garantie d'Origine)\n**Oui** si vous vendez vos *garanties d'origine* à votre fournisseur. Le taux est fixé par le fournisseur et n'est pas modifiable ici."
         }
@@ -40,6 +48,7 @@
     },
     "error": {
       "kw_required": "La puissance installée (kW) doit être supérieure à 0.",
+      "invalid_valid_from": "Date invalide — attendu AAAA-MM-JJ (ex. 2024-08-15).",
       "no_active_rate": "Le fournisseur sélectionné n'a pas de fenêtre tarifaire active pour cette date.",
       "settlement_period_unsupported": "Le fournisseur sélectionné utilise un règlement Day-Ahead horaire (Vernehmlassung 2025/59), pas encore pris en charge.",
       "no_matching_tier": "Votre puissance installée et votre sélection ne correspondent à aucun palier tarifaire pour ce fournisseur / cette date. Ajustez le kW ou modifiez le choix."

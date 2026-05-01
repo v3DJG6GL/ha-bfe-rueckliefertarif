@@ -1226,6 +1226,175 @@ class TestInitialEntitiesStepPlantName:
         assert result["data"][CONF_NAMENSPRAEFIX] == "custom_pv"
 
 
+class TestFirstTimeSetupSplitFlow:
+    """v0.14.0 — first-time setup splits the old single-page tariff step
+    into ``tariff_pick`` (valid_from + kW) and ``tariff_details`` (EV +
+    HKN + user_inputs[]). Mirrors Add-transition's shape so user_inputs
+    are reachable from initial setup."""
+
+    def _make_flow(self, energieversorger="aew"):
+        flow = BfeRuecklieferTarifFlow.__new__(BfeRuecklieferTarifFlow)
+        flow._data = {CONF_ENERGIEVERSORGER: energieversorger}
+        flow.hass = MagicMock()
+        flow.hass.config = SimpleNamespace(language="de")
+        return flow
+
+    @pytest.mark.asyncio
+    async def test_pick_kw_required_rejected(self):
+        flow = self._make_flow("aew")
+        result = await flow.async_step_tariff_pick(
+            {CONF_VALID_FROM: "2026-04-01", CONF_INSTALLIERTE_LEISTUNG_KW: 0.0}
+        )
+        # kw=0 → re-renders Step 1 with kw_required error.
+        assert result["type"].name in ("FORM", "form")
+        assert result["step_id"] == "tariff_pick"
+        assert result["errors"][CONF_INSTALLIERTE_LEISTUNG_KW] == "kw_required"
+
+    @pytest.mark.asyncio
+    async def test_pick_invalid_date_rejected(self):
+        flow = self._make_flow("aew")
+        result = await flow.async_step_tariff_pick(
+            {CONF_VALID_FROM: "not-a-date", CONF_INSTALLIERTE_LEISTUNG_KW: 10.0}
+        )
+        assert result["step_id"] == "tariff_pick"
+        assert result["errors"][CONF_VALID_FROM] == "invalid_valid_from"
+
+    @pytest.mark.asyncio
+    async def test_pick_no_active_rate_rejected(self):
+        flow = self._make_flow("aew")
+        # 1999 is before any AEW rate window in bundled data.
+        result = await flow.async_step_tariff_pick(
+            {CONF_VALID_FROM: "1999-04-01", CONF_INSTALLIERTE_LEISTUNG_KW: 10.0}
+        )
+        assert result["step_id"] == "tariff_pick"
+        assert result["errors"][CONF_VALID_FROM] == "no_active_rate"
+
+    @pytest.mark.asyncio
+    async def test_pick_advances_to_details(self):
+        flow = self._make_flow("aew")
+        result = await flow.async_step_tariff_pick(
+            {CONF_VALID_FROM: "2026-04-01", CONF_INSTALLIERTE_LEISTUNG_KW: 15.0}
+        )
+        # On valid submit, pick is stashed and we render Step 2.
+        assert flow._setup_pick == {
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.0,
+        }
+        assert result["type"].name in ("FORM", "form")
+        assert result["step_id"] == "tariff_details"
+
+    @pytest.mark.asyncio
+    async def test_details_aew_kw50_filters_enum_to_rmp_only(self):
+        # AEW kW=50: tier 1 covers (kw 30–3000) gated on
+        # "Referenzmarktpreis"; tier 0 (kw 0–30) doesn't cover. Page 2's
+        # aew_fixpreis_rmp dropdown should show only "Referenzmarktpreis".
+        flow = self._make_flow("aew")
+        flow._setup_pick = {
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 50.0,
+        }
+        result = await flow.async_step_tariff_details(None)
+        assert result["step_id"] == "tariff_details"
+        # Schema's aew_fixpreis_rmp options: only "Referenzmarktpreis".
+        for k, v in result["data_schema"].schema.items():
+            if str(k) == "aew_fixpreis_rmp":
+                opts = [opt["value"] for opt in v.config["options"]]
+                assert opts == ["Referenzmarktpreis"]
+                break
+        else:
+            raise AssertionError("aew_fixpreis_rmp not in schema")
+
+    @pytest.mark.asyncio
+    async def test_details_aew_kw15_filters_enum_to_fixpreis_only(self):
+        # AEW kW=15: only tier 0 (kw 0-30) covers, gated on "AEW Fixpreis".
+        flow = self._make_flow("aew")
+        flow._setup_pick = {
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.0,
+        }
+        result = await flow.async_step_tariff_details(None)
+        for k, v in result["data_schema"].schema.items():
+            if str(k) == "aew_fixpreis_rmp":
+                opts = [opt["value"] for opt in v.config["options"]]
+                assert opts == ["AEW Fixpreis"]
+                break
+        else:
+            raise AssertionError("aew_fixpreis_rmp not in schema")
+
+    @pytest.mark.asyncio
+    async def test_details_save_stashes_history_for_create_entry(self):
+        # Submitting tariff_details with valid user_input should advance
+        # to entities AND stash the pre-built OPT_CONFIG_HISTORY records
+        # in self._setup_history (consumed by async_step_entities).
+        flow = self._make_flow("aew")
+        flow._setup_pick = {
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.0,
+        }
+        result = await flow.async_step_tariff_details(
+            {
+                CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                "aew_fixpreis_rmp": "AEW Fixpreis",
+            }
+        )
+        # Advances to entities form (no user_input → form, not create_entry).
+        assert result["type"].name in ("FORM", "form")
+        assert result["step_id"] == "entities"
+        # History was pre-built and stashed.
+        assert hasattr(flow, "_setup_history")
+        assert len(flow._setup_history) >= 1
+        rec = flow._setup_history[-1]  # last (non-sentinel) record
+        assert rec["valid_from"] == "2026-04-01"
+        assert rec["config"][CONF_ENERGIEVERSORGER] == "aew"
+        assert rec["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 15.0
+        assert rec["config"]["user_inputs"] == {
+            "aew_fixpreis_rmp": "AEW Fixpreis"
+        }
+
+    @pytest.mark.asyncio
+    async def test_entities_passes_options_when_history_pre_built(self):
+        # When tariff_details has stashed _setup_history, async_step_entities
+        # passes it through to async_create_entry via the options kwarg
+        # (bypasses __init__.py's history-synthesis path).
+        flow = self._make_flow("aew")
+        flow._data.update({
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.0,
+            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+            CONF_HKN_AKTIVIERT: False,
+            CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+        })
+        flow._setup_history = [{
+            "valid_from": "2026-04-01",
+            "valid_to": None,
+            "config": {
+                CONF_ENERGIEVERSORGER: "aew",
+                CONF_INSTALLIERTE_LEISTUNG_KW: 15.0,
+                CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                CONF_HKN_AKTIVIERT: False,
+                CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
+                "user_inputs": {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            },
+        }]
+        result = await flow.async_step_entities({
+            CONF_STROMNETZEINSPEISUNG_KWH: "sensor.export",
+            CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.compensation",
+            CONF_PLANT_NAME: "Rooftop South",
+            CONF_NAMENSPRAEFIX: "",
+        })
+        assert result["type"].name in ("CREATE_ENTRY", "create_entry")
+        # options carries the pre-built history.
+        assert OPT_CONFIG_HISTORY in result["options"]
+        history = result["options"][OPT_CONFIG_HISTORY]
+        # Last record (post-normalize) has the user_input.
+        assert history[-1]["config"]["user_inputs"] == {
+            "aew_fixpreis_rmp": "AEW Fixpreis"
+        }
+
+
 class TestOptionsEntitiesStepUpdatesTitle:
     """v0.9.1 — OptionsFlow entities step lets users rename the entry by
     submitting a new plant_name."""
