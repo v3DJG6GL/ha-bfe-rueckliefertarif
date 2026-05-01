@@ -38,7 +38,14 @@ from .importer import (
     cumulative_sums,
 )
 from .quarters import Quarter, hours_in_range, quarter_bounds_utc, quarter_of
-from .tariffs_db import find_active, load_tariffs, resolve_tariff_at
+from .tariffs_db import (
+    find_active,
+    load_tariffs,
+    pick_value_label,
+    resolve_tariff_at,
+    resolve_user_inputs_decl,
+    user_input_label,
+)
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -614,13 +621,42 @@ def _render_notes_lines(notes, lang: str) -> list[str]:
     return lines
 
 
-def _render_when_summary(clause: dict | None) -> str:
+_YES_NO = {
+    "de": ("Ja", "Nein"),
+    "fr": ("Oui", "Non"),
+    "it": ("Sì", "No"),
+}
+
+
+def _yes_no(value: bool, lang: str) -> str:
+    """Localized Yes/No for boolean rendering. Defaults to English."""
+    pair = _YES_NO.get(lang, ("Yes", "No"))
+    return pair[0] if value else pair[1]
+
+
+def _format_user_input_value(decl: dict, value, lang: str) -> str:
+    """Format a user-input value for display: booleans as Yes/No (localized);
+    enums via ``value_labels_<lang>`` lookup; everything else stringified."""
+    dtype = decl.get("type") if isinstance(decl, dict) else None
+    if dtype == "boolean" and isinstance(value, bool):
+        return _yes_no(value, lang)
+    if dtype == "enum" and decl:
+        return pick_value_label(decl, str(value), lang)
+    return str(value)
+
+
+def _render_when_summary(
+    clause: dict | None,
+    decls: list | tuple | None = None,
+    lang: str = "en",
+) -> str:
     """Compact one-line summary of a ``when_clause`` for display in the
     recompute config block. Returns ``""`` when the clause is empty/None.
 
-    Schema vocabulary (v1.1.0): ``season`` and/or ``user_inputs``. Output
-    examples: ``season=winter``; ``tariff_model=ht``;
-    ``season=winter, supply_product=eco``.
+    Schema vocabulary (v1.1.0): ``season`` and/or ``user_inputs``. v0.16.1:
+    when ``decls`` is provided, ``user_inputs`` keys/values are
+    label-translated (e.g. ``regio_top40_opted_in=True`` →
+    ``Wahltarif TOP-40 abonniert=Ja``).
     """
     if not clause:
         return ""
@@ -629,19 +665,32 @@ def _render_when_summary(clause: dict | None) -> str:
     if season:
         parts.append(f"season={season}")
     sub = clause.get("user_inputs") or {}
+    decl_by_key = (
+        {d.get("key"): d for d in decls if isinstance(d, dict)}
+        if decls else {}
+    )
     for k, v in sub.items():
-        parts.append(f"{k}={v}")
+        decl = decl_by_key.get(k, {})
+        label = user_input_label(decl, lang) if decl else k
+        value_str = _format_user_input_value(decl, v, lang)
+        parts.append(f"{label}={value_str}")
     return ", ".join(parts)
 
 
-def _render_bonuses_lines(bonuses) -> list[str]:
+def _render_bonuses_lines(
+    bonuses,
+    decls: list | tuple | None = None,
+    lang: str = "en",
+) -> list[str]:
     """Render rate-window-level bonuses as recompute-block bullets.
 
     v0.10.0 / Batch C — list of declared bonuses (display-only).
-    v0.11.0 / Batch D — adds the bonus ``kind`` (when not the default
-    ``additive_rp_kwh``) and a ``when={…}`` summary so users can see
-    what conditions gate each bonus. Bullet shape:
-    ``  - {name}: {rate or × pct} Rp/kWh ({always|opt-in})[ when {…}][ — {note}]``.
+    v0.11.0 / Batch D — adds the bonus ``kind`` and a ``when={…}`` summary.
+    v0.16.1 — multiplier_pct rendered as ``+8.00%`` / ``−15.00%`` (delta
+    from 100%, matching data-author intent); ``note`` suffix dropped (the
+    bonus name is enough; long German notes from utility tariff sheets
+    duplicate config_flow's notification surfaces); when-clause keys/values
+    label-translated via ``decls`` + ``lang``.
 
     Returns ``[]`` when ``bonuses`` is empty / None.
     """
@@ -655,11 +704,12 @@ def _render_bonuses_lines(bonuses) -> list[str]:
         kind = b.get("kind", "additive_rp_kwh")
         if kind == "multiplier_pct":
             mp = b.get("multiplier_pct")
-            value_str = (
-                f"× {mp:.2f}% (multiplier_pct)"
-                if isinstance(mp, (int, float)) and not isinstance(mp, bool)
-                else "—"
-            )
+            if isinstance(mp, (int, float)) and not isinstance(mp, bool):
+                delta = float(mp) - 100.0
+                sign = "+" if delta >= 0 else "−"
+                value_str = f"{sign}{abs(delta):.2f}%"
+            else:
+                value_str = "—"
         else:
             rate = b.get("rate_rp_kwh")
             value_str = (
@@ -669,20 +719,14 @@ def _render_bonuses_lines(bonuses) -> list[str]:
             )
         applies = b.get("applies_when")
         if applies == "always":
-            applies_str = "always"
+            applies_part = " (always)"
         elif applies == "opt_in":
-            applies_str = "opt-in"
+            applies_part = " (opt-in)"
         else:
-            applies_str = "—"
-        when_summary = _render_when_summary(b.get("when"))
+            applies_part = ""
+        when_summary = _render_when_summary(b.get("when"), decls, lang)
         when_part = f" when {when_summary}" if when_summary else ""
-        suffix = ""
-        note = b.get("note")
-        if note:
-            suffix = f" — {note}"
-        lines.append(
-            f"  - {name}: {value_str} ({applies_str}){when_part}{suffix}"
-        )
+        lines.append(f"  - {name}: {value_str}{applies_part}{when_part}")
     return lines
 
 
@@ -853,6 +897,12 @@ def _record_snapshot(
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
         "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
+        # v0.16.1 — gating for HKN-line annotation and label-translation
+        # of user_inputs in the recompute notification's per-period block.
+        "hkn_structure": rt.hkn_structure,
+        "user_inputs_decl": list(
+            resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
+        ),
     }
 
     # v0.9.9 — segment metadata for sub-row rendering. Only persisted when
@@ -1202,6 +1252,11 @@ async def _import_running_quarter_estimate(
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
         "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
+        # v0.16.1 — same as published-quarter snapshot.
+        "hkn_structure": rt.hkn_structure,
+        "user_inputs_decl": list(
+            resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
+        ),
     }
     coordinator._imported[str(q)] = {
         "q_price_chf_mwh": None,
@@ -1437,6 +1492,10 @@ class _RecomputeReportRow:
     fixed_nt_rp_kwh_at_period: float | None = None
     user_inputs_at_period: dict | None = None
     bonuses_active_at_period: list | None = None
+    # v0.16.1 — HKN-structure gating + user_inputs declaration list (used
+    # for label-translation of user-input keys/values in per-group blocks).
+    hkn_structure_at_period: str | None = None
+    user_inputs_decl_at_period: list | None = None
     # v0.11.0 (Batch D) — applied bonus per kWh (kWh-weighted) for the
     # period. ``None`` for legacy snapshots predating the field.
     bonus_rp_kwh_avg: float | None = None
@@ -1510,6 +1569,12 @@ def _build_recompute_report(
         "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
+        # v0.16.1 — HKN-line gating (additive_optin / bundled / none) and
+        # label-translation of user_inputs (label_de / value_labels_de).
+        "hkn_structure": rt.hkn_structure,
+        "user_inputs_decl": list(
+            resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
+        ),
     }
 
     rows: list[_RecomputeReportRow] = []
@@ -1553,6 +1618,10 @@ def _build_recompute_report(
                 "fixed_nt_rp_kwh_at_period": snap.get("fixed_nt_rp_kwh"),
                 "user_inputs_at_period": snap.get("user_inputs"),
                 "bonuses_active_at_period": snap.get("bonuses_active"),
+                # v0.16.1 — HKN-structure gating + user_inputs declaration
+                # list for label translation. Default None on legacy.
+                "hkn_structure_at_period": snap.get("hkn_structure"),
+                "user_inputs_decl_at_period": snap.get("user_inputs_decl"),
             }
             # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
@@ -1774,17 +1843,45 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
                 pass
     lines.append(f"- **Eigenverbrauch (self-consumption):** {ev_str}")
 
+    # v0.16.1 — gate HKN line on hkn_structure. For utilities where the
+    # user can't choose (bundled / none), "HKN opt-in: No" is misleading;
+    # render a structure-aware line instead. Pre-v0.16.1 snapshots have
+    # no hkn_structure → fall back to v0.16.0 Yes/No rendering.
+    hkn_structure = c.get("hkn_structure")
     hkn_optin = c.get("hkn_optin")
-    if hkn_optin:
-        hkn_rp = c.get("hkn_rp_kwh")
-        if hkn_rp is not None:
-            lines.append(f"- **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)")
+    if hkn_structure == "additive_optin":
+        if hkn_optin:
+            hkn_rp = c.get("hkn_rp_kwh")
+            if hkn_rp is not None:
+                lines.append(
+                    f"- **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
+                )
+            else:
+                lines.append("- **HKN opt-in:** Yes")
+        elif hkn_optin is False:
+            lines.append("- **HKN opt-in:** No")
         else:
-            lines.append("- **HKN opt-in:** Yes")
-    elif hkn_optin is False:
-        lines.append("- **HKN opt-in:** No")
+            lines.append("- **HKN opt-in:** —")
+    elif hkn_structure == "bundled":
+        lines.append(
+            "- **HKN:** bundled in base rate (no opt-in available)"
+        )
+    elif hkn_structure == "none":
+        lines.append("- **HKN:** not paid by utility")
     else:
-        lines.append("- **HKN opt-in:** —")
+        # Legacy snapshot pre-v0.16.1.
+        if hkn_optin:
+            hkn_rp = c.get("hkn_rp_kwh")
+            if hkn_rp is not None:
+                lines.append(
+                    f"- **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
+                )
+            else:
+                lines.append("- **HKN opt-in:** Yes")
+        elif hkn_optin is False:
+            lines.append("- **HKN opt-in:** No")
+        else:
+            lines.append("- **HKN opt-in:** —")
 
     billing = c.get("billing")
     lines.append(f"- **Billing period:** {billing or '—'}")
@@ -1835,16 +1932,34 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
         lines.append("- **Seasonal rates:** No")
 
     notes_lang = c.get("notes_lang") or "en"
-    lines.extend(_render_notes_lines(c.get("notes_active"), notes_lang))
+    # v0.16.1 — Notes section dropped from the recompute notification per
+    # user request ("huge overkill"). Notes still surface in the data file
+    # and in config_flow's other notification paths.
 
-    # v0.16.0 — Active user inputs line (suppressed when empty/missing
-    # so utilities without declared inputs render unchanged).
+    # v0.16.0 / v0.16.1 — Active user inputs line uses label_de /
+    # value_labels_de from the rate window's declarations when present.
+    # Falls back to raw ``key=value`` for legacy snapshots without decls.
     ui = c.get("user_inputs")
     if isinstance(ui, dict) and ui:
-        pairs = ", ".join(f"{k}={v}" for k, v in sorted(ui.items()))
-        lines.append(f"- **Active user inputs:** {pairs}")
+        decls = c.get("user_inputs_decl") or []
+        decl_by_key = {d.get("key"): d for d in decls if isinstance(d, dict)}
+        parts: list[str] = []
+        for k, v in sorted(ui.items()):
+            decl = decl_by_key.get(k, {})
+            label = user_input_label(decl, notes_lang) if decl else k
+            value_str = _format_user_input_value(decl, v, notes_lang)
+            parts.append(f"{label}: {value_str}")
+        lines.append(
+            "- **Active user inputs:** " + " · ".join(parts)
+        )
 
-    lines.extend(_render_bonuses_lines(c.get("bonuses_active")))
+    lines.extend(
+        _render_bonuses_lines(
+            c.get("bonuses_active"),
+            c.get("user_inputs_decl"),
+            notes_lang,
+        )
+    )
 
     return lines
 
@@ -1968,6 +2083,9 @@ def _render_group_heading(
         "fixed_nt_rp_kwh": sample_row.fixed_nt_rp_kwh_at_period,
         "user_inputs": sample_row.user_inputs_at_period,
         "bonuses_active": sample_row.bonuses_active_at_period,
+        # v0.16.1 — HKN-structure gating + user_inputs declaration list.
+        "hkn_structure": sample_row.hkn_structure_at_period,
+        "user_inputs_decl": sample_row.user_inputs_decl_at_period,
     }
     return [heading, *_render_config_block(config_dict)]
 
@@ -2157,19 +2275,44 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         c.get("hkn_optin"),
         c.get("billing"),
     )
-    suppress_per_group_heading = (
-        len(groups) == 1 and groups[0][0] == today_fingerprint
-    )
+    notes_lang = report.config.get("notes_lang", "en")
 
-    if suppress_per_group_heading:
+    # v0.16.1 — per-group suppression. The active-today block already
+    # rendered today's config; for the group whose fingerprint matches, we
+    # render only its data table (with a "Per-period results" delimiter so
+    # the table is attributable). Other groups still get a full heading +
+    # config block + table. This unifies the four cases (single match,
+    # single non-match, multi with one match, multi with no match) so the
+    # active-today config never duplicates as a per-group block.
+    multi_group = len(groups) > 1
+    for fingerprint, group_rows in groups:
+        sample = group_rows[0]
         lines.append("")
-        lines.append("## Per-period results")
+        if fingerprint == today_fingerprint:
+            heading = (
+                "## Per-period results (active config)"
+                if multi_group else "## Per-period results"
+            )
+            lines.append(heading)
+        else:
+            lines.extend(
+                _render_group_heading(
+                    fingerprint, sample, group_rows, notes_lang=notes_lang
+                )
+            )
         lines.append("")
-        table_lines, forfeit_rows = _render_period_table(shown_rows)
+        table_lines, forfeit_rows = _render_period_table(group_rows)
         lines.extend(table_lines)
         if forfeit_rows:
             lines.append("")
-            published = c.get("hkn_rp_kwh")
+            # For the today-group, the published HKN comes from today's
+            # active config (header `c`); for other groups, from the
+            # group's snapshot (sample.intended_hkn_rp_kwh).
+            published = (
+                c.get("hkn_rp_kwh")
+                if fingerprint == today_fingerprint
+                else sample.intended_hkn_rp_kwh
+            )
             published_str = (
                 f"{published:.2f} Rp/kWh" if published is not None else "n/a"
             )
@@ -2180,34 +2323,6 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
                 "`applied / published`) because base + HKN exceeded the "
                 f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
             )
-    else:
-        notes_lang = report.config.get("notes_lang", "en")
-        for fingerprint, group_rows in groups:
-            sample = group_rows[0]
-            lines.append("")
-            lines.extend(
-                _render_group_heading(
-                    fingerprint, sample, group_rows, notes_lang=notes_lang
-                )
-            )
-            lines.append("")
-            table_lines, forfeit_rows = _render_period_table(group_rows)
-            lines.extend(table_lines)
-            if forfeit_rows:
-                lines.append("")
-                # Per-group published HKN (resolved at import time, captured
-                # in the snapshot's intended_hkn_rp_kwh).
-                published = sample.intended_hkn_rp_kwh
-                published_str = (
-                    f"{published:.2f} Rp/kWh" if published is not None else "n/a"
-                )
-                n_f = len(forfeit_rows)
-                lines.append(
-                    f"_ℹ️ HKN was reduced or forfeited in {n_f} "
-                    f"{_plural(n_f, 'period', 'periods')} (cell shows "
-                    "`applied / published`) because base + HKN exceeded the "
-                    f"Anrechenbarkeitsgrenze. Published HKN: {published_str}._"
-                )
 
     if elided:
         lines.append("")

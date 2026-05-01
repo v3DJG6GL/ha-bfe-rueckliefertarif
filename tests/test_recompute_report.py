@@ -38,7 +38,9 @@ from custom_components.bfe_rueckliefertarif.services import (
     _format_tariff_model,
     _RecomputeReport,
     _RecomputeReportRow,
+    _render_bonuses_lines,
     _render_config_block,
+    _render_when_summary,
 )
 from custom_components.bfe_rueckliefertarif.tariff import classify_ht
 from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
@@ -703,9 +705,11 @@ class TestPerConfigGrouping:
 
 
 class TestNotesAndSeasonalConfigBlock:
-    """v0.9.9 — config-block rendering for rate-window notes + seasonal markers."""
+    """v0.9.9 — config-block rendering for rate-window seasonal markers.
+    v0.16.1 — Notes are now hidden from the recompute notification;
+    only the no-notes-rendered assertion is kept here, plus seasonal."""
 
-    def test_config_block_includes_notes_when_present(self):
+    def test_v0_16_1_notes_never_rendered_even_when_present(self):
         rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
         cfg = _config_dict(
             notes_active=[
@@ -715,8 +719,8 @@ class TestNotesAndSeasonalConfigBlock:
         )
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
-        assert "**Notes:**" in body
-        assert "*(warning)* Self-attest naturemade-star." in body
+        assert "**Notes:**" not in body
+        assert "Self-attest naturemade-star." not in body
 
     def test_config_block_no_notes_when_empty(self):
         rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
@@ -724,32 +728,6 @@ class TestNotesAndSeasonalConfigBlock:
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
         assert "**Notes:**" not in body
-
-    def test_config_block_locale_fallback_to_de(self):
-        # Note has only DE text; renderer asked for EN → falls back to DE.
-        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
-        cfg = _config_dict(
-            notes_active=[
-                {"severity": "info", "text": {"de": "Nur Deutsch verfügbar."}}
-            ],
-            notes_lang="en",
-        )
-        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
-        _, body = _format_recompute_notification(report)
-        assert "Nur Deutsch verfügbar." in body
-
-    def test_config_block_locale_fallback_to_first_when_de_missing(self):
-        # Neither user lang nor DE → falls back to first available.
-        rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
-        cfg = _config_dict(
-            notes_active=[
-                {"severity": "info", "text": {"it": "Solo italiano."}}
-            ],
-            notes_lang="en",
-        )
-        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
-        _, body = _format_recompute_notification(report)
-        assert "Solo italiano." in body
 
     def test_config_block_seasonal_yes_renders_summer_winter_split(self):
         rows = [_row("2026Q2", 10.00, 100.0, 10.00)]
@@ -805,7 +783,11 @@ class TestBonusesConfigBlock:
         _, body = _format_recompute_notification(report)
         assert "**Bonuses:**" not in body
 
-    def test_config_block_appends_bonus_note_after_em_dash(self):
+    def test_config_block_does_not_append_bonus_note(self):
+        # v0.16.1 — bonus.note is intentionally dropped from the
+        # notification (long German tariff-sheet text from utility data
+        # would dominate the body). Bonus name + value + applies_when +
+        # when-clause is enough.
         rows = [_row("2026Q1", 9.20, 100.0, 9.20)]
         cfg = _config_dict(
             bonuses_active=[
@@ -815,7 +797,8 @@ class TestBonusesConfigBlock:
         )
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
-        assert "Snow: 2.00 Rp/kWh (always) — winter only" in body
+        assert "Snow: 2.00 Rp/kWh (always)" in body
+        assert "winter only" not in body
 
 
 class TestAggregateBySegment:
@@ -1061,6 +1044,8 @@ class TestUserInputsRendering:
     """
 
     def test_config_block_renders_user_inputs_line(self):
+        # No declarations → raw key fallback, but v0.16.1 format uses
+        # ``key: value`` separated by " · " (renderer-format change).
         cfg = _config_dict(user_inputs={
             "regio_top40_opted_in": True,
             "ekz_segment": "kleq30_mit_ev",
@@ -1071,8 +1056,8 @@ class TestUserInputsRendering:
         )
         assert ui_line is not None
         # Sorted alphabetically — ekz_segment first, regio_top40 second.
-        assert "ekz_segment=kleq30_mit_ev" in ui_line
-        assert "regio_top40_opted_in=True" in ui_line
+        assert "ekz_segment: kleq30_mit_ev" in ui_line
+        assert "regio_top40_opted_in: True" in ui_line
 
     def test_config_block_omits_user_inputs_when_empty(self):
         cfg = _config_dict(user_inputs={})
@@ -1387,3 +1372,254 @@ class TestTariffModelRateRendering:
     def test_returns_none_when_base_model_missing(self):
         assert _format_tariff_model({"settlement_period": "quartal"}) is None
         assert _format_tariff_model({}) is None
+
+
+# ----- v0.16.1 — user_inputs label translation -------------------------------
+
+
+_REGIO_DECL = {
+    "key": "regio_top40_opted_in",
+    "type": "boolean",
+    "default": False,
+    "label_de": "Wahltarif TOP-40 abonniert",
+    "label_en": "Wahltarif TOP-40 subscribed",
+}
+
+_ENUM_DECL = {
+    "key": "ekz_segment",
+    "type": "enum",
+    "default": "kleq30_mit_ev",
+    "label_de": "Segment",
+    "label_en": "Segment",
+    "values": ["kleq30_mit_ev", "kleq30_ohne_ev"],
+    "value_labels_de": {
+        "kleq30_mit_ev": "≤30 kW mit Eigenverbrauch",
+        "kleq30_ohne_ev": "≤30 kW ohne Eigenverbrauch",
+    },
+    "value_labels_en": {
+        "kleq30_mit_ev": "≤30 kW with self-consumption",
+        "kleq30_ohne_ev": "≤30 kW without self-consumption",
+    },
+}
+
+
+class TestUserInputsLabelTranslation:
+    """v0.16.1 — Active user inputs line uses ``label_de`` /
+    ``value_labels_de`` from the rate window's declarations.
+    """
+
+    def test_uses_label_de_and_yes_no_for_boolean(self):
+        cfg = _config_dict(
+            user_inputs={"regio_top40_opted_in": False},
+            user_inputs_decl=[_REGIO_DECL],
+            notes_lang="de",
+        )
+        lines = _render_config_block(cfg)
+        ui_line = next(line for line in lines if "Active user inputs:" in line)
+        assert "Wahltarif TOP-40 abonniert: Nein" in ui_line
+
+    def test_uses_label_en_and_yes_no_for_boolean(self):
+        cfg = _config_dict(
+            user_inputs={"regio_top40_opted_in": True},
+            user_inputs_decl=[_REGIO_DECL],
+            notes_lang="en",
+        )
+        lines = _render_config_block(cfg)
+        ui_line = next(line for line in lines if "Active user inputs:" in line)
+        assert "Wahltarif TOP-40 subscribed: Yes" in ui_line
+
+    def test_uses_value_labels_for_enum(self):
+        cfg = _config_dict(
+            user_inputs={"ekz_segment": "kleq30_mit_ev"},
+            user_inputs_decl=[_ENUM_DECL],
+            notes_lang="de",
+        )
+        lines = _render_config_block(cfg)
+        ui_line = next(line for line in lines if "Active user inputs:" in line)
+        assert "Segment: ≤30 kW mit Eigenverbrauch" in ui_line
+
+    def test_falls_back_to_key_when_no_decl(self):
+        cfg = _config_dict(
+            user_inputs={"unknown_key": True},
+            user_inputs_decl=None,
+        )
+        lines = _render_config_block(cfg)
+        ui_line = next(line for line in lines if "Active user inputs:" in line)
+        # No decl → raw key, raw value (str(bool) → "True").
+        assert "unknown_key: True" in ui_line
+
+
+# ----- v0.16.1 — HKN-structure-aware line ------------------------------------
+
+
+class TestHknStructureGating:
+    """v0.16.1 — Issue 3: HKN line uses ``hkn_structure`` to render the
+    correct phrasing for utilities where opt-in isn't a user choice.
+    """
+
+    def test_additive_optin_yes(self):
+        cfg = _config_dict(
+            hkn_structure="additive_optin", hkn_optin=True, hkn_rp_kwh=3.00,
+        )
+        lines = _render_config_block(cfg)
+        assert any(
+            "HKN opt-in:** Yes (3.00 Rp/kWh additive)" in line
+            for line in lines
+        )
+
+    def test_additive_optin_no(self):
+        cfg = _config_dict(hkn_structure="additive_optin", hkn_optin=False)
+        lines = _render_config_block(cfg)
+        assert any("HKN opt-in:** No" in line for line in lines)
+
+    def test_bundled_renders_dedicated_line(self):
+        cfg = _config_dict(
+            hkn_structure="bundled", hkn_optin=False, hkn_rp_kwh=None,
+        )
+        lines = _render_config_block(cfg)
+        assert any(
+            "HKN:** bundled in base rate (no opt-in available)" in line
+            for line in lines
+        )
+        # The misleading "Yes/No" line must NOT appear for bundled.
+        assert not any("HKN opt-in:**" in line for line in lines)
+
+    def test_none_renders_dedicated_line(self):
+        cfg = _config_dict(
+            hkn_structure="none", hkn_optin=False, hkn_rp_kwh=None,
+        )
+        lines = _render_config_block(cfg)
+        assert any("HKN:** not paid by utility" in line for line in lines)
+        assert not any("HKN opt-in:**" in line for line in lines)
+
+    def test_legacy_snapshot_falls_back_to_yes_no(self):
+        # No `hkn_structure` key in cfg — pre-v0.16.1 snapshot path.
+        cfg = _config_dict(hkn_optin=True, hkn_rp_kwh=4.00)
+        cfg.pop("hkn_structure", None)
+        lines = _render_config_block(cfg)
+        assert any(
+            "HKN opt-in:** Yes (4.00 Rp/kWh additive)" in line
+            for line in lines
+        )
+
+
+# ----- v0.16.1 — Bonus % formatting + label-aware when-clause ----------------
+
+
+class TestBonusPercentFormatting:
+    """v0.16.1 — Issue 5: ``multiplier_pct=108`` renders as ``+8.00%``
+    (uplift), ``multiplier_pct=85`` as ``−15.00%`` (curtailment); long
+    ``note`` field is dropped; when-clause keys/values use labels.
+    """
+
+    def test_multiplier_pct_uplift_renders_as_plus_percent(self):
+        lines = _render_bonuses_lines([
+            {"kind": "multiplier_pct", "name": "TOP-40",
+             "multiplier_pct": 108.0, "applies_when": "opt_in"},
+        ])
+        assert any("TOP-40: +8.00% (opt-in)" in line for line in lines)
+
+    def test_multiplier_pct_curtailment_renders_as_minus_percent(self):
+        lines = _render_bonuses_lines([
+            {"kind": "multiplier_pct", "name": "Curtail-15",
+             "multiplier_pct": 85.0, "applies_when": "always"},
+        ])
+        assert any("Curtail-15: −15.00% (always)" in line for line in lines)
+
+    def test_bonus_note_is_dropped(self):
+        lines = _render_bonuses_lines([
+            {"kind": "additive_rp_kwh", "name": "Snow",
+             "rate_rp_kwh": 2.00, "applies_when": "always",
+             "note": "long German note that should not appear"},
+        ])
+        rendered = "\n".join(lines)
+        assert "Snow: 2.00 Rp/kWh (always)" in rendered
+        assert "long German note" not in rendered
+
+    def test_bonus_when_clause_label_translates(self):
+        lines = _render_bonuses_lines(
+            [
+                {"kind": "multiplier_pct", "name": "TOP-40",
+                 "multiplier_pct": 108.0, "applies_when": "opt_in",
+                 "when": {"user_inputs": {"regio_top40_opted_in": True}}},
+            ],
+            decls=[_REGIO_DECL],
+            lang="de",
+        )
+        rendered = "\n".join(lines)
+        assert "when Wahltarif TOP-40 abonniert=Ja" in rendered
+
+    def test_when_summary_label_translates_enum_value(self):
+        s = _render_when_summary(
+            {"user_inputs": {"ekz_segment": "kleq30_mit_ev"}},
+            decls=[_ENUM_DECL],
+            lang="de",
+        )
+        assert s == "Segment=≤30 kW mit Eigenverbrauch"
+
+
+# ----- v0.16.1 — Per-group suppression for multi-group reports ---------------
+
+
+class TestPerGroupSuppression:
+    """v0.16.1 — Issue 4.1: when one of multiple groups matches today's
+    fingerprint, only its data table renders (no second config block);
+    the active-today block already covered the config.
+    """
+
+    def test_two_groups_one_matches_today(self):
+        # Group A: matches today's config (Regio).
+        # Group B: different (EWZ).
+        rows = [
+            _row_with_meta(
+                "2026Q2", 6.20, 100.0, 6.20,
+                utility_key="regio_energie_solothurn",
+                utility_name="Regio",
+                kw=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                base_model="fixed_flat",
+            ),
+            _row_with_meta(
+                "2026Q1", 9.50, 200.0, 19.00,
+                utility_key="ewz", utility_name="EWZ",
+                kw=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                base_model="fixed_ht_nt",
+            ),
+        ]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=2,
+            config=_config_dict(
+                utility_key="regio_energie_solothurn",
+                utility_name="Regio Energie Solothurn",
+                kw=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                base_model="fixed_flat",
+            ),
+        )
+        _, body = _format_recompute_notification(report)
+        # Active-today renders Regio once.
+        assert "## Active configuration (today)" in body
+        # Today-matching group merges into "Per-period results (active config)".
+        assert "## Per-period results (active config)" in body
+        # The today-matching group MUST NOT also render as
+        # "Configuration in effect: ..." (the duplication v0.16.0 still had).
+        # The EWZ group does still render its full config block.
+        config_in_effect_count = body.count("## Configuration in effect:")
+        assert config_in_effect_count == 1, (
+            f"expected 1 'Configuration in effect' (EWZ only), got "
+            f"{config_in_effect_count}; body:\n{body}"
+        )
+
+    def test_single_group_matching_today_keeps_legacy_per_period_results(self):
+        # Single group case keeps the v0.16.0 heading (no "active config"
+        # qualifier needed when there's only one group).
+        rows = [_row_with_meta(
+            "2026Q1", 13.27, 1000.0, 132.70, base=10.27, hkn=3.00,
+            utility_key="ekz", utility_name="EKZ",
+            kw=25.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
+        )]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        assert "## Per-period results" in body
+        assert "## Per-period results (active config)" not in body
+        assert "## Configuration in effect:" not in body

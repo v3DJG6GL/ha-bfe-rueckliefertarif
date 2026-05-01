@@ -55,6 +55,9 @@ from .tariffs_db import (  # noqa: E402
     list_utility_keys,
     load_tariffs,
     match_applies_when,
+    pick_localised_label,
+    pick_value_label,
+    resolve_user_inputs_decl,
     self_consumption_relevant,
 )
 
@@ -491,21 +494,6 @@ def _derive_link_fallback_label(url: str, kind: str, lang: str) -> str:
     return f"{emoji} {kind_label} · {domain}" if domain else f"{emoji} {kind_label}"
 
 
-def _pick_localised_label(
-    d: dict, prefix: str, lang: str, fallback: str
-) -> str:
-    """Pick ``d[f"{prefix}_{lang}"]`` → ``d[f"{prefix}_de"]`` →
-    ``d[f"{prefix}_en"]`` → ``fallback``. Mirrors the locale chain used
-    elsewhere (``_user_input_label``, ``_pick_note_text``).
-    """
-    return (
-        d.get(f"{prefix}_{lang}")
-        or d.get(f"{prefix}_de")
-        or d.get(f"{prefix}_en")
-        or fallback
-    )
-
-
 def _resolve_tarif_urls(
     utility_key: str | None,
     valid_from_iso: str | None,
@@ -546,7 +534,7 @@ def _format_tarif_urls_block(urls: list[dict], lang: str) -> str:
             continue
         # "" sentinel triggers URL-derived fallback ("📄 PDF · domain")
         # below; with a curator label, _pick_localised_label wins.
-        raw_label = _pick_localised_label(entry, "label", lang, "")
+        raw_label = pick_localised_label(entry, "label", lang, "")
         if raw_label:
             label = raw_label
         else:
@@ -658,54 +646,6 @@ def _format_config_summary(config: dict) -> str:
 
 
 # v0.11.0 (Batch D) — declared user_inputs helpers ----------------------------
-
-
-def _resolve_user_inputs_decl(
-    utility_key: str, valid_from: str
-) -> tuple[dict, ...]:
-    """Resolve the rate window's ``user_inputs[]`` declarations active at
-    ``valid_from`` for the given utility. Returns ``()`` when the utility
-    doesn't exist, no rate window covers the date, or the rate window
-    declares nothing.
-
-    Bypasses ``resolve_tariff_at`` so the lookup doesn't depend on a kW
-    band — declarations live at rate-window scope, not power_tier scope.
-    """
-    if not utility_key or not valid_from:
-        return ()
-    try:
-        d = date.fromisoformat(valid_from)
-    except ValueError:
-        return ()
-    db = load_tariffs()
-    utility = db.get("utilities", {}).get(utility_key)
-    if utility is None:
-        return ()
-    rate = find_active(utility.get("rates", []), d)
-    if rate is None:
-        return ()
-    return tuple(rate.get("user_inputs") or ())
-
-
-def _user_input_label(decl: dict, lang: str) -> str:
-    """Pick the localized label for a user_input declaration. Falls back
-    to ``label_de`` (schema-required), then ``label_en``, then the key.
-    """
-    return _pick_localised_label(decl, "label", lang, decl.get("key", "—"))
-
-
-def _pick_value_label(decl: dict, value: str, lang: str) -> str:
-    """Look up the per-value display label from ``value_labels_<lang>`` on
-    a user_input declaration (schema v1.2.0 additive). Falls back to the
-    raw value when no label dict matches.
-    """
-    labels = (
-        decl.get(f"value_labels_{lang}")
-        or decl.get("value_labels_de")
-        or decl.get("value_labels_en")
-        or {}
-    )
-    return str(labels.get(value, value))
 
 
 def _candidates_for_decl(decl: dict) -> list | None:
@@ -829,7 +769,7 @@ def _add_user_input_fields_namespaced(
             options = [
                 selector.SelectOptionDict(
                     value=str(v),
-                    label=_pick_value_label(decl, str(v), lang),
+                    label=pick_value_label(decl, str(v), lang),
                 )
                 for v in values
             ]
@@ -1161,7 +1101,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         is_multi = len(periods) > 1
 
         errors: dict[str, str] = {}
-        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+        decl_list = resolve_user_inputs_decl(gate_utility, gate_valid_from)
 
         if user_input is not None:
             if is_multi:
@@ -1531,7 +1471,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         is_multi = len(periods) > 1
 
         errors: dict[str, str] = {}
-        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+        decl_list = resolve_user_inputs_decl(gate_utility, gate_valid_from)
 
         if user_input is not None:
             if is_multi:
@@ -1958,7 +1898,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         is_multi = len(periods) > 1
 
         errors: dict[str, str] = {}
-        decl_list = _resolve_user_inputs_decl(gate_utility, gate_valid_from)
+        decl_list = resolve_user_inputs_decl(gate_utility, gate_valid_from)
 
         if user_input is not None:
             # Delete branch (only when editing). Refuse to delete the last
@@ -1975,6 +1915,16 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                     }
                     self.hass.config_entries.async_update_entry(
                         self.config_entry, options=new_options
+                    )
+                    # v0.16.1 — trigger reload so the coordinator re-runs
+                    # auto-import and the recompute notification fires.
+                    # async_update_entry alone doesn't reload (apply_change
+                    # uses async_create_entry → OptionsFlowWithReload — but
+                    # manage_history goes via this direct-update path).
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(
+                            self.config_entry.entry_id
+                        )
                     )
                     return await self.async_step_manage_history()
 
@@ -2071,6 +2021,12 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 }
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, options=new_options
+                )
+                # v0.16.1 — same reload trigger as the delete branch above.
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(
+                        self.config_entry.entry_id
+                    )
                 )
                 return await self.async_step_manage_history()
 

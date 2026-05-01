@@ -486,12 +486,99 @@ class TestEditRowWizard:
         assert len(history) == 1
         assert history[0]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 15.5
 
+    @pytest.mark.asyncio
+    async def test_edit_row_save_triggers_reload(self):
+        # v0.16.1 — Issue 1: editing the active rate window via
+        # manage_history must trigger an entry reload so the coordinator
+        # re-runs auto-import and the recompute notification fires.
+        # async_update_entry alone does not reload; we add an explicit
+        # async_reload via async_create_task.
+        from custom_components.bfe_rueckliefertarif.const import (
+            CONF_EIGENVERBRAUCH_AKTIVIERT,
+            CONF_ENERGIEVERSORGER,
+            CONF_HKN_AKTIVIERT,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+            OPT_CONFIG_HISTORY,
+        )
+
+        existing = [
+            {"valid_from": "2026-02-01", "valid_to": None,
+             "config": {
+                 CONF_ENERGIEVERSORGER: "ekz",
+                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                 CONF_HKN_AKTIVIERT: True,
+                 "abrechnungs_rhythmus": "QUARTAL",
+             }},
+        ]
+        flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
+        flow._editing_idx = 0
+        await flow.async_step_edit_pick_row({
+            "valid_from": "2026-02-01",
+            CONF_ENERGIEVERSORGER: "ekz",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.5,
+        })
+        await flow.async_step_edit_row({
+            CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+            CONF_HKN_AKTIVIERT: True,
+            "delete": False,
+        })
+        # async_update_entry was called for the persistence...
+        flow.hass.config_entries.async_update_entry.assert_called_once()
+        # ...and async_create_task was called for the reload trigger.
+        flow.hass.async_create_task.assert_called_once()
+        # The arg to async_create_task is the reload coroutine; we don't
+        # need to await it (Mock returns a sentinel) — just assert the
+        # reload was scheduled against this entry's id.
+        flow.hass.config_entries.async_reload.assert_called_with("t")
+
+    @pytest.mark.asyncio
+    async def test_edit_row_delete_triggers_reload(self):
+        # Same reload contract on the delete branch.
+        from custom_components.bfe_rueckliefertarif.const import (
+            CONF_EIGENVERBRAUCH_AKTIVIERT,
+            CONF_ENERGIEVERSORGER,
+            CONF_HKN_AKTIVIERT,
+            CONF_INSTALLIERTE_LEISTUNG_KW,
+            OPT_CONFIG_HISTORY,
+        )
+
+        existing = [
+            {"valid_from": "2026-01-01", "valid_to": "2026-04-01",
+             "config": {
+                 CONF_ENERGIEVERSORGER: "ekz",
+                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                 CONF_HKN_AKTIVIERT: False,
+                 "abrechnungs_rhythmus": "QUARTAL",
+             }},
+            {"valid_from": "2026-04-01", "valid_to": None,
+             "config": {
+                 CONF_ENERGIEVERSORGER: "ekz",
+                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
+                 CONF_HKN_AKTIVIERT: True,
+                 "abrechnungs_rhythmus": "QUARTAL",
+             }},
+        ]
+        flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
+        flow._editing_idx = 0
+        await flow.async_step_edit_pick_row({
+            "valid_from": "2026-01-01",
+            CONF_ENERGIEVERSORGER: "ekz",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+        })
+        await flow.async_step_edit_row({"delete": True})
+        flow.hass.config_entries.async_update_entry.assert_called_once()
+        flow.hass.async_create_task.assert_called_once()
+        flow.hass.config_entries.async_reload.assert_called_with("t")
+
 
 class TestPickValueLabel:
     """v0.12.0 — value_labels_<lang> lookup for enum dropdowns."""
 
     def test_returns_locale_label(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+        from custom_components.bfe_rueckliefertarif.tariffs_db import pick_value_label
 
         decl = {
             "key": "model",
@@ -500,37 +587,37 @@ class TestPickValueLabel:
             "value_labels_de": {"fixpreis": "AEW Fixpreis", "rmp": "RMP"},
             "value_labels_en": {"fixpreis": "AEW Fixed", "rmp": "RMP"},
         }
-        assert _pick_value_label(decl, "fixpreis", "de") == "AEW Fixpreis"
-        assert _pick_value_label(decl, "fixpreis", "en") == "AEW Fixed"
+        assert pick_value_label(decl, "fixpreis", "de") == "AEW Fixpreis"
+        assert pick_value_label(decl, "fixpreis", "en") == "AEW Fixed"
 
     def test_falls_back_to_de_then_en(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+        from custom_components.bfe_rueckliefertarif.tariffs_db import pick_value_label
 
         decl_de_only = {
             "values": ["a"],
             "value_labels_de": {"a": "Eins"},
         }
         # Unknown locale → de fallback.
-        assert _pick_value_label(decl_de_only, "a", "fr") == "Eins"
+        assert pick_value_label(decl_de_only, "a", "fr") == "Eins"
 
         decl_en_only = {
             "values": ["a"],
             "value_labels_en": {"a": "One"},
         }
         # No de → en fallback.
-        assert _pick_value_label(decl_en_only, "a", "fr") == "One"
+        assert pick_value_label(decl_en_only, "a", "fr") == "One"
 
     def test_falls_back_to_raw_value_when_no_labels(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+        from custom_components.bfe_rueckliefertarif.tariffs_db import pick_value_label
 
         decl = {"values": ["fixpreis"]}
-        assert _pick_value_label(decl, "fixpreis", "de") == "fixpreis"
+        assert pick_value_label(decl, "fixpreis", "de") == "fixpreis"
 
     def test_unknown_value_returns_value(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _pick_value_label
+        from custom_components.bfe_rueckliefertarif.tariffs_db import pick_value_label
 
         decl = {"value_labels_de": {"a": "Eins"}}
-        assert _pick_value_label(decl, "z", "de") == "z"
+        assert pick_value_label(decl, "z", "de") == "z"
 
 
 class TestFormatTarifUrlsBlock:

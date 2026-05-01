@@ -307,6 +307,69 @@ def self_consumption_relevant(
     return False
 
 
+def pick_localised_label(
+    d: dict, prefix: str, lang: str, fallback: str
+) -> str:
+    """Pick ``d[f"{prefix}_{lang}"]`` → ``d[f"{prefix}_de"]`` →
+    ``d[f"{prefix}_en"]`` → ``fallback``. Mirrors the locale chain used
+    elsewhere (``user_input_label``, note text picking).
+    """
+    return (
+        d.get(f"{prefix}_{lang}")
+        or d.get(f"{prefix}_de")
+        or d.get(f"{prefix}_en")
+        or fallback
+    )
+
+
+def resolve_user_inputs_decl(
+    utility_key: str, valid_from: str
+) -> tuple[dict, ...]:
+    """Resolve the rate window's ``user_inputs[]`` declarations active at
+    ``valid_from`` for the given utility. Returns ``()`` when the utility
+    doesn't exist, no rate window covers the date, or the rate window
+    declares nothing.
+
+    Bypasses ``resolve_tariff_at`` so the lookup doesn't depend on a kW
+    band — declarations live at rate-window scope, not power_tier scope.
+    """
+    if not utility_key or not valid_from:
+        return ()
+    try:
+        d = date.fromisoformat(valid_from)
+    except ValueError:
+        return ()
+    db = load_tariffs()
+    utility = db.get("utilities", {}).get(utility_key)
+    if utility is None:
+        return ()
+    rate = find_active(utility.get("rates", []), d)
+    if rate is None:
+        return ()
+    return tuple(rate.get("user_inputs") or ())
+
+
+def user_input_label(decl: dict, lang: str) -> str:
+    """Pick the localized label for a user_input declaration. Falls back
+    to ``label_de`` (schema-required), then ``label_en``, then the key.
+    """
+    return pick_localised_label(decl, "label", lang, decl.get("key", "—"))
+
+
+def pick_value_label(decl: dict, value: str, lang: str) -> str:
+    """Look up the per-value display label from ``value_labels_<lang>`` on
+    a user_input declaration (schema v1.2.0 additive). Falls back to the
+    raw value when no label dict matches.
+    """
+    labels = (
+        decl.get(f"value_labels_{lang}")
+        or decl.get("value_labels_de")
+        or decl.get("value_labels_en")
+        or {}
+    )
+    return str(labels.get(value, value))
+
+
 def user_inputs_decl_signature(rate: dict | None) -> tuple:
     """Stable hashable signature of a rate window's ``user_inputs[]``
     declarations.

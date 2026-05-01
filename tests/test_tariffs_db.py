@@ -1210,3 +1210,83 @@ class TestSelfConsumptionRelevantPublicExport:
         }
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
         assert tdb.self_consumption_relevant("syn", "2026-04-01", 10.0) is False
+
+
+class TestUserInputLabelHelpers:
+    """v0.16.1 — helpers moved from config_flow to tariffs_db so the
+    recompute renderer can label-translate user_inputs without a
+    circular import.
+    """
+
+    def test_pick_localised_label_picks_lang_then_de_then_en(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            pick_localised_label,
+        )
+        d = {"label_de": "Wahltarif", "label_en": "Choice tariff"}
+        assert pick_localised_label(d, "label", "de", "—") == "Wahltarif"
+        assert pick_localised_label(d, "label", "fr", "—") == "Wahltarif"  # de fallback
+        assert pick_localised_label({}, "label", "de", "fb") == "fb"
+
+    def test_user_input_label_falls_back_to_key(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            user_input_label,
+        )
+        assert (
+            user_input_label({"key": "regio_top40_opted_in"}, "de")
+            == "regio_top40_opted_in"
+        )
+        assert (
+            user_input_label({"key": "k", "label_de": "L"}, "de")
+            == "L"
+        )
+
+    def test_pick_value_label_falls_back_to_value(self):
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            pick_value_label,
+        )
+        decl = {"value_labels_de": {"a": "Alpha"}}
+        assert pick_value_label(decl, "a", "de") == "Alpha"
+        assert pick_value_label(decl, "z", "de") == "z"
+        assert pick_value_label({}, "v", "de") == "v"
+
+    def test_resolve_user_inputs_decl_returns_active_window_decls(
+        self, monkeypatch
+    ):
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {
+                "syn": {"name_de": "Syn", "rates": [{
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal", "cap_mode": False,
+                    "user_inputs": [
+                        {"key": "k1", "type": "boolean", "default": False,
+                         "label_de": "Eins"}
+                    ],
+                    "power_tiers": [{
+                        "kw_min": 0, "kw_max": None,
+                        "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                        "hkn_rp_kwh": 0.0, "hkn_structure": "none",
+                    }],
+                }]},
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        decls = tdb.resolve_user_inputs_decl("syn", "2026-04-01")
+        assert len(decls) == 1
+        assert decls[0]["key"] == "k1"
+
+    def test_resolve_user_inputs_decl_returns_empty_when_no_window(
+        self, monkeypatch
+    ):
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [],
+            "utilities": {"syn": {"name_de": "Syn", "rates": []}},
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        assert tdb.resolve_user_inputs_decl("syn", "2026-04-01") == ()
