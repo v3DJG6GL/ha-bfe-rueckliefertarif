@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Tarifkonfiguration — Wähle Elektrizitätswerk, Datum & Leistung",
-        "description": "Wähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung-Übersicht](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "Wähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)]({env_url}) · [BFE Einspeisevergütung-Übersicht]({agency_url})",
         "data": {
           "energieversorger": "Energieversorger",
           "valid_from": "Gültig ab",
@@ -113,7 +113,7 @@
       },
       "add_pick_row": {
         "title": "Tarif hinzufügen — Wähle Elektrizitätswerk, Datum & Leistung",
-        "description": "**Aktuell aktiv:** {current_summary}\n\nWähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung-Übersicht](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "**Aktuell aktiv:** {current_summary}\n\nWähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)]({env_url}) · [BFE Einspeisevergütung-Übersicht]({agency_url})",
         "data": {
           "valid_from": "Gültig ab",
           "energieversorger": "Energieversorger",
@@ -122,7 +122,7 @@
       },
       "edit_pick_row": {
         "title": "Tarif bearbeiten — Wähle Elektrizitätswerk, Datum & Leistung",
-        "description": "**Aktuell aktiv:** {current_summary}\n\nWähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung-Übersicht](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "**Aktuell aktiv:** {current_summary}\n\nWähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)]({env_url}) · [BFE Einspeisevergütung-Übersicht]({agency_url})",
         "data": {
           "valid_from": "Gültig ab",
           "energieversorger": "Energieversorger",

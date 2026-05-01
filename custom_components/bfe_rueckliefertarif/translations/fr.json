@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Configuration tarifaire — choisir fournisseur, date & puissance",
-        "description": "Choisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12) · [Aperçu rémunération de la reprise OFEN](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "Choisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url}) · [Aperçu rémunération de la reprise OFEN]({agency_url})",
         "data": {
           "energieversorger": "Fournisseur",
           "valid_from": "Valide dès",
@@ -113,7 +113,7 @@
       },
       "add_pick_row": {
         "title": "Ajouter un tarif — choisir fournisseur, date & puissance",
-        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12) · [Aperçu rémunération de la reprise OFEN](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url}) · [Aperçu rémunération de la reprise OFEN]({agency_url})",
         "data": {
           "valid_from": "Valide dès",
           "energieversorger": "Fournisseur",
@@ -122,7 +122,7 @@
       },
       "edit_pick_row": {
         "title": "Modifier le tarif — choisir fournisseur, date & puissance",
-        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12) · [Aperçu rémunération de la reprise OFEN](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url}) · [Aperçu rémunération de la reprise OFEN]({agency_url})",
         "data": {
           "valid_from": "Valide dès",
           "energieversorger": "Fournisseur",

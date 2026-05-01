@@ -1689,6 +1689,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 "current_summary": (
                     _format_config_summary(ctx_cfg) if ctx_cfg else "—"
                 ),
+                **_source_links(self.hass),
             },
         )
 

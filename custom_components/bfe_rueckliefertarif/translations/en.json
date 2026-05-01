@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Tariff configuration — pick utility, date & power",
-        "description": "Pick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung overview](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "Pick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)]({env_url}) · [BFE Einspeisevergütung overview]({agency_url})",
         "data": {
           "energieversorger": "Utility",
           "valid_from": "Valid from",
@@ -113,7 +113,7 @@
       },
       "add_pick_row": {
         "title": "Add tariff — pick utility, date & power",
-        "description": "**Currently active:** {current_summary}\n\nPick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung overview](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "**Currently active:** {current_summary}\n\nPick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)]({env_url}) · [BFE Einspeisevergütung overview]({agency_url})",
         "data": {
           "valid_from": "Valid from",
           "energieversorger": "Utility",
@@ -122,7 +122,7 @@
       },
       "edit_pick_row": {
         "title": "Edit tariff — pick utility, date & power",
-        "description": "**Currently active:** {current_summary}\n\nPick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung overview](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
+        "description": "**Currently active:** {current_summary}\n\nPick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)]({env_url}) · [BFE Einspeisevergütung overview]({agency_url})",
         "data": {
           "valid_from": "Valid from",
           "energieversorger": "Utility",
