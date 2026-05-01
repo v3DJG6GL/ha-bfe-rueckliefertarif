@@ -152,7 +152,7 @@ class BfeCoordinator(DataUpdateCoordinator):
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_ENERGIEVERSORGER,
             CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_INSTALLIERTE_LEISTUNG_KWP,
             CONF_USER_INPUTS,
         )
         from .tariff import effective_rp_kwh
@@ -161,7 +161,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         utility_key = self._config.get(CONF_ENERGIEVERSORGER)
         if not utility_key:
             return None
-        kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0)
+        kw = float(self._config.get(CONF_INSTALLIERTE_LEISTUNG_KWP, 0.0) or 0.0)
         eigenverbrauch = bool(self._config.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True))
         hkn_aktiviert = bool(self._config.get(CONF_HKN_AKTIVIERT, False))
         # v0.11.0 (Batch D) — declared user choices from the active history
@@ -425,7 +425,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         rt = tariff_cfg.resolved
         if snap.get("utility_key") != rt.utility_key:
             return True
-        if snap.get("kw") != tariff_cfg.installierte_leistung_kw:
+        if snap.get("kwp") != tariff_cfg.installierte_leistung_kwp:
             return True
         if snap.get("eigenverbrauch_aktiviert") != tariff_cfg.eigenverbrauch_aktiviert:
             return True
@@ -466,7 +466,7 @@ class BfeCoordinator(DataUpdateCoordinator):
         rt = tariff_cfg.resolved
         if prior_snapshot.get("utility_key") != rt.utility_key:
             return True
-        if prior_snapshot.get("kw") != tariff_cfg.installierte_leistung_kw:
+        if prior_snapshot.get("kwp") != tariff_cfg.installierte_leistung_kwp:
             return True
         if prior_snapshot.get("eigenverbrauch_aktiviert") != tariff_cfg.eigenverbrauch_aktiviert:
             return True

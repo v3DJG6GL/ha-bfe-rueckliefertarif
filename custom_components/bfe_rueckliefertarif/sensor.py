@@ -24,7 +24,7 @@ from .const import (
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
-    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_INSTALLIERTE_LEISTUNG_KWP,
     CONF_NAMENSPRAEFIX,
     DOMAIN,
 )
@@ -72,7 +72,7 @@ async def async_setup_entry(
         rt = resolve_tariff_at(
             cfg[CONF_ENERGIEVERSORGER],
             date.today(),
-            kw=float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0) or 0.0),
+            kw=float(cfg.get(CONF_INSTALLIERTE_LEISTUNG_KWP, 0.0) or 0.0),
             eigenverbrauch=bool(cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)),
         )
         if cfg.get(CONF_HKN_AKTIVIERT, False):

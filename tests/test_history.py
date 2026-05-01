@@ -30,7 +30,7 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
-    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_INSTALLIERTE_LEISTUNG_KWP,
     OPT_CONFIG_HISTORY,
 )
 from custom_components.bfe_rueckliefertarif.services import _resolve_config_at
@@ -45,7 +45,7 @@ def _cfg(
 ):
     return {
         CONF_ENERGIEVERSORGER: utility,
-        CONF_INSTALLIERTE_LEISTUNG_KW: kw,
+        CONF_INSTALLIERTE_LEISTUNG_KWP: kw,
         CONF_EIGENVERBRAUCH_AKTIVIERT: ev,
         CONF_HKN_AKTIVIERT: hkn,
         CONF_ABRECHNUNGS_RHYTHMUS: billing,
@@ -56,7 +56,7 @@ class TestResolveConfigAt:
     def test_no_history_falls_back_to_entry_data(self):
         out = _resolve_config_at({}, date(2024, 6, 1), _cfg(utility="bkw", kw=15.0))
         assert out[CONF_ENERGIEVERSORGER] == "bkw"
-        assert out[CONF_INSTALLIERTE_LEISTUNG_KW] == 15.0
+        assert out[CONF_INSTALLIERTE_LEISTUNG_KWP] == 15.0
 
     def test_picks_active_record_at_date(self):
         opts = {
@@ -81,7 +81,7 @@ class TestResolveConfigAt:
         # Post utility switch
         r = _resolve_config_at(opts, date(2025, 6, 1), _cfg())
         assert r[CONF_ENERGIEVERSORGER] == "ewz"
-        assert r[CONF_INSTALLIERTE_LEISTUNG_KW] == 35.0
+        assert r[CONF_INSTALLIERTE_LEISTUNG_KWP] == 35.0
         assert r[CONF_ABRECHNUNGS_RHYTHMUS] == ABRECHNUNGS_RHYTHMUS_MONAT
 
     def test_predating_first_record_falls_back_to_entry_data(self):
@@ -120,7 +120,7 @@ class TestMakeSentinelRecord:
         assert rec["valid_from"] == "1970-01-01"
         assert rec["valid_to"] is None
         assert rec["config"][CONF_ENERGIEVERSORGER] == "bkw"
-        assert rec["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 12.5
+        assert rec["config"][CONF_INSTALLIERTE_LEISTUNG_KWP] == 12.5
         assert rec["config"][CONF_HKN_AKTIVIERT] is True
 
 

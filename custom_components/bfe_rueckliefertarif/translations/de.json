@@ -2,17 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "Tarifkonfiguration — Versorger, Datum & Leistung wählen",
-        "description": "Wähle deinen **Energieversorger**, das **Aktiv-ab-Datum** und die **installierte Leistung** deiner Anlage. Der nächste Schritt zeigt versorgerspezifische Optionen (Eigenverbrauch, HKN, versorgerspezifische Felder).\n\nVergleichstabelle der Versorger (Basisvergütung, HKN-Vergütung, Cap aktiv) im [README]({agency_url}).",
+        "title": "Tarifkonfiguration — Wähle Elektrizitätswerk, Datum & Leistung",
+        "description": "Wähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung-Übersicht](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
           "energieversorger": "Energieversorger",
           "valid_from": "Gültig ab",
-          "installierte_leistung_kw": "Installierte Leistung (kW)"
-        },
-        "data_description": {
-          "energieversorger": "## Energieversorger\nDer Versorger, der die Rücklieferung vergütet. HKN-Gate, Hinweise, Tarifinformationen und versorgerspezifische Felder im nächsten Schritt richten sich nach dieser Wahl.",
-          "valid_from": "## Inbetriebnahme-Datum\nDatum, ab dem deine PV-Anlage am Netz ist (oder ab dem diese Konfiguration gilt). Verankert die Konfigurations-Historie — Quartale vor diesem Datum werden bei einer Neuberechnung still übersprungen, weil keine Tarif-Konfiguration sie abdeckt.\n\nStandardwert: aktueller Quartalsanfang. Setze das tatsächliche Inbetriebnahme-Datum für eine saubere Import-Historie.",
-          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |"
+          "installierte_leistung_kwp": "Installierte Leistung (kWp)"
         }
       },
       "tariff_pick": {
@@ -20,31 +15,31 @@
         "description": "Wähle das Datum, ab dem diese Konfiguration gilt, und die installierte Spitzenleistung. Im nächsten Schritt erscheinen die versorgerspezifischen Optionen (Eigenverbrauch, HKN, versorgerspezifische Felder).",
         "data": {
           "valid_from": "Aktiv seit",
-          "installierte_leistung_kw": "Installierte Leistung (kW)"
+          "installierte_leistung_kwp": "Installierte Leistung (kWp)"
         },
         "data_description": {
           "valid_from": "## Inbetriebnahme-Datum\nDatum, ab dem deine PV-Anlage am Netz ist (oder ab dem diese Konfiguration gilt). Verankert die Konfigurations-Historie — Quartale vor diesem Datum werden bei einer Neuberechnung still übersprungen, weil keine Tarif-Konfiguration sie abdeckt.\n\nStandardwert: aktueller Quartalsanfang. Setze das tatsächliche Inbetriebnahme-Datum für eine saubere Import-Historie.",
-          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |"
+          "installierte_leistung_kwp": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |"
         }
       },
       "tariff_details": {
-        "title": "Tarif konfigurieren — {utility_name} ab {valid_from}",
+        "title": "Tarifkonfiguration — Versorger-spezifische Optionen",
         "description": "Trag deine Anlagedaten für **{utility_name}** ab **{valid_from}** ein — die Versorgerseiten (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "eigenverbrauch_aktiviert": "Eigenverbrauch aktiviert",
-          "hkn_aktiviert": "HKN an Versorger verkaufen?",
+          "eigenverbrauch_aktiviert": "Eigenverbrauch",
+          "hkn_aktiviert": "HKN (Herkunftsnachweis)",
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "supply_product": "Bezug Ökostrom-Produkt",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         },
         "data_description": {
           "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** wenn ein Teil deiner PV-Produktion vor Ort verbraucht wird (typische Wohn- / Gewerbeanlage). **Nein** für Volleinspeisung (gesamte Produktion ins Netz).\n\nBeeinflusst das Mindestvergütungsband — bei 30–<150 kW ist der Unterschied erheblich (degressiv 180÷kW mit Eigenverbrauch vs. flat 6.20 Rp/kWh ohne).",
-          "hkn_aktiviert": "## HKN-Opt-in (Herkunftsnachweis)\n**Ja** wenn du *Herkunftsnachweise* an deinen Versorger verkaufst. Die meisten Versorger bieten das als Opt-in über das Kundenportal an.\n\nDer Satz ist vom Versorger fixiert und in der Tarif-Datenbank hinterlegt — keine Eingabe nötig. **Nein** wenn du keine HKN verkaufst oder die Anlage anderweitig zertifiziert hast (z. B. *naturemade star*) und HKN auf dem freien Markt verkaufst."
+          "hkn_aktiviert": "Du bekommst mehr für deinen eingespiesenen Solarstrom vergütet, wenn du den ökologischen Mehrwert **Herkunftsnachweis (HKN)** an dein Elektrizitätswerk verkaufst. Die meisten Versorger bieten dies als Opt-in an — registriere dich im Kundenportal des Versorgers. Der Tarif ist versorger-spezifisch festgelegt; keine manuelle Eingabe nötig. Auf **Nein**, wenn du keine HKN verkaufst oder die Anlage anderweitig (z.B. *naturemade star*) zertifiziert ist."
         }
       },
       "entities": {
-        "title": "Home-Assistant-Entitäten",
+        "title": "Zuordnung von Entitäten",
         "description": "Verbinde kWh-Zähler und CHF-Sensor und vergib einen Anlagen-Namen.",
         "data": {
           "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
@@ -55,15 +50,15 @@
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh-Zähler\nDer **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
           "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
-          "plant_name": "## Anlagen-Name\nStabiler Anzeigename dieser PV-Anlage — z. B. `Dach Süd`, `Garage Carport`. Erscheint als Integrations-Titel in **Einstellungen → Geräte & Dienste** und liefert den Standardwert für das Namens-Präfix unten.\n\n**Bleibt bei späterem Versorgerwechsel gleich** (Versorgerwechsel laufen über *Konfigurieren → Konfigurationsänderung anwenden*).",
-          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** dieser Integration vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`).\n\n**Leer lassen**, um aus dem Anlagen-Namen abzuleiten (z. B. `dach_sud_rueckliefertarif`). *Nur explizit setzen* für einen eigenen Wert oder bei Kollision mit einer existierenden Entity."
+          "plant_name": "Anzeigename für diese PV-Anlage – z.B. `PV-Anlage`. Wird als Titel der Integration unter „Einstellungen\" → „Geräte & Dienste\" sowie als Standard-Präfix für Entitäten verwendet.",
+          "namenspraefix": "Das Präfix für die *Sensoren* dieser Integration (z.B. `sensor.PREFIX_basisverguetung`). Leer lassen, um das Präfix automatisch aus dem Anzeigenamen abzuleiten (z.B. `sensor.solaranlage_basisverguetung`)."
         }
       },
       "apply_change_details": {
         "data": {
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "supply_product": "Bezug Ökostrom-Produkt",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         }
       },
@@ -71,7 +66,7 @@
         "data": {
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "supply_product": "Bezug Ökostrom-Produkt",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         }
       },
@@ -79,7 +74,7 @@
         "data": {
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "supply_product": "Bezug Ökostrom-Produkt",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         }
       },
@@ -87,7 +82,7 @@
         "data": {
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "supply_product": "Bezug Ökostrom-Produkt",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung"
         }
       }
@@ -106,7 +101,6 @@
         "title": "BFE Rückliefertarif — Optionen",
         "description": "Was möchtest du tun?",
         "menu_options": {
-          "apply_change": "Konfigurationsänderung anwenden (Versorger / kW / HKN / Abrechnung)",
           "manage_history": "Konfigurationsverlauf verwalten",
           "recompute_history": "Gesamte Historie neu berechnen",
           "refresh_data": "Preise & Tarifdaten aktualisieren",
@@ -117,86 +111,55 @@
         "title": "Konfigurationsverlauf verwalten",
         "description": "Klick auf eine Zeile zum Bearbeiten, **Neuer Übergang** für eine Änderung (z. B. Versorgerwechsel, PV-Erweiterung, HKN-Zertifikat) oder **Fertig** zum Beenden. Vergangene Quartale werden mit den damals gültigen Werten neu berechnet."
       },
-      "apply_change": {
-        "title": "Konfigurationsänderung — Versorger & Datum wählen",
-        "description": "Wähle den Versorger und das Datum, ab dem die Änderung gilt. Im nächsten Schritt erscheinen die versorgerspezifischen Optionen (Hinweise, Tarifinformationen, versorgerspezifische Felder).\n\n**Aktuell aktiv:** {current_summary}",
+      "add_pick_row": {
+        "title": "Tarif hinzufügen — Wähle Elektrizitätswerk, Datum & Leistung",
+        "description": "**Aktuell aktiv:** {current_summary}\n\nWähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung-Übersicht](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
           "valid_from": "Gültig ab",
           "energieversorger": "Energieversorger",
-          "installierte_leistung_kw": "Installierte Leistung (kW)"
-        },
-        "data_description": {
-          "valid_from": "## Wann die Änderung greift\nStandardmässig der Beginn des aktuellen Quartals. Bei Versorgerwechsel mitten im Quartal das tatsächliche Wechseldatum eintragen — der Recompute nutzt den neuen Versorger ab dem Quartal, das an oder nach diesem Datum beginnt.",
-          "energieversorger": "## Energieversorger\nDer Versorger, der die Einspeisung vergütet. Der nächste Schritt zeigt dessen HKN-Gate, Hinweise, Tarifinformationen und allfällige versorgerspezifische Optionen."
-        }
-      },
-      "apply_change_details": {
-        "title": "Konfigurationsänderung — {utility_name} ab {valid_from}",
-        "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** ausfüllen. Versorgerseitige Werte (HKN-Satz, Cap-Verhalten, Fixpreise) kommen aus der mitgelieferten Tarif-Datenbank und sind hier nicht editierbar.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
-        "data": {
-          "installierte_leistung_kw": "Installierte Leistung (kW)",
-          "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in",
-          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
-          "fixpreis_rmp": "Vergütungsmodell Rücklieferung",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
-          "supply_product": "Bezug Ökostrom-Produkt"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung in kW. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
-          "eigenverbrauch_aktiviert": "## Eigenverbrauch\n**Ja** für typische Wohn-/Gewerbeanlagen; **Nein** für Volleinspeisung.",
-          "hkn_aktiviert": "## HKN-Opt-in\n**Ja** wenn du *Herkunftsnachweise* an den Versorger verkaufst. Satz wird vom Versorger gesetzt."
-        }
-      },
-      "add_pick_row": {
-        "title": "Übergang hinzufügen — Versorger & Datum wählen",
-        "description": "Wähle den Versorger und das Datum, ab dem dieser Übergang gilt. Im nächsten Schritt erscheinen die versorgerspezifischen Optionen.",
-        "data": {
-          "valid_from": "Aktiv ab",
-          "energieversorger": "Energieversorger",
-          "installierte_leistung_kw": "Installierte Leistung (kW)"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "DC-Spitzenleistung in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung**."
+          "installierte_leistung_kwp": "Installierte Leistung (kWp)"
         }
       },
       "edit_pick_row": {
-        "title": "Übergang bearbeiten — Versorger & Datum",
-        "description": "Versorger und/oder Aktiv-ab-Datum dieses Übergangs anpassen. Im nächsten Schritt kannst du kW / Eigenverbrauch / HKN sowie versorgerspezifische Felder ändern.",
+        "title": "Tarif bearbeiten — Wähle Elektrizitätswerk, Datum & Leistung",
+        "description": "**Aktuell aktiv:** {current_summary}\n\nWähle das Elektrizitätswerk, die maximale Leistung der Photovoltaikanlage (kWp) und das Datum, an dem die Tarifkonfiguration in Kraft tritt.\n\nReferenzen: [Mindestvergütungs-Tabelle (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung-Übersicht](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
-          "valid_from": "Aktiv ab",
+          "valid_from": "Gültig ab",
           "energieversorger": "Energieversorger",
-          "installierte_leistung_kw": "Installierte Leistung (kW)"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "DC-Spitzenleistung in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung**."
+          "installierte_leistung_kwp": "Installierte Leistung (kWp)"
         }
       },
       "add_new_row": {
-        "title": "Übergang hinzufügen — {utility_name} ab {valid_from}",
+        "title": "Tarif hinzufügen — Versorger-spezifische Optionen",
         "description": "Anlagedaten für **{utility_name}** ab **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "installierte_leistung_kw": "Installierte Leistung (kW)",
+          "installierte_leistung_kwp": "Installierte Leistung (kWp)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in",
+          "hkn_aktiviert": "HKN (Herkunftsnachweis)",
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "supply_product": "Bezug Ökostrom-Produkt"
+        },
+        "data_description": {
+          "hkn_aktiviert": "Du bekommst mehr für deinen eingespiesenen Solarstrom vergütet, wenn du den ökologischen Mehrwert **Herkunftsnachweis (HKN)** an dein Elektrizitätswerk verkaufst. Die meisten Versorger bieten dies als Opt-in an — registriere dich im Kundenportal des Versorgers. Der Tarif ist versorger-spezifisch festgelegt; keine manuelle Eingabe nötig. Auf **Nein**, wenn du keine HKN verkaufst oder die Anlage anderweitig (z.B. *naturemade star*) zertifiziert ist."
         }
       },
       "edit_row": {
-        "title": "Übergang bearbeiten — {utility_name} ab {valid_from}",
+        "title": "Tarif bearbeiten — Versorger-spezifische Optionen",
         "description": "Anlagedaten für **{utility_name}** ab **{valid_from}** aktualisieren oder **Diesen Eintrag löschen** ankreuzen, um die Zeile zu entfernen.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "installierte_leistung_kw": "Installierte Leistung (kW)",
+          "installierte_leistung_kwp": "Installierte Leistung (kWp)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in",
+          "hkn_aktiviert": "HKN (Herkunftsnachweis)",
           "delete": "Diesen Eintrag löschen",
           "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
           "fixpreis_rmp": "Vergütungsmodell Rücklieferung",
-          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "supply_product": "Bezug Ökostrom-Produkt"
+        },
+        "data_description": {
+          "hkn_aktiviert": "Du bekommst mehr für deinen eingespiesenen Solarstrom vergütet, wenn du den ökologischen Mehrwert **Herkunftsnachweis (HKN)** an dein Elektrizitätswerk verkaufst. Die meisten Versorger bieten dies als Opt-in an — registriere dich im Kundenportal des Versorgers. Der Tarif ist versorger-spezifisch festgelegt; keine manuelle Eingabe nötig. Auf **Nein**, wenn du keine HKN verkaufst oder die Anlage anderweitig (z.B. *naturemade star*) zertifiziert ist."
         }
       },
       "recompute_history": {
@@ -214,8 +177,8 @@
         }
       },
       "entities": {
-        "title": "Home-Assistant-Entitäten neu verbinden",
-        "description": "Entitäten neu verbinden und diesen Eintrag umbenennen.",
+        "title": "Zuordnung von Entitäten",
+        "description": "Verbinde kWh-Zähler und CHF-Sensor und vergib einen Anlagen-Namen.",
         "data": {
           "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
           "rueckliefervergutung_chf": "Rückliefervergütung (CHF)",
@@ -225,8 +188,8 @@
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh-Zähler\nDer **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
           "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
-          "plant_name": "## Anlagen-Name\nAnzeigename dieses Eintrags — sichtbar in **Einstellungen → Geräte & Dienste**. Bearbeiten ändert den Integrations-Titel.",
-          "namenspraefix": "## Namens-Präfix\nWird den **Diagnose-Sensoren** dieser Integration vorangestellt (z. B. `sensor.PRAEFIX_basisverguetung`).\n\n⚠ **Eine Änderung verwaist Long-Term-Statistics, die am alten Präfix hängen** — nur ändern, wenn die Konsequenz verstanden ist."
+          "plant_name": "Anzeigename für diese PV-Anlage – z.B. `PV-Anlage`. Wird als Titel der Integration unter „Einstellungen\" → „Geräte & Dienste\" verwendet.",
+          "namenspraefix": "Das Präfix für die *Sensoren* dieser Integration (z.B. `sensor.PREFIX_basisverguetung`). ⚠️ Das Ändern des Präfix verwaist Langzeit-Statistiken, die mit dem bisherigen Präfix verknüpft sind — nur ändern, wenn du die Konsequenzen verstehst!"
         }
       }
     },

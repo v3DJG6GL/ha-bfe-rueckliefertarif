@@ -15,7 +15,7 @@ TIMEZONE = "Europe/Zurich"
 # straight from data/tariffs.json now, with the user only providing personal
 # inputs (kW, Eigenverbrauch yes/no, HKN opt-in yes/no).
 CONF_ENERGIEVERSORGER = "energieversorger"
-CONF_INSTALLIERTE_LEISTUNG_KW = "installierte_leistung_kw"
+CONF_INSTALLIERTE_LEISTUNG_KWP = "installierte_leistung_kwp"
 CONF_EIGENVERBRAUCH_AKTIVIERT = "eigenverbrauch_aktiviert"
 CONF_HKN_AKTIVIERT = "hkn_aktiviert"
 CONF_ABRECHNUNGS_RHYTHMUS = "abrechnungs_rhythmus"
@@ -55,7 +55,7 @@ CONF_USER_INPUTS = "user_inputs"
 # in this tuple is stored in each history record's "config" sub-dict.
 CONFIG_HISTORY_FIELDS = (
     CONF_ENERGIEVERSORGER,
-    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_INSTALLIERTE_LEISTUNG_KWP,
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_HKN_AKTIVIERT,
     CONF_ABRECHNUNGS_RHYTHMUS,

@@ -45,7 +45,7 @@ class TariffConfig:
     """
 
     eigenverbrauch_aktiviert: bool
-    installierte_leistung_kw: float
+    installierte_leistung_kwp: float
     hkn_aktiviert: bool
     hkn_rp_kwh_resolved: float          # JSON's HKN if opted in, else 0.0
     resolved: ResolvedTariff

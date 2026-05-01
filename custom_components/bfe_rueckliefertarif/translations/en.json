@@ -3,48 +3,43 @@
     "step": {
       "user": {
         "title": "Tariff configuration — pick utility, date & power",
-        "description": "Pick your **utility**, the **date** this configuration takes effect, and your plant's **installed power**. The next step shows utility-specific options (self-consumption, HKN, utility-specific fields).\n\nFor a comparison of utilities (base price, HKN remuneration, cap enforcement), see the [README utility overview]({agency_url}).",
+        "description": "Pick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung overview](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
           "energieversorger": "Utility",
-          "valid_from": "Active since",
-          "installierte_leistung_kw": "Installed power (kW)"
-        },
-        "data_description": {
-          "energieversorger": "## Utility\nThe utility paying for the feed-in. The next step's HKN gate, notes, tariff documentation links, and any utility-specific options reflect this choice.",
-          "valid_from": "## Plant install date\nThe date your PV plant came online (or this configuration started applying). The integration uses this as the anchor of your config history — quarters before this date are silently skipped during recompute since no tariff configuration covers them.\n\nDefault: current quarter start. Set to your actual install date for a clean import history.",
-          "installierte_leistung_kw": "## Installed peak power\nThe DC peak rating of your PV plant in kilowatts. Used to look up the federal **Mindestvergütung** floor ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, in force since 1.1.2026):\n\n| Size | Mode | Federal floor (Rp/kWh) |\n|---|---|---|\n| <30 kW | any | **6.00** |\n| 30–<150 kW | with self-consumption | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | feed-in only | **6.20** |\n| ≥150 kW | any | no federal floor |"
+          "valid_from": "Valid from",
+          "installierte_leistung_kwp": "Installed power (kWp)"
         }
       },
       "tariff_pick": {
         "title": "Tariff configuration ({utility_name}) — pick date & power",
         "description": "Pick the date this configuration takes effect and your plant's installed power. The next step shows utility-specific options (self-consumption, HKN, utility-specific fields).",
         "data": {
-          "valid_from": "Active since",
-          "installierte_leistung_kw": "Installed power (kW)"
+          "valid_from": "Valid from",
+          "installierte_leistung_kwp": "Installed power (kWp)"
         },
         "data_description": {
           "valid_from": "## Plant install date\nThe date your PV plant came online (or this configuration started applying). The integration uses this as the anchor of your config history — quarters before this date are silently skipped during recompute since no tariff configuration covers them.\n\nDefault: current quarter start. Set to your actual install date for a clean import history.",
-          "installierte_leistung_kw": "## Installed peak power\nThe DC peak rating of your PV plant in kilowatts. Used to look up the federal **Mindestvergütung** floor ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, in force since 1.1.2026):\n\n| Size | Mode | Federal floor (Rp/kWh) |\n|---|---|---|\n| <30 kW | any | **6.00** |\n| 30–<150 kW | with self-consumption | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | feed-in only | **6.20** |\n| ≥150 kW | any | no federal floor |"
+          "installierte_leistung_kwp": "## Installed peak power\nThe DC peak rating of your PV plant in kilowatts. Used to look up the federal **Mindestvergütung** floor ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, in force since 1.1.2026):\n\n| Size | Mode | Federal floor (Rp/kWh) |\n|---|---|---|\n| <30 kW | any | **6.00** |\n| 30–<150 kW | with self-consumption | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | feed-in only | **6.20** |\n| ≥150 kW | any | no federal floor |"
         }
       },
       "tariff_details": {
-        "title": "Tariff configuration — {utility_name} from {valid_from}",
+        "title": "Tariff configuration — utility-specific options",
         "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "eigenverbrauch_aktiviert": "Self-consumption enabled",
-          "hkn_aktiviert": "Sell HKN to your utility?",
+          "eigenverbrauch_aktiviert": "Self-consumption",
+          "hkn_aktiviert": "GO (Guarantee of origin) (DE: HKN)",
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         },
         "data_description": {
           "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** if any portion of your PV production is consumed on-site (typical residential / commercial setup). **No** for full feed-in plants (Volleinspeisung) where 100% of production goes to the grid.\n\nThis flag affects the federal floor band you fall into — for 30–<150 kW plants the difference is significant (degressive 180÷kW with self-consumption vs. flat 6.20 Rp/kWh without).",
-          "hkn_aktiviert": "## HKN (Herkunftsnachweis) opt-in\n**Yes** if you sell your *Herkunftsnachweise* (Swiss guarantees of origin) to your utility. Most utilities offer this as an opt-in — register through the utility's customer portal.\n\nThe rate is fixed by your utility and bundled into this integration's tariff database — no manual entry needed. Set to **No** if you don't sell HKN, or if you've certified the plant elsewhere (e.g. *naturemade star*) and sell HKN on the open market."
+          "hkn_aktiviert": "You'll get more for your feed-in solar power if you sell the **guarantee of origin (GO)** to your utility. Most utilities offer this as an opt-in — register through the utility's customer portal. The rate is utility-published; no manual entry needed. Set to **No** if you don't sell GO, or if you've certified the plant elsewhere (e.g. *naturemade star*) and sell GO on the open market."
         }
       },
       "entities": {
-        "title": "Home Assistant entity wiring",
+        "title": "Entity wiring",
         "description": "Link the kWh counter for your grid export, the CHF sensor that the Energy Dashboard auto-creates, and a plant name.",
         "data": {
           "stromnetzeinspeisung_kwh": "Grid export (kWh)",
@@ -55,15 +50,15 @@
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh counter\nThe **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
           "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
-          "plant_name": "## Plant name\nA stable display name for this PV plant — e.g. `Rooftop South`, `Garage Carport`. Used as the integration's title in **Settings → Devices & Services** and as the default for the entity name prefix below.\n\n**Stays the same even if you switch utility later** (utility changes happen via *Configure → Apply config change*).",
-          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** (e.g. `sensor.PREFIX_basisverguetung`).\n\n**Leave empty** to auto-derive from the plant name (e.g. `rooftop_south_rueckliefertarif`). *Only set explicitly* if you want a custom value or the default would collide with an existing entity."
+          "plant_name": "Display name for this PV plant - e.g. `PV Plant`. Used as the integration's title in Settings → Devices & Services & as the default for the entity name prefix below.",
+          "namenspraefix": "Prefix for this integration's *sensors* (e.g. `sensor.PREFIX_basisverguetung`). Leave empty to auto-derive from the plant name (e.g. `sensor.pv_plant_basisverguetung`)."
         }
       },
       "apply_change_details": {
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       },
@@ -71,7 +66,7 @@
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       },
@@ -79,7 +74,7 @@
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       },
@@ -87,7 +82,7 @@
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       }
@@ -106,7 +101,6 @@
         "title": "BFE Rückliefertarif options",
         "description": "What would you like to do?",
         "menu_options": {
-          "apply_change": "Apply config change (utility / kW / HKN / billing)",
           "manage_history": "Manage configuration history",
           "recompute_history": "Recompute full history",
           "refresh_data": "Refresh prices & tariff data",
@@ -117,86 +111,55 @@
         "title": "Manage configuration history",
         "description": "Click a row to edit, choose **Add new transition** to record a switch (e.g. utility change, PV expansion, HKN certificate), or **Done** to finish. Past quarter recompute uses the values that were active back then."
       },
-      "apply_change": {
-        "title": "Apply config change — pick utility & date",
-        "description": "Pick the utility and the date this change takes effect. The next step shows the utility-specific options (notes, tariff documentation, utility-specific fields).\n\n**Currently active:** {current_summary}",
-        "data": {
-          "valid_from": "Effective from",
-          "energieversorger": "Utility",
-          "installierte_leistung_kw": "Installed power (kW)"
-        },
-        "data_description": {
-          "valid_from": "## When this change takes effect\nDefault is the current quarter's start. For utility switches mid-quarter, pick the actual switch date — the recompute path will use the new utility for any quarter starting on or after that date.",
-          "energieversorger": "## Utility\nThe utility paying for the feed-in. The next step's HKN gate, notes, tariff documentation links, and any utility-specific options reflect this choice."
-        }
-      },
-      "apply_change_details": {
-        "title": "Apply config change — {utility_name} from {valid_from}",
-        "description": "Fill in the plant details for **{utility_name}** effective **{valid_from}**. Utility-published values (HKN rate, cap behavior, fixed prices) come from the bundled tariff database and aren't editable here.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
-        "data": {
-          "installierte_leistung_kw": "Installed power (kW)",
-          "eigenverbrauch_aktiviert": "Self-consumption",
-          "hkn_aktiviert": "HKN opt-in",
-          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
-          "supply_product": "Eco-electricity product subscribed"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "## Installed peak power\nDC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
-          "eigenverbrauch_aktiviert": "## Self-consumption\n**Yes** for typical residential / commercial setups; **No** for full feed-in (Volleinspeisung).",
-          "hkn_aktiviert": "## HKN opt-in\n**Yes** if you sell *Herkunftsnachweise* to your utility. Rate is utility-published."
-        }
-      },
       "add_pick_row": {
-        "title": "Add transition — pick utility & date",
-        "description": "Pick the utility and the date this transition takes effect. The next step shows the utility-specific options.",
+        "title": "Add tariff — pick utility, date & power",
+        "description": "**Currently active:** {current_summary}\n\nPick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung overview](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
-          "valid_from": "Active since",
+          "valid_from": "Valid from",
           "energieversorger": "Utility",
-          "installierte_leistung_kw": "Installed power (kW)"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "DC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band."
+          "installierte_leistung_kwp": "Installed power (kWp)"
         }
       },
       "edit_pick_row": {
-        "title": "Edit transition — utility & date",
-        "description": "Adjust the utility and/or the active-since date for this transition. The next step lets you adjust kW / self-consumption / HKN and any utility-specific fields.",
+        "title": "Edit tariff — pick utility, date & power",
+        "description": "**Currently active:** {current_summary}\n\nPick the utility, the maximum output (kWp) of the PV system and the date when the rate configuration takes effect.\n\nReferences: [Federal floor table (EnV Art. 12 Abs. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/de#art_12) · [BFE Einspeisevergütung overview](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
-          "valid_from": "Active since",
+          "valid_from": "Valid from",
           "energieversorger": "Utility",
-          "installierte_leistung_kw": "Installed power (kW)"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "DC peak rating in kilowatts. Determines the federal **Mindestvergütung** floor band."
+          "installierte_leistung_kwp": "Installed power (kWp)"
         }
       },
       "add_new_row": {
-        "title": "Add transition — {utility_name} from {valid_from}",
+        "title": "Add tariff — utility-specific options",
         "description": "Plant details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "installierte_leistung_kw": "Installed power (kW)",
+          "installierte_leistung_kwp": "Installed power (kWp)",
           "eigenverbrauch_aktiviert": "Self-consumption",
-          "hkn_aktiviert": "HKN opt-in",
+          "hkn_aktiviert": "GO (Guarantee of origin) (DE: HKN)",
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "supply_product": "Eco-electricity product subscribed"
+        },
+        "data_description": {
+          "hkn_aktiviert": "You'll get more for your feed-in solar power if you sell the **guarantee of origin (GO)** to your utility. Most utilities offer this as an opt-in — register through the utility's customer portal. The rate is utility-published; no manual entry needed. Set to **No** if you don't sell GO, or if you've certified the plant elsewhere (e.g. *naturemade star*) and sell GO on the open market."
         }
       },
       "edit_row": {
-        "title": "Edit transition — {utility_name} from {valid_from}",
+        "title": "Edit tariff — utility-specific options",
         "description": "Update plant details for **{utility_name}** effective **{valid_from}**, or tick **Delete this record** to remove the row.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "installierte_leistung_kw": "Installed power (kW)",
+          "installierte_leistung_kwp": "Installed power (kWp)",
           "eigenverbrauch_aktiviert": "Self-consumption",
-          "hkn_aktiviert": "HKN opt-in",
+          "hkn_aktiviert": "GO (Guarantee of origin) (DE: HKN)",
           "delete": "Delete this record",
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "supply_product": "Eco-electricity product subscribed"
+        },
+        "data_description": {
+          "hkn_aktiviert": "You'll get more for your feed-in solar power if you sell the **guarantee of origin (GO)** to your utility. Most utilities offer this as an opt-in — register through the utility's customer portal. The rate is utility-published; no manual entry needed. Set to **No** if you don't sell GO, or if you've certified the plant elsewhere (e.g. *naturemade star*) and sell GO on the open market."
         }
       },
       "recompute_history": {
@@ -214,8 +177,8 @@
         }
       },
       "entities": {
-        "title": "Re-wire Home Assistant entities",
-        "description": "Re-wire the entity links and rename this entry.",
+        "title": "Entity wiring",
+        "description": "Link the kWh counter for your grid export, the CHF sensor that the Energy Dashboard auto-creates, and a plant name.",
         "data": {
           "stromnetzeinspeisung_kwh": "Grid export (kWh)",
           "rueckliefervergutung_chf": "Feed-in remuneration (CHF)",
@@ -225,8 +188,8 @@
         "data_description": {
           "stromnetzeinspeisung_kwh": "## kWh counter\nThe **kWh counter** that tracks energy fed into the grid.\n\nMust already be wired into the **Energy Dashboard** under *'Return to grid'*.",
           "rueckliefervergutung_chf": "## Auto-created CHF sensor\nThe **CHF sensor** that the Energy Dashboard auto-creates when you configure *'Return to grid with a price'*.\n\nHA names it with a `_compensation` suffix (usually `sensor.YOUR_GRID_EXPORT_compensation`). This integration writes into its **Long-Term Statistics**.",
-          "plant_name": "## Plant name\nDisplay name for this entry — shown in **Settings → Devices & Services**. Editing this field updates the integration's title.",
-          "namenspraefix": "## Naming prefix\nPrefix for this integration's **diagnostic sensors** (e.g. `sensor.PREFIX_basisverguetung`).\n\n⚠ **Changing this orphans Long-Term Statistics tied to the old prefix** — only change if you understand the consequence."
+          "plant_name": "Display name for this PV plant - e.g. `PV Plant`. Used as the integration's title in Settings → Devices & Services.",
+          "namenspraefix": "Prefix for this integration's *sensors* (e.g. `sensor.PREFIX_basisverguetung`). ⚠️ Changing this orphans **Long-Term Statistics** tied to the old prefix — only change if you understand the consequence!"
         }
       }
     },

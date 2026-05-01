@@ -40,7 +40,7 @@ STEPS_BY_TREE: dict[str, dict[str, tuple[str, ...]]] = {
     "config": {
         # Combined initial-flow first step (post-v0.18.0): utility +
         # date + kW. Replaces the old menu-of-utilities + tariff_pick.
-        "user": ("energieversorger", "valid_from", "installierte_leistung_kw"),
+        "user": ("energieversorger", "valid_from", "installierte_leistung_kwp"),
         # Initial-flow utility-specific details: EV + HKN + dynamic user_inputs.
         "tariff_details": (
             "eigenverbrauch_aktiviert",
@@ -49,28 +49,18 @@ STEPS_BY_TREE: dict[str, dict[str, tuple[str, ...]]] = {
         ),
     },
     "options": {
-        # "Apply config change" page 1: utility + date + kW.
-        "apply_change": (
-            "energieversorger",
-            "valid_from",
-            "installierte_leistung_kw",
-        ),
-        # "Apply config change" page 2: EV + HKN + dynamic user_inputs.
-        "apply_change_details": (
-            "eigenverbrauch_aktiviert",
-            "hkn_aktiviert",
-            "<user_inputs>",
-        ),
-        # "Add transition" / "Edit transition" page 1: same picker shape.
+        # v0.18.1: "Apply config change" menu entry removed; everything
+        # routes through "Manage configuration history" → Add/Edit.
+        # "Add transition" / "Edit transition" page 1: utility + date + kWp.
         "add_pick_row": (
             "energieversorger",
             "valid_from",
-            "installierte_leistung_kw",
+            "installierte_leistung_kwp",
         ),
         "edit_pick_row": (
             "energieversorger",
             "valid_from",
-            "installierte_leistung_kw",
+            "installierte_leistung_kwp",
         ),
         # "Add transition" / "Edit transition" page 2: details. Edit also
         # has a "delete this record" toggle.
@@ -92,20 +82,20 @@ STEPS_BY_TREE: dict[str, dict[str, tuple[str, ...]]] = {
 # strings HA shows next to each form field. fr falls back to en when
 # absent here.
 FIXED_FIELD_LABELS: dict[str, dict[str, str]] = {
-    "installierte_leistung_kw": {
-        "de": "Installierte Leistung (kW)",
-        "en": "Installed power (kW)",
-        "fr": "Puissance installée (kW)",
+    "installierte_leistung_kwp": {
+        "de": "Installierte Leistung (kWp)",
+        "en": "Installed power (kWp)",
+        "fr": "Puissance installée (kWp)",
     },
     "eigenverbrauch_aktiviert": {
-        "de": "Eigenverbrauch aktiviert",
-        "en": "Self-consumption enabled",
-        "fr": "Autoconsommation activée",
+        "de": "Eigenverbrauch",
+        "en": "Self-consumption",
+        "fr": "Autoconsommation",
     },
     "hkn_aktiviert": {
-        "de": "HKN-Vergütung",
-        "en": "HKN opt-in",
-        "fr": "Option HKN",
+        "de": "HKN (Herkunftsnachweis)",
+        "en": "GO (Guarantee of origin) (DE: HKN)",
+        "fr": "GO (garantie d'origine) (DE: HKN)",
     },
     "energieversorger": {
         "de": "Energieversorger",
@@ -114,8 +104,8 @@ FIXED_FIELD_LABELS: dict[str, dict[str, str]] = {
     },
     "valid_from": {
         "de": "Gültig ab",
-        "en": "Active since",
-        "fr": "Actif depuis",
+        "en": "Valid from",
+        "fr": "Valide dès",
     },
     "delete": {
         "de": "Diesen Eintrag löschen",
@@ -137,7 +127,7 @@ DEFAULT_SLUG_LABELS: dict[str, dict[str, str]] = {
         "supply_product": "Eco-electricity product subscribed",
         "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
         "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-        "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+        "regio_top40_opted_in": "Wahltarif TOP-40",
     },
     # fr inherits en defaults via label_for_slug
     "fr": {},
@@ -151,9 +141,10 @@ DEFAULT_SLUG_LABELS: dict[str, dict[str, str]] = {
 # catches up — the union is idempotent so duplicates are harmless.
 EXTRA_REMOTE_SLUGS: dict[str, dict[str, str]] = {
     # Added in bfe-tariffs-data v1.4.0 (Regio Energie Solothurn).
+    # v0.18.1: dropped "abonniert/subscribed" suffix — language-agnostic.
     "regio_top40_opted_in": {
-        "label_de": "Wahltarif TOP-40 abonniert",
-        "label_en": "Wahltarif TOP-40 subscribed",
+        "label_de": "Wahltarif TOP-40",
+        "label_en": "Wahltarif TOP-40",
     },
     # Added in bfe-tariffs-data v1.4.0 (renamed from aew_fixpreis_rmp).
     "fixpreis_rmp": {

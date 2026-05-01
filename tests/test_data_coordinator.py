@@ -388,7 +388,7 @@ class TestTariffDriftRepairFlow:
             {"valid_from": "2026-04-01", "valid_to": None,
              "config": {
                  CONF_ENERGIEVERSORGER: "syn",
-                 "installierte_leistung_kw": 10.0,
+                 "installierte_leistung_kwp": 10.0,
                  "eigenverbrauch_aktiviert": True,
                  "hkn_aktiviert": False,
                  "abrechnungs_rhythmus": "quartal",

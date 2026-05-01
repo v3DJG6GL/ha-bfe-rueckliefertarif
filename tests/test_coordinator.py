@@ -145,7 +145,7 @@ class TestCoordinatorAutoImportSkipsPreValidFrom:
                         "valid_to": None,
                         "config": {
                             "energieversorger": "ekz",
-                            "installierte_leistung_kw": 8.0,
+                            "installierte_leistung_kwp": 8.0,
                             "eigenverbrauch_aktiviert": True,
                             "hkn_aktiviert": True,
                             "abrechnungs_rhythmus": "quartal",
@@ -343,7 +343,7 @@ class TestUserInputsFingerprint:
         # both since ResolvedTariff is a frozen dataclass.
         rt = SimpleNamespace(utility_key="u", tariffs_json_version="v1")
         return SimpleNamespace(
-            installierte_leistung_kw=8.0,
+            installierte_leistung_kwp=8.0,
             eigenverbrauch_aktiviert=True,
             hkn_aktiviert=True,
             user_inputs=dict(user_inputs),
@@ -354,7 +354,7 @@ class TestUserInputsFingerprint:
         coord = _make_coordinator()
         prior = {
             "utility_key": "u",
-            "kw": 8.0,
+            "kwp": 8.0,
             "eigenverbrauch_aktiviert": True,
             "hkn_optin": True,
             "billing": "quartal",
@@ -376,7 +376,7 @@ class TestUserInputsFingerprint:
         coord = _make_coordinator()
         prior = {
             "utility_key": "u",
-            "kw": 8.0,
+            "kwp": 8.0,
             "eigenverbrauch_aktiviert": True,
             "hkn_optin": True,
             "billing": "quartal",
@@ -403,7 +403,7 @@ class TestUserInputsFingerprint:
         coord = _make_coordinator()
         prior = {
             "utility_key": "u",
-            "kw": 8.0,
+            "kwp": 8.0,
             "eigenverbrauch_aktiviert": True,
             "hkn_optin": True,
             "billing": "quartal",

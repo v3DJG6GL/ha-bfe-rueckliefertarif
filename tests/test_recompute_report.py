@@ -248,7 +248,7 @@ class TestPeriodAggregationViaPlan:
         kwh = {h: 1.0 for h in hours_in_range(s, e)}
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=False,
             hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(),
@@ -273,7 +273,7 @@ class TestPeriodAggregationViaPlan:
         kwh = {h: 1.0 for h in hours_in_range(s, e)}
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=False,
             hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(),
@@ -300,7 +300,7 @@ class TestPeriodAggregationViaPlan:
         kwh = {h: 1.0 for h in hours_in_range(s, e)}
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=True,
             hkn_rp_kwh_resolved=2.50,
             resolved=rt_with_hkn,
@@ -325,7 +325,7 @@ def _config_dict(**overrides) -> dict:
         "utility_name": "Elektrizitätswerke des Kantons Zürich (EKZ)",
         "base_model": "rmp_quartal",
         "settlement_period": "quartal",
-        "kw": 25.0,
+        "kwp": 25.0,
         "eigenverbrauch": True,
         "hkn_optin": True,
         "hkn_rp_kwh": 3.00,
@@ -384,14 +384,14 @@ class TestFormatRecomputeNotification:
         # v0.17.1 — Installed power, Self-consumption, HKN opt-in are now
         # 4-space-indented sub-bullets under a Configuration parent.
         assert "- **Configuration:**" in body
-        assert "    - **Installed power:** 25.0 kW" in body
+        assert "    - **Installed power:** 25.0 kWp" in body
         assert "    - **Self-consumption:** Yes" in body
         assert "    - **HKN opt-in:** Yes (3.00 Rp/kWh additive)" in body
         assert "**Federal floor (Mindestvergütung):** <30 kW (6.00 Rp/kWh)" in body
         # Cap value is now embedded in the line.
         assert (
             "**Cap mode (Anrechenbarkeitsgrenze):** Active — current cap "
-            "10.96 Rp/kWh (25.0 kW, EV=Yes)"
+            "10.96 Rp/kWh (25.0 kWp, EV=Yes)"
         ) in body
         # Slim 6-column table headers + unit-disclaimer line.
         assert "_Rates in Rp/kWh; energy in kWh; CHF totals._" in body
@@ -580,7 +580,7 @@ def _row_with_meta(
     intended_hkn: float | None = None,
     utility_key: str | None = None,
     utility_name: str | None = None,
-    kw: float | None = None,
+    kwp: float | None = None,
     eigenverbrauch: bool | None = None,
     hkn_optin: bool | None = None,
     billing: str | None = None,
@@ -604,7 +604,7 @@ def _row_with_meta(
         total_chf=chf,
         utility_key_at_period=utility_key,
         utility_name_at_period=utility_name,
-        kw_at_period=kw,
+        kw_at_period=kwp,
         eigenverbrauch_at_period=eigenverbrauch,
         hkn_optin_at_period=hkn_optin,
         billing_at_period=billing,
@@ -628,7 +628,7 @@ class TestPerConfigGrouping:
         rows = [_row_with_meta(
             "2026Q1", 13.27, 1000.0, 132.70, base=10.27, hkn=3.00,
             utility_key="ekz", utility_name="Elektrizitätswerke des Kantons Zürich (EKZ)",
-            kw=25.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
+            kwp=25.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
         )]
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
         _, body = _format_recompute_notification(report)
@@ -644,13 +644,13 @@ class TestPerConfigGrouping:
                 "2026Q1", 10.96, 586.21, 64.25, base=10.266, hkn=0.694,
                 intended_hkn=3.00,
                 utility_key="ekz", utility_name="EKZ",
-                kw=8.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
+                kwp=8.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
                 base_model="rmp_quartal", cap_mode=True, cap_rp_kwh=10.96,
             ),
             _row_with_meta(
                 "2025Q4", 8.0, 335.38, 26.83, base=8.0, hkn=0.0,
                 utility_key="age_sa", utility_name="Acqua Gas Elettricità SA Chiasso",
-                kw=105.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                kwp=105.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
                 base_model="fixed_flat", cap_mode=False,
             ),
         ]
@@ -683,13 +683,13 @@ class TestPerConfigGrouping:
     def test_grouping_preserves_newest_first_order(self):
         rows = [
             _row_with_meta("2026Q1", 11.0, 100.0, 11.0,
-                           utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                           utility_key="ekz", kwp=8.0, eigenverbrauch=True,
                            hkn_optin=True, billing="quartal"),
             _row_with_meta("2025Q4", 8.0, 100.0, 8.0,
-                           utility_key="age_sa", kw=105.0, eigenverbrauch=True,
+                           utility_key="age_sa", kwp=105.0, eigenverbrauch=True,
                            hkn_optin=False, billing="quartal"),
             _row_with_meta("2025Q3", 8.0, 100.0, 8.0,
-                           utility_key="age_sa", kw=105.0, eigenverbrauch=True,
+                           utility_key="age_sa", kwp=105.0, eigenverbrauch=True,
                            hkn_optin=False, billing="quartal"),
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=3, config=_config_dict())
@@ -710,11 +710,11 @@ class TestPerConfigGrouping:
         rows = [
             _row_with_meta("2026Q1", 10.96, 586.21, 64.25,
                            base=10.266, hkn=0.694, intended_hkn=3.00,
-                           utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                           utility_key="ekz", kwp=8.0, eigenverbrauch=True,
                            hkn_optin=True, billing="quartal"),
             _row_with_meta("2025Q4", 8.0, 335.38, 26.83,
                            base=8.0, hkn=0.0,
-                           utility_key="age_sa", kw=105.0, eigenverbrauch=True,
+                           utility_key="age_sa", kwp=105.0, eigenverbrauch=True,
                            hkn_optin=False, billing="quartal"),
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=2, config=_config_dict())
@@ -1263,7 +1263,7 @@ class TestEigenverbrauchAnnotation:
         # EKZ at 50 kW falls in federal floor 30-150 kW band where rules
         # differ on self_consumption — predicate returns True → line emitted.
         cfg = _config_dict(
-            utility_key="ekz", valid_from="2026-04-01", kw=50.0,
+            utility_key="ekz", valid_from="2026-04-01", kwp=50.0,
             eigenverbrauch=True,
         )
         lines = _render_config_block(cfg)
@@ -1302,7 +1302,7 @@ class TestEigenverbrauchAnnotation:
         }
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
         cfg = _config_dict(
-            utility_key="syn", valid_from="2025-04-01", kw=10.0,
+            utility_key="syn", valid_from="2025-04-01", kwp=10.0,
             eigenverbrauch=True,
         )
         lines = _render_config_block(cfg)
@@ -1337,20 +1337,20 @@ class TestFingerprintCoercion:
     """
 
     def test_int_kw_matches_float_kw_in_today_block(self):
-        # Snapshot has kw_at_period=8 (int); header has kw=8.0 (float).
+        # Snapshot has kw_at_period=8 (int); header has kwp=8.0 (float).
         # Without canonicalizer, tuple eq passes (Python (8,)==(8.0,)),
         # but with bool-vs-int drift this still tests the canonicalizer
         # is in effect.
         rows = [_row_with_meta(
             "2026Q1", 6.20, 1000.0, 62.0,
             utility_key="ekz", utility_name="EKZ",
-            kw=8, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+            kwp=8, eigenverbrauch=True, hkn_optin=False, billing="quartal",
             base_model="fixed_flat",
         )]
         report = _RecomputeReport(
             rows=rows, quarters_recomputed=1,
             config=_config_dict(
-                utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                utility_key="ekz", kwp=8.0, eigenverbrauch=True,
                 hkn_optin=False, billing="quartal",
             ),
         )
@@ -1365,13 +1365,13 @@ class TestFingerprintCoercion:
         rows = [_row_with_meta(
             "2026Q1", 6.20, 1000.0, 62.0,
             utility_key="ekz", utility_name="EKZ",
-            kw=8.0, eigenverbrauch=False, hkn_optin=False, billing="quartal",
+            kwp=8.0, eigenverbrauch=False, hkn_optin=False, billing="quartal",
             base_model="fixed_flat",
         )]
         report = _RecomputeReport(
             rows=rows, quarters_recomputed=1,
             config=_config_dict(
-                utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                utility_key="ekz", kwp=8.0, eigenverbrauch=True,
                 hkn_optin=False, billing="quartal",
             ),
         )
@@ -1747,13 +1747,13 @@ class TestPerGroupSuppression:
                 "2026Q2", 6.20, 100.0, 6.20,
                 utility_key="regio_energie_solothurn",
                 utility_name="Regio",
-                kw=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                kwp=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
                 base_model="fixed_flat",
             ),
             _row_with_meta(
                 "2026Q1", 9.50, 200.0, 19.00,
                 utility_key="ewz", utility_name="EWZ",
-                kw=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                kwp=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
                 base_model="fixed_ht_nt",
             ),
         ]
@@ -1762,7 +1762,7 @@ class TestPerGroupSuppression:
             config=_config_dict(
                 utility_key="regio_energie_solothurn",
                 utility_name="Regio Energie Solothurn",
-                kw=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+                kwp=8.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
                 base_model="fixed_flat",
             ),
         )
@@ -1786,7 +1786,7 @@ class TestPerGroupSuppression:
         rows = [_row_with_meta(
             "2026Q1", 13.27, 1000.0, 132.70, base=10.27, hkn=3.00,
             utility_key="ekz", utility_name="EKZ",
-            kw=25.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
+            kwp=25.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
         )]
         report = _RecomputeReport(
             rows=rows, quarters_recomputed=1, config=_config_dict()

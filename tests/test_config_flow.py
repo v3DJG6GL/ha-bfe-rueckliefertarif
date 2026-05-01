@@ -17,7 +17,7 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_ABRECHNUNGS_RHYTHMUS,
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_HKN_AKTIVIERT,
-    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_INSTALLIERTE_LEISTUNG_KWP,
     CONF_NAMENSPRAEFIX,
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
@@ -35,7 +35,7 @@ class TestValidateTariff:
 
     def _base(self, **overrides):
         data = {
-            CONF_INSTALLIERTE_LEISTUNG_KW: 25.0,
+            CONF_INSTALLIERTE_LEISTUNG_KWP: 25.0,
             CONF_EIGENVERBRAUCH_AKTIVIERT: True,
             CONF_HKN_AKTIVIERT: False,
             CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
@@ -47,12 +47,12 @@ class TestValidateTariff:
         assert _validate_tariff(self._base()) == {}
 
     def test_zero_kw_rejected(self):
-        errors = _validate_tariff(self._base(installierte_leistung_kw=0.0))
-        assert errors == {CONF_INSTALLIERTE_LEISTUNG_KW: "kw_required"}
+        errors = _validate_tariff(self._base(installierte_leistung_kwp=0.0))
+        assert errors == {CONF_INSTALLIERTE_LEISTUNG_KWP: "kw_required"}
 
     def test_negative_kw_rejected(self):
-        errors = _validate_tariff(self._base(installierte_leistung_kw=-1.0))
-        assert errors == {CONF_INSTALLIERTE_LEISTUNG_KW: "kw_required"}
+        errors = _validate_tariff(self._base(installierte_leistung_kwp=-1.0))
+        assert errors == {CONF_INSTALLIERTE_LEISTUNG_KWP: "kw_required"}
 
     def test_eigenverbrauch_false_still_passes(self):
         # Pure ohne-Eigenverbrauch (Volleinspeisung) plants are valid.
@@ -128,7 +128,7 @@ class TestStringsAndTranslations:
         "field,step",
         [
             (CONF_VALID_FROM, "tariff_pick"),
-            (CONF_INSTALLIERTE_LEISTUNG_KW, "tariff_pick"),
+            (CONF_INSTALLIERTE_LEISTUNG_KWP, "tariff_pick"),
             (CONF_EIGENVERBRAUCH_AKTIVIERT, "tariff_details"),
             (CONF_HKN_AKTIVIERT, "tariff_details"),
         ],
@@ -146,7 +146,7 @@ class TestStringsAndTranslations:
         for d in (en_strings, de_translations):
             for step in ("tariff_pick", "tariff_details"):
                 assert CONF_ABRECHNUNGS_RHYTHMUS not in d["config"]["step"][step]["data"]
-            for step in ("apply_change", "add_new_row", "edit_row"):
+            for step in ("add_new_row", "edit_row"):
                 assert CONF_ABRECHNUNGS_RHYTHMUS not in d["options"]["step"][step]["data"]
             assert CONF_ABRECHNUNGS_RHYTHMUS not in d.get("selector", {})
 
@@ -209,7 +209,6 @@ class TestStringsAndTranslations:
             menu = d["options"]["step"]["init"]["menu_options"]
             # v0.9.6: refresh_prices renamed → refresh_data (combined refresh).
             assert set(menu.keys()) == {
-                "apply_change",
                 "manage_history",
                 "recompute_history",
                 "refresh_data",
@@ -218,7 +217,7 @@ class TestStringsAndTranslations:
 
     @pytest.mark.parametrize(
         "sub_step",
-        ["apply_change", "recompute_history", "refresh_data", "entities"],
+        ["recompute_history", "refresh_data", "entities"],
     )
     def test_options_substeps_present(self, en_strings, de_translations, sub_step):
         for d in (en_strings, de_translations):
@@ -386,7 +385,7 @@ class TestEditRowWizard:
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_ENERGIEVERSORGER,
             CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_INSTALLIERTE_LEISTUNG_KWP,
             OPT_CONFIG_HISTORY,
         )
 
@@ -394,7 +393,7 @@ class TestEditRowWizard:
             {"valid_from": "2026-02-01", "valid_to": None,
              "config": {
                  CONF_ENERGIEVERSORGER: "ekz",
-                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
                  "abrechnungs_rhythmus": "QUARTAL",
@@ -412,7 +411,7 @@ class TestEditRowWizard:
             {
                 "valid_from": "2026-04-01",
                 CONF_ENERGIEVERSORGER: "ekz",
-                CONF_INSTALLIERTE_LEISTUNG_KW: 12.0,
+                CONF_INSTALLIERTE_LEISTUNG_KWP: 12.0,
             }
         )
         # Should auto-route to Step 2.
@@ -432,7 +431,7 @@ class TestEditRowWizard:
         ]
         history = new_options[OPT_CONFIG_HISTORY]
         assert history[-1]["valid_from"] == "2026-04-01"
-        assert history[-1]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 12.0
+        assert history[-1]["config"][CONF_INSTALLIERTE_LEISTUNG_KWP] == 12.0
 
     @pytest.mark.asyncio
     async def test_edit_pick_then_save(self):
@@ -440,7 +439,7 @@ class TestEditRowWizard:
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_ENERGIEVERSORGER,
             CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_INSTALLIERTE_LEISTUNG_KWP,
             OPT_CONFIG_HISTORY,
         )
 
@@ -448,7 +447,7 @@ class TestEditRowWizard:
             {"valid_from": "2026-02-01", "valid_to": None,
              "config": {
                  CONF_ENERGIEVERSORGER: "ekz",
-                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
                  "abrechnungs_rhythmus": "QUARTAL",
@@ -466,7 +465,7 @@ class TestEditRowWizard:
             {
                 "valid_from": "2026-02-01",
                 CONF_ENERGIEVERSORGER: "ekz",
-                CONF_INSTALLIERTE_LEISTUNG_KW: 15.5,
+                CONF_INSTALLIERTE_LEISTUNG_KWP: 15.5,
             }
         )
         assert step1_submit["step_id"] == "edit_row"
@@ -484,7 +483,7 @@ class TestEditRowWizard:
         ]
         history = new_options[OPT_CONFIG_HISTORY]
         assert len(history) == 1
-        assert history[0]["config"][CONF_INSTALLIERTE_LEISTUNG_KW] == 15.5
+        assert history[0]["config"][CONF_INSTALLIERTE_LEISTUNG_KWP] == 15.5
 
     @pytest.mark.asyncio
     async def test_edit_row_save_triggers_reload(self):
@@ -497,7 +496,7 @@ class TestEditRowWizard:
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_ENERGIEVERSORGER,
             CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_INSTALLIERTE_LEISTUNG_KWP,
             OPT_CONFIG_HISTORY,
         )
 
@@ -505,7 +504,7 @@ class TestEditRowWizard:
             {"valid_from": "2026-02-01", "valid_to": None,
              "config": {
                  CONF_ENERGIEVERSORGER: "ekz",
-                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
                  "abrechnungs_rhythmus": "QUARTAL",
@@ -516,7 +515,7 @@ class TestEditRowWizard:
         await flow.async_step_edit_pick_row({
             "valid_from": "2026-02-01",
             CONF_ENERGIEVERSORGER: "ekz",
-            CONF_INSTALLIERTE_LEISTUNG_KW: 15.5,
+            CONF_INSTALLIERTE_LEISTUNG_KWP: 15.5,
         })
         await flow.async_step_edit_row({
             CONF_EIGENVERBRAUCH_AKTIVIERT: True,
@@ -539,7 +538,7 @@ class TestEditRowWizard:
             CONF_EIGENVERBRAUCH_AKTIVIERT,
             CONF_ENERGIEVERSORGER,
             CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KW,
+            CONF_INSTALLIERTE_LEISTUNG_KWP,
             OPT_CONFIG_HISTORY,
         )
 
@@ -547,7 +546,7 @@ class TestEditRowWizard:
             {"valid_from": "2026-01-01", "valid_to": "2026-04-01",
              "config": {
                  CONF_ENERGIEVERSORGER: "ekz",
-                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: False,
                  "abrechnungs_rhythmus": "QUARTAL",
@@ -555,7 +554,7 @@ class TestEditRowWizard:
             {"valid_from": "2026-04-01", "valid_to": None,
              "config": {
                  CONF_ENERGIEVERSORGER: "ekz",
-                 CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+                 CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
                  "abrechnungs_rhythmus": "QUARTAL",
@@ -566,7 +565,7 @@ class TestEditRowWizard:
         await flow.async_step_edit_pick_row({
             "valid_from": "2026-01-01",
             CONF_ENERGIEVERSORGER: "ekz",
-            CONF_INSTALLIERTE_LEISTUNG_KW: 8.0,
+            CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
         })
         await flow.async_step_edit_row({"delete": True})
         flow.hass.config_entries.async_update_entry.assert_called_once()

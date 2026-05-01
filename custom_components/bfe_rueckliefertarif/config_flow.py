@@ -36,7 +36,7 @@ from .const import (  # noqa: E402  — intentionally below _LOGGER guard
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
-    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_INSTALLIERTE_LEISTUNG_KWP,
     CONF_NAMENSPRAEFIX,
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
@@ -198,15 +198,15 @@ def _tariff_schema(
             default=d.get(CONF_VALID_FROM, date.today().isoformat()),
         ): selector.DateSelector(),
         vol.Required(
-            CONF_INSTALLIERTE_LEISTUNG_KW,
-            default=d.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0),
+            CONF_INSTALLIERTE_LEISTUNG_KWP,
+            default=d.get(CONF_INSTALLIERTE_LEISTUNG_KWP, 0.0),
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0,
                 max=10000,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
-                unit_of_measurement="kW",
+                unit_of_measurement="kWp",
             )
         ),
         vol.Required(
@@ -288,8 +288,8 @@ def _validate_tariff(user_input: dict[str, Any]) -> dict[str, str]:
     case anymore — kW is required for everyone.
     """
     errors: dict[str, str] = {}
-    if float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0)) <= 0:
-        errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
+    if float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KWP, 0)) <= 0:
+        errors[CONF_INSTALLIERTE_LEISTUNG_KWP] = "kw_required"
     return errors
 
 
@@ -809,7 +809,7 @@ def _normalize_history(records: list[dict]) -> list[dict]:
 def _format_config_summary(config: dict) -> str:
     """Compact one-line summary used for menu labels."""
     utility = config.get(CONF_ENERGIEVERSORGER) or "—"
-    kw = config.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+    kw = config.get(CONF_INSTALLIERTE_LEISTUNG_KWP)
     kw_s = f"{float(kw):.1f} kW" if kw is not None else "—"
     ev = "EV" if config.get(CONF_EIGENVERBRAUCH_AKTIVIERT) else "no-EV"
     hkn = "HKN" if config.get(CONF_HKN_AKTIVIERT) else "no-HKN"
@@ -1171,9 +1171,9 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ValueError:
                 errors[CONF_VALID_FROM] = "invalid_valid_from"
             if not errors:
-                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
+                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KWP) or 0.0)
                 if kw <= 0:
-                    errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
+                    errors[CONF_INSTALLIERTE_LEISTUNG_KWP] = "kw_required"
             if not errors:
                 if find_active_rate_window(
                     user_input[CONF_ENERGIEVERSORGER],
@@ -1187,7 +1187,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._setup_pick = {
                     CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     CONF_VALID_FROM: picked_from,
-                    CONF_INSTALLIERTE_LEISTUNG_KW: kw,
+                    CONF_INSTALLIERTE_LEISTUNG_KWP: kw,
                 }
                 return await self.async_step_tariff_details()
 
@@ -1201,7 +1201,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else utility_keys[0]
         )
         default_kw = (
-            user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+            user_input.get(CONF_INSTALLIERTE_LEISTUNG_KWP)
             if user_input is not None
             else 0.0
         )
@@ -1221,13 +1221,13 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 ),
             vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW,
+                CONF_INSTALLIERTE_LEISTUNG_KWP,
                 default=default_kw,
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=10000, step=0.1,
                     mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kW",
+                    unit_of_measurement="kWp",
                 )
             ),
         })
@@ -1258,7 +1258,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_user()
         gate_utility: str = pick[CONF_ENERGIEVERSORGER]
         gate_valid_from: str = pick[CONF_VALID_FROM]
-        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KW])
+        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KWP])
 
         span_from = date.fromisoformat(gate_valid_from)
         periods = compute_user_inputs_periods(gate_utility, span_from, None)
@@ -1317,7 +1317,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "valid_to": None,
                         "config": {
                             CONF_ENERGIEVERSORGER: gate_utility,
-                            CONF_INSTALLIERTE_LEISTUNG_KW: gate_kw,
+                            CONF_INSTALLIERTE_LEISTUNG_KWP: gate_kw,
                             CONF_EIGENVERBRAUCH_AKTIVIERT: ev_value,
                             CONF_HKN_AKTIVIERT: hkn_value,
                             CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
@@ -1332,7 +1332,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # still works coherently.
                 self._data.update({
                     CONF_VALID_FROM: gate_valid_from,
-                    CONF_INSTALLIERTE_LEISTUNG_KW: gate_kw,
+                    CONF_INSTALLIERTE_LEISTUNG_KWP: gate_kw,
                     CONF_EIGENVERBRAUCH_AKTIVIERT: ev_value,
                     CONF_HKN_AKTIVIERT: hkn_value,
                     CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
@@ -1505,346 +1505,11 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         return self.async_show_menu(
             step_id="init",
             menu_options=[
-                "apply_change",
                 "manage_history",
                 "recompute_history",
                 "refresh_data",
                 "entities",
             ],
-        )
-
-    # ----- Sub-step: apply config change (wizard) ----------------------------
-
-    async def async_step_apply_change(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step 1 of the apply-change wizard: pick utility + valid_from.
-
-        v0.12.1 — split from the previous single-step form so the
-        utility-specific context (notes / tarif_urls / dynamic
-        user_inputs) on Step 2 reflects the user's pick. HA's flow
-        rendering with ``last_step=False`` shows a ``Submit`` button
-        on Step 1 vs ``Save`` on Step 2 → unambiguous progression.
-        """
-        await _async_warm_cache(self.hass)
-        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
-        open_rec = next((r for r in history if r.get("valid_to") is None), None)
-        open_cfg = (open_rec or {}).get("config") or {}
-
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            try:
-                picked_from = _parse_valid_from(user_input.get("valid_from", ""))
-            except ValueError:
-                errors["valid_from"] = "invalid_valid_from"
-            if not errors:
-                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
-                if kw <= 0:
-                    errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
-            if not errors:
-                # v0.13.0 — Step 1 validation: reject if (utility, valid_from)
-                # doesn't resolve to a rate window. Catches the error here
-                # rather than at Step 2 submit (where it used to surface).
-                if find_active_rate_window(
-                    user_input[CONF_ENERGIEVERSORGER],
-                    date.fromisoformat(picked_from),
-                ) is None:
-                    errors["valid_from"] = "no_active_rate"
-            if not errors:
-                self._apply_pick = {
-                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
-                    "valid_from": picked_from,
-                    CONF_INSTALLIERTE_LEISTUNG_KW: kw,
-                }
-                return await self.async_step_apply_change_details()
-
-        utility_keys = list_utility_keys()
-        default_valid_from = (
-            user_input.get("valid_from") if user_input is not None
-            else _quarter_start_today()
-        )
-        default_utility = (
-            user_input.get(CONF_ENERGIEVERSORGER) if user_input is not None
-            else (open_cfg.get(CONF_ENERGIEVERSORGER) or utility_keys[0])
-        )
-        default_kw = (
-            user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW)
-            if user_input is not None
-            else open_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
-        )
-        schema = vol.Schema({
-            vol.Required("valid_from", default=default_valid_from):
-                selector.DateSelector(),
-            vol.Required(CONF_ENERGIEVERSORGER, default=default_utility):
-                selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            selector.SelectOptionDict(
-                                value=k, label=_utility_display_name(k)
-                            )
-                            for k in utility_keys
-                        ],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW,
-                default=default_kw,
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=10000, step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kW",
-                )
-            ),
-        })
-        return self.async_show_form(
-            step_id="apply_change",
-            data_schema=schema,
-            errors=errors,
-            last_step=False,
-            description_placeholders={
-                "current_summary": (
-                    _format_config_summary(open_cfg) if open_cfg else "—"
-                ),
-            },
-        )
-
-    async def async_step_apply_change_details(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step 2 of the apply-change wizard: EV / HKN / user_inputs.
-
-        v0.13.0 (Phase 2) — when the entry's effective span covers
-        multiple rate windows with differing ``user_inputs[]`` decls,
-        renders one section of namespaced fields per period
-        (``period_<idx>_<key>``) and saves N split history entries.
-        Single-period (the common case) preserves the v0.12.1 behaviour.
-        """
-        pick = getattr(self, "_apply_pick", None)
-        if pick is None:
-            return await self.async_step_apply_change()
-        gate_utility: str = pick[CONF_ENERGIEVERSORGER]
-        gate_valid_from: str = pick["valid_from"]
-        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KW])
-
-        history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
-        open_rec = next((r for r in history if r.get("valid_to") is None), None)
-        open_cfg = (open_rec or {}).get("config") or {}
-
-        # apply_change inserts the new entry as the latest in user-history,
-        # so its effective span is [gate_valid_from, ∞).
-        span_from = date.fromisoformat(gate_valid_from)
-        periods = compute_user_inputs_periods(gate_utility, span_from, None)
-        is_multi = len(periods) > 1
-
-        errors: dict[str, str] = {}
-        decl_list = resolve_user_inputs_decl(gate_utility, gate_valid_from)
-
-        if user_input is not None:
-            if is_multi:
-                errors.update(_validate_user_inputs_namespaced(periods, user_input))
-            else:
-                errors.update(_validate_user_inputs(decl_list, user_input))
-
-            derived_billing: str | None = None
-            if not errors:
-                try:
-                    derived_billing = _derive_billing(gate_utility, gate_valid_from)
-                except NotImplementedError:
-                    errors["base"] = "settlement_period_unsupported"
-                except (KeyError, LookupError):
-                    errors["base"] = "no_active_rate"
-
-            if is_multi:
-                period_user_inputs = _split_user_inputs_per_period(periods, user_input)
-            else:
-                period_user_inputs = [_user_inputs_payload(decl_list, user_input)]
-
-            # O4 defensive check — for multi-period, dry-run each period's
-            # (period_from, kW, period_user_inputs) to catch any combination
-            # that won't resolve a tier when the resolver hits that period.
-            if not errors:
-                for idx, (pf, _pt, _rep) in enumerate(periods):
-                    if not _find_tier_dry_run(
-                        gate_utility, pf.isoformat(), gate_kw, period_user_inputs[idx]
-                    ):
-                        errors["base"] = "no_matching_tier"
-                        break
-
-            if not errors:
-                hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-                show_eigenverbrauch = self_consumption_relevant(
-                    gate_utility, gate_valid_from, gate_kw
-                )
-                ev_value = bool(
-                    user_input.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
-                ) if show_eigenverbrauch else bool(
-                    open_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
-                )
-                hkn_value = _force_hkn_for_save(
-                    hkn_structure, user_input.get(CONF_HKN_AKTIVIERT, False)
-                )
-
-                # Build N records — one per period. The first record uses
-                # the user's chosen valid_from; subsequent records use the
-                # rate-window boundary (period_from). For single-period this
-                # collapses to a single record at gate_valid_from (same as
-                # v0.12.1 behaviour).
-                new_records: list[dict] = []
-                for idx, (pf, _pt, _rep) in enumerate(periods):
-                    record_valid_from = (
-                        gate_valid_from if idx == 0 else pf.isoformat()
-                    )
-                    new_records.append({
-                        "valid_from": record_valid_from,
-                        "valid_to": None,
-                        "config": {
-                            CONF_ENERGIEVERSORGER: gate_utility,
-                            CONF_INSTALLIERTE_LEISTUNG_KW: gate_kw,
-                            CONF_EIGENVERBRAUCH_AKTIVIERT: ev_value,
-                            CONF_HKN_AKTIVIERT: hkn_value,
-                            CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,
-                            CONF_USER_INPUTS: period_user_inputs[idx],
-                        },
-                    })
-
-                # No-op detection only applies for single-period — multi-
-                # period always writes (we can't compare N new records to
-                # the existing single open_rec without ambiguity).
-                if not is_multi:
-                    def _eq_cfg(a: dict, b: dict) -> bool:
-                        a2 = {**a, CONF_USER_INPUTS: a.get(CONF_USER_INPUTS) or {}}
-                        b2 = {**b, CONF_USER_INPUTS: b.get(CONF_USER_INPUTS) or {}}
-                        return a2 == b2
-                    if (
-                        open_rec
-                        and open_rec["valid_from"] == gate_valid_from
-                        and _eq_cfg(open_rec["config"], new_records[0]["config"])
-                    ):
-                        return self.async_create_entry(
-                            title="", data=dict(self.config_entry.options or {})
-                        )
-
-                # Drop stale records that share valid_from with any of the
-                # new records (avoids duplicates after normalize).
-                new_valid_froms = {r["valid_from"] for r in new_records}
-                history = [
-                    r for r in history if r.get("valid_from") not in new_valid_froms
-                ]
-                for rec in new_records:
-                    history = _append_history_record(
-                        history, rec, dict(self.config_entry.data)
-                    )
-                normalized = _normalize_history(history)
-                new_options = {
-                    **dict(self.config_entry.options or {}),
-                    OPT_CONFIG_HISTORY: normalized,
-                }
-                return self.async_create_entry(title="", data=new_options)
-
-        # Fall-through: render Step 2 form (initial + on validation error).
-        defaults_cfg = (
-            user_input
-            if user_input is not None
-            else (open_cfg or build_history_config(self.config_entry.data))
-        )
-        hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-        show_eigenverbrauch = self_consumption_relevant(
-            gate_utility, gate_valid_from, gate_kw
-        )
-
-        schema_dict: dict[Any, Any] = {}
-        if show_eigenverbrauch:
-            schema_dict[
-                vol.Required(
-                    CONF_EIGENVERBRAUCH_AKTIVIERT,
-                    default=bool(
-                        defaults_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT, True)
-                    ),
-                )
-            ] = selector.BooleanSelector()
-        if hkn_structure == "additive_optin":
-            schema_dict[
-                vol.Required(
-                    CONF_HKN_AKTIVIERT,
-                    default=bool(defaults_cfg.get(CONF_HKN_AKTIVIERT, False)),
-                )
-            ] = selector.BooleanSelector()
-
-        decl_defaults = (defaults_cfg.get(CONF_USER_INPUTS) or {})
-        lang = (
-            getattr(self.hass.config, "language", None) or "de"
-        ).split("-")[0].lower()
-
-        if is_multi:
-            # Per-period user_input fields with namespaced keys.
-            for idx, (pf, _pt, rep_rate) in enumerate(periods):
-                period_decls = tuple(rep_rate.get("user_inputs") or ())
-                # Defaults for period idx: form re-render uses prior submission;
-                # initial render seeds period 0 from the open record's
-                # user_inputs and subsequent periods from schema defaults.
-                if user_input is not None:
-                    period_defaults = {
-                        d["key"]: user_input.get(
-                            f"{_period_prefix(idx)}{d['key']}", d.get("default")
-                        )
-                        for d in period_decls
-                    }
-                else:
-                    period_defaults = decl_defaults if idx == 0 else {}
-                _add_user_input_fields_namespaced(
-                    schema_dict, period_decls, period_defaults, lang,
-                    prefix=_period_prefix(idx),
-                    gate_utility=gate_utility,
-                    gate_valid_from=pf.isoformat(),
-                    gate_kw=gate_kw,
-                )
-            periods_block = _format_periods_block(
-                periods,
-                _split_user_inputs_per_period(periods, user_input or {}),
-                lang,
-            )
-        else:
-            _add_user_input_fields(
-                schema_dict, decl_list, decl_defaults, lang,
-                gate_utility=gate_utility,
-                gate_valid_from=gate_valid_from,
-                gate_kw=gate_kw,
-            )
-            periods_block = ""
-
-        return self.async_show_form(
-            step_id="apply_change_details",
-            data_schema=vol.Schema(schema_dict),
-            errors=errors,
-            description_placeholders={
-                "utility_name": _utility_display_name(gate_utility),
-                "valid_from": gate_valid_from,
-                "current_summary": (
-                    _format_config_summary(open_cfg) if open_cfg else "—"
-                ),
-                "hkn_gate_note": _hkn_gate_note(hkn_structure, self.hass),
-                "notes_block": (
-                    "" if is_multi
-                    else _notes_block(gate_utility, gate_valid_from, self.hass)
-                ),
-                "tarif_urls_block": (
-                    "" if is_multi
-                    else _format_tarif_urls_block(
-                        _resolve_tarif_urls(
-                            gate_utility, gate_valid_from, decl_defaults
-                        ),
-                        lang,
-                    )
-                ),
-                "user_inputs_help": (
-                    "" if is_multi
-                    else _user_inputs_help_block(decl_list, lang)
-                ),
-                "periods_block": periods_block,
-                **_source_links(self.hass),
-            },
         )
 
     # ----- Sub-step: manage configuration history ----------------------------
@@ -1941,9 +1606,9 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["valid_from"] = "invalid_valid_from"
             if not errors:
-                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
+                kw = float(user_input.get(CONF_INSTALLIERTE_LEISTUNG_KWP) or 0.0)
                 if kw <= 0:
-                    errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
+                    errors[CONF_INSTALLIERTE_LEISTUNG_KWP] = "kw_required"
             if not errors:
                 # v0.13.0 — Step 1 validation: reject if (utility, valid_from)
                 # doesn't resolve to a rate window.
@@ -1956,7 +1621,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 self._row_pick = {
                     CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     "valid_from": picked_from,
-                    CONF_INSTALLIERTE_LEISTUNG_KW: kw,
+                    CONF_INSTALLIERTE_LEISTUNG_KWP: kw,
                 }
                 if is_edit:
                     return await self.async_step_edit_row()
@@ -1966,7 +1631,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
         if existing is not None:
             default_utility = existing["config"].get(CONF_ENERGIEVERSORGER)
             default_valid_from = existing["valid_from"]
-            default_kw = existing["config"].get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
+            default_kw = existing["config"].get(CONF_INSTALLIERTE_LEISTUNG_KWP, 0.0)
         else:
             open_rec = next(
                 (r for r in history if r.get("valid_to") is None), None
@@ -1976,7 +1641,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             )
             default_utility = cfg.get(CONF_ENERGIEVERSORGER)
             default_valid_from = _quarter_start_today()
-            default_kw = cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
+            default_kw = cfg.get(CONF_INSTALLIERTE_LEISTUNG_KWP, 0.0)
 
         utility_keys = list_utility_keys()
         schema = vol.Schema({
@@ -1997,21 +1662,34 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 )
             ),
             vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW,
+                CONF_INSTALLIERTE_LEISTUNG_KWP,
                 default=default_kw,
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=10000, step=0.1,
                     mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="kW",
+                    unit_of_measurement="kWp",
                 )
             ),
         })
+        # v0.18.1: surface the open record's config as "Currently active:"
+        # context. For add (idx=None) we use the open record; for edit, the
+        # row being edited. None → em-dash.
+        if existing is not None:
+            ctx_cfg = existing.get("config")
+        else:
+            open_rec = next((r for r in history if r.get("valid_to") is None), None)
+            ctx_cfg = (open_rec or {}).get("config") if open_rec else None
         return self.async_show_form(
             step_id="edit_pick_row" if is_edit else "add_pick_row",
             data_schema=schema,
             errors=errors,
             last_step=False,
+            description_placeholders={
+                "current_summary": (
+                    _format_config_summary(ctx_cfg) if ctx_cfg else "—"
+                ),
+            },
         )
 
     # ----- Manage-history wizard: Step 2 (details) ---------------------------
@@ -2042,7 +1720,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             return await self._pick_row(idx, None)
         gate_utility: str = pick[CONF_ENERGIEVERSORGER]
         gate_valid_from: str = pick["valid_from"]
-        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KW])
+        gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KWP])
 
         history = list(self.config_entry.options.get(OPT_CONFIG_HISTORY) or [])
         _LOGGER.debug(
@@ -2160,7 +1838,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                         "valid_to": None,
                         "config": {
                             CONF_ENERGIEVERSORGER: gate_utility,
-                            CONF_INSTALLIERTE_LEISTUNG_KW: gate_kw,
+                            CONF_INSTALLIERTE_LEISTUNG_KWP: gate_kw,
                             CONF_EIGENVERBRAUCH_AKTIVIERT: ev_value,
                             CONF_HKN_AKTIVIERT: hkn_value,
                             CONF_ABRECHNUNGS_RHYTHMUS: derived_billing,

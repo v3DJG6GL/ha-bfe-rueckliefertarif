@@ -2,50 +2,45 @@
   "config": {
     "step": {
       "user": {
-        "title": "Configuration tarifaire — fournisseur, date et puissance",
-        "description": "Choisis ton **fournisseur**, la **date** d'activation et la **puissance installée** de l'installation. L'étape suivante présente les options spécifiques au fournisseur (autoconsommation, GO, champs spécifiques).\n\nTableau comparatif des fournisseurs dans le [README]({agency_url}).",
+        "title": "Configuration tarifaire — choisir fournisseur, date & puissance",
+        "description": "Choisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12) · [Aperçu rémunération de la reprise OFEN](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
           "energieversorger": "Fournisseur",
-          "valid_from": "Actif depuis",
-          "installierte_leistung_kw": "Puissance installée (kW)"
-        },
-        "data_description": {
-          "energieversorger": "## Fournisseur\nLe fournisseur qui rémunère la ré-injection. Le gate GO, les notes, la documentation tarifaire et les champs spécifiques de l'étape suivante dépendent de ce choix.",
-          "valid_from": "## Date d'installation\nDate à laquelle ton installation PV est entrée en service (ou à partir de laquelle cette configuration s'applique). Sert d'ancre à l'historique de configuration — les trimestres antérieurs sont silencieusement ignorés lors d'un recalcul, faute de configuration tarifaire qui les couvre.\n\nValeur par défaut : début du trimestre courant.",
-          "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC de ton installation PV en kilowatts. Utilisée pour retrouver la **rémunération minimale** fédérale ([OEne Art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026)."
+          "valid_from": "Valide dès",
+          "installierte_leistung_kwp": "Puissance installée (kWp)"
         }
       },
       "tariff_pick": {
         "title": "Configuration du tarif ({utility_name}) — date & puissance",
         "description": "Choisissez la date d'effet de cette configuration et la puissance installée. L'étape suivante affiche les options spécifiques au fournisseur (autoconsommation, GO, champs spécifiques).",
         "data": {
-          "valid_from": "Actif depuis",
-          "installierte_leistung_kw": "Puissance installée (kW)"
+          "valid_from": "Valide dès",
+          "installierte_leistung_kwp": "Puissance installée (kWp)"
         },
         "data_description": {
           "valid_from": "## Date de mise en service\nDate à laquelle votre installation PV a été connectée au réseau (ou date de début de cette configuration). Sert d'ancre à l'historique de configuration — les trimestres antérieurs à cette date sont silencieusement ignorés lors du recalcul, car aucune configuration tarifaire ne les couvre.\n\nValeur par défaut : début du trimestre courant. Indiquez la date réelle de mise en service pour un historique d'import propre.",
-          "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026)."
+          "installierte_leistung_kwp": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026)."
         }
       },
       "tariff_details": {
-        "title": "Configuration du tarif — {utility_name} dès {valid_from}",
+        "title": "Configuration tarifaire — options spécifiques au fournisseur",
         "description": "Indiquez les paramètres de votre installation pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "eigenverbrauch_aktiviert": "Autoconsommation activée",
-          "hkn_aktiviert": "Vendre les GO au fournisseur ?",
+          "eigenverbrauch_aktiviert": "Autoconsommation",
+          "hkn_aktiviert": "GO (garantie d'origine) (DE: HKN)",
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         },
         "data_description": {
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place. **Non** pour une installation en injection totale (Volleinspeisung).",
-          "hkn_aktiviert": "## Opt-in GO (Garantie d'Origine)\n**Oui** si vous vendez vos *garanties d'origine* à votre fournisseur. Le taux est fixé par le fournisseur et n'est pas modifiable ici."
+          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur. La plupart des fournisseurs l'offrent en option — inscris-toi via le portail client. Le tarif est fixé par le fournisseur ; aucune saisie manuelle nécessaire. Choisis **Non** si tu ne vends pas de GO, ou si l'installation est certifiée ailleurs (p.ex. *naturemade star*) et que tu vends la GO sur le marché libre."
         }
       },
       "entities": {
-        "title": "Entités Home Assistant",
-        "description": "Sélectionnez les entités HA et donnez un nom à l'installation.",
+        "title": "Câblage des entités",
+        "description": "Relie le compteur kWh d'injection au réseau, le capteur CHF auto-créé par l'Energy Dashboard et un nom d'installation.",
         "data": {
           "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
           "rueckliefervergutung_chf": "Rétribution (CHF)",
@@ -55,15 +50,15 @@
         "data_description": {
           "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe **compteur kWh** qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans le **tableau de bord Énergie** sous *« Retour au réseau »*.",
           "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe **capteur CHF** que le tableau de bord Énergie crée automatiquement quand vous configurez *« Retour au réseau avec un prix »*.\n\nHA y appose le suffixe `_compensation` (généralement `sensor.VOTRE_INJECTION_compensation`). Cette intégration écrit dans ses **statistiques à long terme**.",
-          "plant_name": "## Nom de l'installation\nNom d'affichage stable de cette installation PV — ex. `Toit Sud`, `Carport Garage`. Utilisé comme titre de l'intégration dans **Paramètres → Appareils & services** et comme valeur par défaut du préfixe de nom ci-dessous.\n\n**Reste identique même en cas de changement de fournisseur** (les changements de fournisseur passent par *Configurer → Appliquer un changement de configuration*).",
-          "namenspraefix": "## Préfixe de nom\nPréfixe des **capteurs de diagnostic** de cette intégration (ex. `sensor.PREFIXE_basisverguetung`).\n\n**Laisser vide** pour dériver du nom de l'installation (ex. `toit_sud_rueckliefertarif`). *À définir explicitement* uniquement pour une valeur personnalisée ou en cas de collision."
+          "plant_name": "Nom d'affichage pour cette installation PV — p.ex. `Installation PV`. Utilisé comme titre de l'intégration sous Réglages → Appareils & services et comme préfixe par défaut.",
+          "namenspraefix": "Préfixe pour les *capteurs* de cette intégration (p.ex. `sensor.PREFIX_basisverguetung`). Laisser vide pour dériver du nom de l'installation (p.ex. `sensor.installation_pv_basisverguetung`)."
         }
       },
       "apply_change_details": {
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       },
@@ -71,7 +66,7 @@
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       },
@@ -79,7 +74,7 @@
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       },
@@ -87,7 +82,7 @@
         "data": {
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "supply_product": "Eco-electricity product subscribed",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)"
         }
       }
@@ -106,7 +101,6 @@
         "title": "Options BFE Rückliefertarif",
         "description": "Que souhaitez-vous faire ?",
         "menu_options": {
-          "apply_change": "Appliquer un changement de configuration (fournisseur / kW / GO / facturation)",
           "manage_history": "Gérer l'historique de configuration",
           "recompute_history": "Recalculer tout l'historique",
           "refresh_data": "Actualiser prix & données tarifaires",
@@ -117,86 +111,55 @@
         "title": "Gérer l'historique de configuration",
         "description": "Cliquez sur une ligne pour modifier, **Ajouter une transition** pour enregistrer un changement (changement de fournisseur, extension PV, certificat GO), ou **Terminer** pour sortir. Le recalcul des trimestres passés utilise les valeurs actives à l'époque."
       },
-      "apply_change": {
-        "title": "Changement de configuration — fournisseur & date",
-        "description": "Sélectionnez le fournisseur et la date d'effet du changement. L'étape suivante affichera les options spécifiques au fournisseur (informations, documentation tarifaire, champs spécifiques).\n\n**Actuellement actif :** {current_summary}",
-        "data": {
-          "valid_from": "Effectif depuis",
-          "energieversorger": "Fournisseur",
-          "installierte_leistung_kw": "Puissance installée (kW)"
-        },
-        "data_description": {
-          "valid_from": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
-          "energieversorger": "## Fournisseur\nFournisseur qui rétribue l'injection. L'étape suivante reflètera son gate GO, ses informations, sa documentation tarifaire et ses éventuels champs spécifiques."
-        }
-      },
-      "apply_change_details": {
-        "title": "Changement de configuration — {utility_name} dès {valid_from}",
-        "description": "Renseignez les paramètres pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
-        "data": {
-          "installierte_leistung_kw": "Puissance installée (kW)",
-          "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO",
-          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
-          "supply_product": "Eco-electricity product subscribed"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale fédérale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
-          "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place.",
-          "hkn_aktiviert": "## Opt-in GO\n**Oui** si vous vendez vos garanties d'origine au fournisseur."
-        }
-      },
       "add_pick_row": {
-        "title": "Ajouter une transition — fournisseur & date",
-        "description": "Sélectionnez le fournisseur et la date d'effet. L'étape suivante affichera les options spécifiques au fournisseur.",
+        "title": "Ajouter un tarif — choisir fournisseur, date & puissance",
+        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12) · [Aperçu rémunération de la reprise OFEN](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
-          "valid_from": "Actif depuis",
+          "valid_from": "Valide dès",
           "energieversorger": "Fournisseur",
-          "installierte_leistung_kw": "Puissance installée (kW)"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "Puissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale**."
+          "installierte_leistung_kwp": "Puissance installée (kWp)"
         }
       },
       "edit_pick_row": {
-        "title": "Modifier la transition — fournisseur & date",
-        "description": "Modifier le fournisseur et/ou la date d'effet de cette transition. L'étape suivante permettra d'ajuster kW / autoconsommation / GO et les champs spécifiques au fournisseur.",
+        "title": "Modifier le tarif — choisir fournisseur, date & puissance",
+        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)](https://www.fedlex.admin.ch/eli/cc/2017/763/fr#art_12) · [Aperçu rémunération de la reprise OFEN](https://www.bfe.admin.ch/bfe/de/home/foerderung/erneuerbare-energien/einspeiseverguetung.html)",
         "data": {
-          "valid_from": "Actif depuis",
+          "valid_from": "Valide dès",
           "energieversorger": "Fournisseur",
-          "installierte_leistung_kw": "Puissance installée (kW)"
-        },
-        "data_description": {
-          "installierte_leistung_kw": "Puissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale**."
+          "installierte_leistung_kwp": "Puissance installée (kWp)"
         }
       },
       "add_new_row": {
-        "title": "Ajouter une transition — {utility_name} dès {valid_from}",
+        "title": "Ajouter un tarif — options spécifiques au fournisseur",
         "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "installierte_leistung_kw": "Puissance installée (kW)",
+          "installierte_leistung_kwp": "Puissance installée (kWp)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO",
+          "hkn_aktiviert": "GO (garantie d'origine) (DE: HKN)",
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "supply_product": "Eco-electricity product subscribed"
+        },
+        "data_description": {
+          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur. La plupart des fournisseurs l'offrent en option — inscris-toi via le portail client. Le tarif est fixé par le fournisseur ; aucune saisie manuelle nécessaire. Choisis **Non** si tu ne vends pas de GO, ou si l'installation est certifiée ailleurs (p.ex. *naturemade star*) et que tu vends la GO sur le marché libre."
         }
       },
       "edit_row": {
-        "title": "Modifier la transition — {utility_name} dès {valid_from}",
+        "title": "Modifier le tarif — options spécifiques au fournisseur",
         "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
-          "installierte_leistung_kw": "Puissance installée (kW)",
+          "installierte_leistung_kwp": "Puissance installée (kWp)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO",
+          "hkn_aktiviert": "GO (garantie d'origine) (DE: HKN)",
           "delete": "Supprimer cet enregistrement",
           "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
           "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
-          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "regio_top40_opted_in": "Wahltarif TOP-40",
           "supply_product": "Eco-electricity product subscribed"
+        },
+        "data_description": {
+          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur. La plupart des fournisseurs l'offrent en option — inscris-toi via le portail client. Le tarif est fixé par le fournisseur ; aucune saisie manuelle nécessaire. Choisis **Non** si tu ne vends pas de GO, ou si l'installation est certifiée ailleurs (p.ex. *naturemade star*) et que tu vends la GO sur le marché libre."
         }
       },
       "recompute_history": {
@@ -214,8 +177,8 @@
         }
       },
       "entities": {
-        "title": "Reconfigurer les entités Home Assistant",
-        "description": "Reconfigurer les entités et renommer cette entrée.",
+        "title": "Câblage des entités",
+        "description": "Relie le compteur kWh d'injection au réseau, le capteur CHF auto-créé par l'Energy Dashboard et un nom d'installation.",
         "data": {
           "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
           "rueckliefervergutung_chf": "Rétribution (CHF)",
@@ -225,8 +188,8 @@
         "data_description": {
           "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh d'injection.",
           "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF du tableau de bord Énergie.",
-          "plant_name": "## Nom de l'installation\nNom d'affichage de cette entrée — visible dans **Paramètres → Appareils & services**. Modifier ce champ met à jour le titre de l'intégration.",
-          "namenspraefix": "## Préfixe de nom\nPréfixe des **capteurs de diagnostic** de cette intégration (ex. `sensor.PREFIXE_basisverguetung`).\n\n⚠ **Modifier ce champ orphelinise les statistiques à long terme liées à l'ancien préfixe** — à modifier seulement en connaissance de cause."
+          "plant_name": "Nom d'affichage pour cette installation PV — p.ex. `Installation PV`. Utilisé comme titre de l'intégration sous Réglages → Appareils & services.",
+          "namenspraefix": "Préfixe pour les *capteurs* de cette intégration (p.ex. `sensor.PREFIX_basisverguetung`). ⚠️ Le modifier orpheline les statistiques long terme liées à l'ancien préfixe — ne changer qu'en connaissance de cause !"
         }
       }
     },

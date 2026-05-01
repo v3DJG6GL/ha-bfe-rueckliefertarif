@@ -16,7 +16,7 @@ from .const import (
     CONF_EIGENVERBRAUCH_AKTIVIERT,
     CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
-    CONF_INSTALLIERTE_LEISTUNG_KW,
+    CONF_INSTALLIERTE_LEISTUNG_KWP,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
     DOMAIN,
@@ -140,7 +140,7 @@ def _cfg_for_entry_at_date(
     cfg = {**raw_data, **resolved_cfg}
 
     utility_key = resolved_cfg.get(CONF_ENERGIEVERSORGER)
-    kw = float(resolved_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KW) or 0.0)
+    kw = float(resolved_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KWP) or 0.0)
     eigenverbrauch = bool(resolved_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT))
     hkn_aktiviert = bool(resolved_cfg.get(CONF_HKN_AKTIVIERT))
     # v0.11.0 (Batch D) — declared user_inputs from the active history
@@ -159,7 +159,7 @@ def _cfg_for_entry_at_date(
 
     tariff_cfg = TariffConfig(
         eigenverbrauch_aktiviert=eigenverbrauch,
-        installierte_leistung_kw=kw,
+        installierte_leistung_kwp=kw,
         hkn_aktiviert=hkn_aktiviert,
         hkn_rp_kwh_resolved=hkn_resolved,
         resolved=resolved,
@@ -829,7 +829,7 @@ def _record_snapshot(
 
     snapshot = {
         "rate_rp_kwh": round(rate_rp_kwh, 4),
-        "kw": tariff_cfg.installierte_leistung_kw,
+        "kwp": tariff_cfg.installierte_leistung_kwp,
         "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
         "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
         "hkn_optin": tariff_cfg.hkn_aktiviert,
@@ -895,7 +895,7 @@ def _record_snapshot(
                 "valid_to": seg_local_end.date().isoformat(),
                 "utility_key": srt.utility_key,
                 "utility_name": utility_meta.get("name_de", srt.utility_key),
-                "kw": seg.cfg.installierte_leistung_kw,
+                "kwp": seg.cfg.installierte_leistung_kwp,
                 "eigenverbrauch": seg.cfg.eigenverbrauch_aktiviert,
                 "hkn_optin": seg.cfg.hkn_aktiviert,
                 "base_model": srt.base_model,
@@ -1186,7 +1186,7 @@ async def _import_running_quarter_estimate(
 
     snapshot = {
         "rate_rp_kwh": round(avg_rate_rp_kwh, 4),
-        "kw": tariff_cfg.installierte_leistung_kw,
+        "kwp": tariff_cfg.installierte_leistung_kwp,
         "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
         "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
         "hkn_optin": tariff_cfg.hkn_aktiviert,
@@ -1536,7 +1536,7 @@ def _build_recompute_report(
         "utility_name": utility_meta.get("name_de", rt.utility_key),
         "base_model": rt.base_model,
         "settlement_period": rt.settlement_period,
-        "kw": tariff_cfg.installierte_leistung_kw,
+        "kwp": tariff_cfg.installierte_leistung_kwp,
         "eigenverbrauch": tariff_cfg.eigenverbrauch_aktiviert,
         "hkn_optin": tariff_cfg.hkn_aktiviert,
         "hkn_rp_kwh": rt.hkn_rp_kwh,
@@ -1587,7 +1587,7 @@ def _build_recompute_report(
             row_meta = {
                 "utility_key_at_period": snap_utility_key,
                 "utility_name_at_period": snap_utility_name,
-                "kw_at_period": snap.get("kw"),
+                "kw_at_period": snap.get("kwp"),
                 "eigenverbrauch_at_period": snap.get("eigenverbrauch_aktiviert"),
                 "hkn_optin_at_period": snap.get("hkn_optin"),
                 "billing_at_period": snap.get("billing"),
@@ -1852,7 +1852,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     Expected dict keys (any may be missing — None-guarded throughout):
     - ``utility_key`` (str), ``utility_name`` (str)
     - ``base_model`` (str), ``settlement_period`` (str)
-    - ``kw`` (float), ``eigenverbrauch`` (bool), ``hkn_optin`` (bool)
+    - ``kwp`` (float), ``eigenverbrauch`` (bool), ``hkn_optin`` (bool)
     - ``hkn_rp_kwh`` (float, only used when ``hkn_optin`` is True)
     - ``billing`` (str)
     - ``floor_label`` (str), ``floor_rp_kwh`` (float)
@@ -1875,26 +1875,26 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     # values aren't interleaved with utility-defined descriptors.
     config_subs: list[str] = []
 
-    kw = c.get("kw")
-    if kw is not None:
-        config_subs.append(f"    - **Installed power:** {kw:.1f} kW")
+    kwp = c.get("kwp")
+    if kwp is not None:
+        config_subs.append(f"    - **Installed power:** {kwp:.1f} kWp")
     else:
         config_subs.append("    - **Installed power:** —")
 
     # v0.17.1 — Issue 8.1: suppress Self-consumption line entirely when
     # the user's choice has no effect on rates for this (utility, valid_from,
-    # kW). Pre-v0.16.0 snapshots lack `valid_from` → relevance can't be
+    # kWp). Pre-v0.16.0 snapshots lack `valid_from` → relevance can't be
     # determined → permissive default keeps the line (no regression).
     ev = c.get("eigenverbrauch")
     if ev is not None:
         utility_key = c.get("utility_key")
         valid_from = c.get("valid_from")
         relevant = True
-        if utility_key and valid_from and kw is not None:
+        if utility_key and valid_from and kwp is not None:
             try:
                 from .tariffs_db import self_consumption_relevant
                 relevant = self_consumption_relevant(
-                    utility_key, valid_from, float(kw)
+                    utility_key, valid_from, float(kwp)
                 )
             except Exception:
                 # Permissive: keep showing on any lookup failure.
@@ -1994,12 +1994,12 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     if cap_mode:
         cap_v = c.get("cap_rp_kwh")
         cap_str = f"{cap_v:.2f} Rp/kWh" if cap_v is not None else "n/a"
-        kw_str = f"{kw:.1f} kW" if kw is not None else "—"
+        kwp_str = f"{kwp:.1f} kWp" if kwp is not None else "—"
         cap_ev_str = "Yes" if ev else ("No" if ev is False else "—")
         cap_label = "current cap" if is_today else "cap"
         lines.append(
             f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — {cap_label} "
-            f"{cap_str} ({kw_str}, EV={cap_ev_str})"
+            f"{cap_str} ({kwp_str}, EV={cap_ev_str})"
         )
 
     tv = c.get("tariffs_version")
@@ -2117,7 +2117,7 @@ def _render_group_heading(
     """
     # v0.17.0 — fingerprint extended with user_inputs (canonicalised tuple);
     # not used here (sample_row carries the raw dict for rendering).
-    utility_key, kw, ev, hkn_optin, billing, _user_inputs_canon = fingerprint
+    utility_key, kwp, ev, hkn_optin, billing, _user_inputs_canon = fingerprint
 
     # Earliest period start, latest period end (or "now" for open groups).
     starts: list[str] = []
@@ -2146,7 +2146,7 @@ def _render_group_heading(
         "base_model": sample_row.base_model_at_period,
         # v0.16.0 — settlement_period now carried per-row.
         "settlement_period": sample_row.settlement_period_at_period,
-        "kw": kw,
+        "kwp": kwp,
         "eigenverbrauch": ev,
         "hkn_optin": hkn_optin,
         # The intended HKN rate from the snapshot is the "published" value;
@@ -2360,7 +2360,7 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     # drift between live config and snapshot doesn't break equality.
     today_fingerprint = _canon_fingerprint(
         c.get("utility_key"),
-        c.get("kw"),
+        c.get("kwp"),
         c.get("eigenverbrauch"),
         c.get("hkn_optin"),
         c.get("billing"),

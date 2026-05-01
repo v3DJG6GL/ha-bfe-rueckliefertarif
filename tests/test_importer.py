@@ -104,7 +104,7 @@ def realistic_hourly(q: Quarter, monthly_totals_kwh: dict[Month, float]) -> dict
 
 EKZ_CFG = TariffConfig(
     eigenverbrauch_aktiviert=True,
-    installierte_leistung_kw=10.0,
+    installierte_leistung_kwp=10.0,
     hkn_aktiviert=False,
     hkn_rp_kwh_resolved=0.0,
     resolved=_make_resolved(),  # rmp_quartal, ≤30 kW small-band floor 6.00
@@ -256,7 +256,7 @@ class TestFixedMode:
     def test_fixed_mode_rate_constant_across_hours(self):
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=False,
             hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(
@@ -276,7 +276,7 @@ class TestFixedMode:
         # 12.95 Rp/kWh including HKN, paid in full without Anrechenbarkeitsgrenze cap.
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=False,
             hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(
@@ -297,7 +297,7 @@ class TestFixedMode:
         # > cap 10.96 → HKN reduced so total lands at 10.96.
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=True,
             hkn_rp_kwh_resolved=5.0,
             resolved=_make_resolved(
@@ -333,7 +333,7 @@ class TestFixedHtNtMode:
     def _make_ekz_2025_cfg(self, *, hkn_opted_in: bool) -> TariffConfig:
         return TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=hkn_opted_in,
             hkn_rp_kwh_resolved=self.EKZ_HKN_RP if hkn_opted_in else 0.0,
             resolved=_make_resolved(
@@ -438,7 +438,7 @@ class TestFixedHtNtMode:
         fixed_nt_rp_kwh should fail loudly when an NT hour is hit."""
         cfg = TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=False,
             hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(
@@ -471,7 +471,7 @@ class TestSeasonalFixedFlat:
     def _make_cfg(self, *, seasonal: dict, hkn: float = 0.0) -> TariffConfig:
         return TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=hkn > 0,
             hkn_rp_kwh_resolved=hkn,
             resolved=_make_resolved(
@@ -542,7 +542,7 @@ class TestSeasonalFixedHtNt:
     def _make_cfg(self, *, seasonal: dict | None = None, hkn: float = 0.0) -> TariffConfig:
         return TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=hkn > 0,
             hkn_rp_kwh_resolved=hkn,
             resolved=_make_resolved(
@@ -674,7 +674,7 @@ class TestEffectiveFloorMaxOfFederalAndUtility:
     def _cfg(self, federal: float | None, utility: float | None) -> TariffConfig:
         return TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=False,
             hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(
@@ -742,7 +742,7 @@ class TestSegmentedQuarterPlan:
         # records with seg_id="single".
         q = Quarter(2026, 1)
         cfg = TariffConfig(
-            eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
+            eigenverbrauch_aktiviert=True, installierte_leistung_kwp=10.0,
             hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(base_model="fixed_flat", fixed_rp_kwh=9.0),
         )
@@ -771,12 +771,12 @@ class TestSegmentedQuarterPlan:
         # Split mid-quarter at Zurich-local 2026-02-15 00:00.
         boundary = datetime(2026, 2, 15, tzinfo=ZoneInfo("Europe/Zurich")).astimezone(UTC)
         cfg_a = TariffConfig(
-            eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
+            eigenverbrauch_aktiviert=True, installierte_leistung_kwp=10.0,
             hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(base_model="fixed_flat", fixed_rp_kwh=8.0),
         )
         cfg_b = TariffConfig(
-            eigenverbrauch_aktiviert=True, installierte_leistung_kw=10.0,
+            eigenverbrauch_aktiviert=True, installierte_leistung_kwp=10.0,
             hkn_aktiviert=False, hkn_rp_kwh_resolved=0.0,
             resolved=_make_resolved(base_model="fixed_flat", fixed_rp_kwh=10.0),
         )
@@ -846,7 +846,7 @@ class TestBatchDPerHourBonusesAndHknCases:
     def _cfg(self, *, rt, hkn_aktiviert=True, user_inputs=None):
         return TariffConfig(
             eigenverbrauch_aktiviert=True,
-            installierte_leistung_kw=10.0,
+            installierte_leistung_kwp=10.0,
             hkn_aktiviert=hkn_aktiviert,
             hkn_rp_kwh_resolved=rt.hkn_rp_kwh if hkn_aktiviert else 0.0,
             resolved=rt,
