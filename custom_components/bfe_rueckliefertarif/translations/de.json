@@ -2,8 +2,18 @@
   "config": {
     "step": {
       "user": {
-        "title": "BFE Rückliefertarif — Energieversorger wählen",
-        "description": "## Übersicht der Rückliefertarife 2026\n\n| Energieversorger | Basisvergütung | HKN-Vergütung (Opt-in) | Cap aktiv | Hinweise |\n|---|---|---|---|---|\n| EKZ | Referenz-Marktpreis | bis 3.00 Rp/kWh | **Ja** | Cap kürzt HKN bei Basis+HKN > Grenze |\n| BKW | Referenz-Marktpreis | bis 2.00 Rp/kWh | Nein | naturemade-star für HKN nötig |\n| CKW | Referenz-Marktpreis | bis 3.00 Rp/kWh | Nein | |\n| Groupe E | Referenz-Marktpreis | bis 4.00 Rp/kWh | **Ja** | |\n| Primeo Energie | Referenz-Marktpreis | bis 2.00 Rp/kWh | **Ja** | |\n| Romande Energie | Referenz-Marktpreis | 1.50 Rp/kWh | Nein | |\n| SAK | Referenz-Marktpreis | bis 1.50 Rp/kWh | Nein | |\n| SGSW | Referenz-Marktpreis | bis 4.60 Rp/kWh | Nein | |\n| ewz | Fixpreis 7.91 Rp/kWh | bis 5.00 Rp/kWh (additiv) | Nein | |\n| IWB | Fixpreis 12.95 Rp/kWh | in Basis enthalten | Nein | 12-Jahres-Vertrag |\n| SIG | Fixpreis 8.16 Rp/kWh | bis 2.80 Rp/kWh (additiv) | Nein | |\n| AEW Fixpreis | Fixpreis 8.20 Rp/kWh (≤30 kW) | in Basis enthalten | Nein | naturemade-star nötig |\n| AEW RMP | Referenz-Marktpreis | keine | Nein | Alle Grössen |\n\n**Cap aktiv** = ob der Versorger die Gesamtvergütung an der Anrechenbarkeitsobergrenze deckelt. Nur EKZ, Groupe E und Primeo wenden den Cap an; alle anderen zahlen Basis + HKN voll additiv aus. Der Cap-*Mechanismus* basiert auf [StromVV Art. 4 Abs. 3 Bst. e]({stromvv_url}); die numerischen Werte sind versorgereigene Herleitungen (in Anlehnung an).\n\n---\n\n**Quellen:** [BFE Einspeisevergütung]({agency_url}) · [opendata.swiss Referenz-Marktpreis-Dataset]({opendata_url})"
+        "title": "Tarifkonfiguration — Versorger, Datum & Leistung wählen",
+        "description": "Wähle deinen **Energieversorger**, das **Aktiv-ab-Datum** und die **installierte Leistung** deiner Anlage. Der nächste Schritt zeigt versorgerspezifische Optionen (Eigenverbrauch, HKN, versorgerspezifische Felder).\n\nVergleichstabelle der Versorger (Basisvergütung, HKN-Vergütung, Cap aktiv) im [README]({agency_url}).",
+        "data": {
+          "energieversorger": "Energieversorger",
+          "valid_from": "Gültig ab",
+          "installierte_leistung_kw": "Installierte Leistung (kW)"
+        },
+        "data_description": {
+          "energieversorger": "## Energieversorger\nDer Versorger, der die Rücklieferung vergütet. HKN-Gate, Hinweise, Tarifinformationen und versorgerspezifische Felder im nächsten Schritt richten sich nach dieser Wahl.",
+          "valid_from": "## Inbetriebnahme-Datum\nDatum, ab dem deine PV-Anlage am Netz ist (oder ab dem diese Konfiguration gilt). Verankert die Konfigurations-Historie — Quartale vor diesem Datum werden bei einer Neuberechnung still übersprungen, weil keine Tarif-Konfiguration sie abdeckt.\n\nStandardwert: aktueller Quartalsanfang. Setze das tatsächliche Inbetriebnahme-Datum für eine saubere Import-Historie.",
+          "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |"
+        }
       },
       "tariff_pick": {
         "title": "Tarif konfigurieren ({utility_name}) — Datum & Leistung",
@@ -112,7 +122,8 @@
         "description": "Wähle den Versorger und das Datum, ab dem die Änderung gilt. Im nächsten Schritt erscheinen die versorgerspezifischen Optionen (Hinweise, Tarifinformationen, versorgerspezifische Felder).\n\n**Aktuell aktiv:** {current_summary}",
         "data": {
           "valid_from": "Gültig ab",
-          "energieversorger": "Energieversorger"
+          "energieversorger": "Energieversorger",
+          "installierte_leistung_kw": "Installierte Leistung (kW)"
         },
         "data_description": {
           "valid_from": "## Wann die Änderung greift\nStandardmässig der Beginn des aktuellen Quartals. Bei Versorgerwechsel mitten im Quartal das tatsächliche Wechseldatum eintragen — der Recompute nutzt den neuen Versorger ab dem Quartal, das an oder nach diesem Datum beginnt.",
@@ -125,7 +136,11 @@
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in"
+          "hkn_aktiviert": "HKN-Opt-in",
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "supply_product": "Bezug Ökostrom-Produkt"
         },
         "data_description": {
           "installierte_leistung_kw": "## Installierte Spitzenleistung\nDC-Spitzenleistung in kW. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138).",
@@ -163,7 +178,11 @@
         "data": {
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
-          "hkn_aktiviert": "HKN-Opt-in"
+          "hkn_aktiviert": "HKN-Opt-in",
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "supply_product": "Bezug Ökostrom-Produkt"
         }
       },
       "edit_row": {
@@ -173,7 +192,11 @@
           "installierte_leistung_kw": "Installierte Leistung (kW)",
           "eigenverbrauch_aktiviert": "Eigenverbrauch",
           "hkn_aktiviert": "HKN-Opt-in",
-          "delete": "Diesen Eintrag löschen"
+          "delete": "Diesen Eintrag löschen",
+          "aew_fixpreis_rmp": "AEW Fixpreis/ Referenzmarktpreis",
+          "fixpreis_rmp": "Vergütungsmodell Rücklieferung",
+          "regio_top40_opted_in": "Wahltarif TOP-40 abonniert",
+          "supply_product": "Bezug Ökostrom-Produkt"
         }
       },
       "recompute_history": {

@@ -1149,58 +1149,25 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> BfeRuecklieferTarifOptionsFlow:
         return BfeRuecklieferTarifOptionsFlow()
 
-    # ----- Step 1: utility menu --------------------------------------------------
+    # ----- Step 1: combined utility + date + kW picker ---------------------------
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        await _async_warm_cache(self.hass)
-        keys = list_utility_keys()
-        return self.async_show_menu(
-            step_id="user",
-            menu_options={
-                f"preset_{k}": _utility_display_name(k) for k in keys
-            },
-            description_placeholders=_source_links(self.hass),
-        )
-
-    async def _apply_preset(self, key: str) -> FlowResult:
-        self._data[CONF_ENERGIEVERSORGER] = key
-        return await self.async_step_tariff_pick()
-
-    def __getattr__(self, name: str):
-        # Dynamic dispatch for menu options: HA looks up
-        # ``async_step_preset_<key>`` from menu_options. Accept any key
-        # present in tariffs.json; everything else raises AttributeError so
-        # genuine typos still surface.
-        if name.startswith("async_step_preset_"):
-            key = name.removeprefix("async_step_preset_")
-            try:
-                valid = set(list_utility_keys())
-            except Exception:
-                valid = set()
-            if key in valid:
-                async def _step(user_input=None, _key=key):
-                    return await self._apply_preset(_key)
-                return _step
-        raise AttributeError(name)
-
-    # ----- Step 2: tariff configuration -----------------------------------------
-
-    async def async_step_tariff_pick(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """v0.14.0 — first-time setup Step 2a: pick valid_from + kW.
-
-        Mirrors ``async_step_apply_change``'s shape so the wizard layouts
-        match. EV / HKN / user_inputs[] move to ``tariff_details``.
+        """v0.18.0 — first-time setup Step 1 (Issue 6.4.1): combined
+        utility + active-since + kW form. Replaces the v0.14.0 split of
+        a 200+ utility menu (`user`) followed by a separate `tariff_pick`
+        step. Mirrors ``async_step_apply_change`` so every flow's first
+        page renders identically.
         """
-        errors: dict[str, str] = {}
-        utility_key = self._data[CONF_ENERGIEVERSORGER]
+        await _async_warm_cache(self.hass)
 
+        errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                picked_from = _parse_valid_from(user_input.get(CONF_VALID_FROM, ""))
+                picked_from = _parse_valid_from(
+                    user_input.get(CONF_VALID_FROM, "")
+                )
             except ValueError:
                 errors[CONF_VALID_FROM] = "invalid_valid_from"
             if not errors:
@@ -1209,27 +1176,53 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_INSTALLIERTE_LEISTUNG_KW] = "kw_required"
             if not errors:
                 if find_active_rate_window(
-                    utility_key, date.fromisoformat(picked_from)
+                    user_input[CONF_ENERGIEVERSORGER],
+                    date.fromisoformat(picked_from),
                 ) is None:
                     errors[CONF_VALID_FROM] = "no_active_rate"
             if not errors:
+                self._data[CONF_ENERGIEVERSORGER] = user_input[
+                    CONF_ENERGIEVERSORGER
+                ]
                 self._setup_pick = {
-                    CONF_ENERGIEVERSORGER: utility_key,
+                    CONF_ENERGIEVERSORGER: user_input[CONF_ENERGIEVERSORGER],
                     CONF_VALID_FROM: picked_from,
                     CONF_INSTALLIERTE_LEISTUNG_KW: kw,
                 }
                 return await self.async_step_tariff_details()
 
-        defaults = user_input if user_input is not None else self._data
+        utility_keys = list_utility_keys()
         default_valid_from = (
-            defaults.get(CONF_VALID_FROM) or _quarter_start_today()
+            user_input.get(CONF_VALID_FROM) if user_input is not None
+            else _quarter_start_today()
         )
-        default_kw = defaults.get(CONF_INSTALLIERTE_LEISTUNG_KW, 0.0)
+        default_utility = (
+            user_input.get(CONF_ENERGIEVERSORGER) if user_input is not None
+            else utility_keys[0]
+        )
+        default_kw = (
+            user_input.get(CONF_INSTALLIERTE_LEISTUNG_KW)
+            if user_input is not None
+            else 0.0
+        )
         schema = vol.Schema({
             vol.Required(CONF_VALID_FROM, default=default_valid_from):
                 selector.DateSelector(),
+            vol.Required(CONF_ENERGIEVERSORGER, default=default_utility):
+                selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value=k, label=_utility_display_name(k)
+                            )
+                            for k in utility_keys
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             vol.Required(
-                CONF_INSTALLIERTE_LEISTUNG_KW, default=default_kw,
+                CONF_INSTALLIERTE_LEISTUNG_KW,
+                default=default_kw,
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=10000, step=0.1,
@@ -1239,15 +1232,14 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         })
         return self.async_show_form(
-            step_id="tariff_pick",
+            step_id="user",
             data_schema=schema,
             errors=errors,
             last_step=False,
-            description_placeholders={
-                "utility_name": _utility_display_name(utility_key),
-                **_source_links(self.hass),
-            },
+            description_placeholders=_source_links(self.hass),
         )
+
+    # ----- Step 2: tariff configuration -----------------------------------------
 
     async def async_step_tariff_details(
         self, user_input: dict[str, Any] | None = None
@@ -1263,7 +1255,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         pick = getattr(self, "_setup_pick", None)
         if pick is None:
-            return await self.async_step_tariff_pick()
+            return await self.async_step_user()
         gate_utility: str = pick[CONF_ENERGIEVERSORGER]
         gate_valid_from: str = pick[CONF_VALID_FROM]
         gate_kw: float = float(pick[CONF_INSTALLIERTE_LEISTUNG_KW])

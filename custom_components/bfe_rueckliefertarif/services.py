@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, date
 from typing import TYPE_CHECKING
 
 from .bfe import PriceNotYetPublishedError, fetch_monthly, fetch_quarterly
@@ -2033,6 +2033,32 @@ def _render_active_today_block(c: dict) -> list[str]:
     ]
 
 
+def _should_emit_today_block(report: _RecomputeReport) -> bool:
+    """Emit the 'Active configuration (today)' block only when today's date
+    falls within at least one recomputed period.
+
+    v0.18.0 (Issue 8.6): editing a past transition recomputes that quarter
+    only; today's config is irrelevant noise in the notification body.
+    Editing the running quarter still surfaces the today block (today's
+    date is inside the running quarter's bounds).
+    """
+    if not report.rows:
+        return False
+    today = date.today()
+    for row in report.rows:
+        bounds = _period_bounds(row.period or "")
+        if bounds is None:
+            continue
+        try:
+            start = date.fromisoformat(bounds[0])
+            end = date.fromisoformat(bounds[1])
+        except ValueError:
+            continue
+        if start <= today <= end:
+            return True
+    return False
+
+
 def _period_bounds(period: str) -> tuple[str, str] | None:
     """Parse ``YYYYQN`` or ``YYYY-MM`` → ``(start_iso, end_iso)`` (end inclusive
     last day). Returns ``None`` if unparseable. Used by the date-bounded
@@ -2314,7 +2340,8 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
         )
 
     c = report.config
-    lines = _render_active_today_block(c)
+    emit_today = _should_emit_today_block(report)
+    lines: list[str] = list(_render_active_today_block(c)) if emit_today else []
 
     max_rows = 24
     if n_periods > max_rows:
@@ -2352,7 +2379,11 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     for fingerprint, group_rows in groups:
         sample = group_rows[0]
         lines.append("")
-        if fingerprint == today_fingerprint:
+        # When today block was suppressed (today outside recomputed range),
+        # always emit the full group heading — there's no implicit "today"
+        # context to lean on. Only collapse to "Per-period results" when the
+        # today block ran first AND this group matches today's fingerprint.
+        if emit_today and fingerprint == today_fingerprint:
             heading = (
                 "## Per-period results (active config)"
                 if multi_group else "## Per-period results"

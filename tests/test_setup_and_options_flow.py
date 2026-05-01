@@ -1227,54 +1227,78 @@ class TestInitialEntitiesStepPlantName:
 
 
 class TestFirstTimeSetupSplitFlow:
-    """v0.14.0 — first-time setup splits the old single-page tariff step
-    into ``tariff_pick`` (valid_from + kW) and ``tariff_details`` (EV +
-    HKN + user_inputs[]). Mirrors Add-transition's shape so user_inputs
-    are reachable from initial setup."""
+    """v0.18.0 — first-time setup combines utility + active-since + kW into
+    a single ``user`` step (Issue 6.4.1). Followed by ``tariff_details``
+    (EV + HKN + user_inputs[]) and ``entities`` (HA wiring). Replaces the
+    v0.14.0 menu + tariff_pick split."""
 
     def _make_flow(self, energieversorger="aew"):
+        # _data populated with utility key for tests that call
+        # tariff_details directly via _setup_pick; the user-step itself
+        # accepts utility via the form payload now.
+        from unittest.mock import AsyncMock
         flow = BfeRuecklieferTarifFlow.__new__(BfeRuecklieferTarifFlow)
         flow._data = {CONF_ENERGIEVERSORGER: energieversorger}
         flow.hass = MagicMock()
-        flow.hass.config = SimpleNamespace(language="de")
+        # _async_warm_cache (called from the combined user step) reads
+        # hass.config.language + awaits hass.async_add_executor_job; mock
+        # both to avoid hitting the real coordinator load path.
+        flow.hass.config = MagicMock()
+        flow.hass.config.language = "de"
+        flow.hass.config.path = MagicMock(return_value="/tmp")
+        flow.hass.async_add_executor_job = AsyncMock(return_value=None)
+        # Pre-seed hass.data[DOMAIN]['_tariffs_data'] so _async_warm_cache
+        # short-circuits past the TariffsDataCoordinator init.
+        from custom_components.bfe_rueckliefertarif.const import DOMAIN
+        tdc_stub = MagicMock()
+        tdc_stub.async_load = AsyncMock(return_value=None)
+        flow.hass.data = {DOMAIN: {"_tariffs_data": tdc_stub}}
         return flow
 
     @pytest.mark.asyncio
     async def test_pick_kw_required_rejected(self):
         flow = self._make_flow("aew")
-        result = await flow.async_step_tariff_pick(
-            {CONF_VALID_FROM: "2026-04-01", CONF_INSTALLIERTE_LEISTUNG_KW: 0.0}
-        )
+        result = await flow.async_step_user({
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 0.0,
+        })
         # kw=0 → re-renders Step 1 with kw_required error.
         assert result["type"].name in ("FORM", "form")
-        assert result["step_id"] == "tariff_pick"
+        assert result["step_id"] == "user"
         assert result["errors"][CONF_INSTALLIERTE_LEISTUNG_KW] == "kw_required"
 
     @pytest.mark.asyncio
     async def test_pick_invalid_date_rejected(self):
         flow = self._make_flow("aew")
-        result = await flow.async_step_tariff_pick(
-            {CONF_VALID_FROM: "not-a-date", CONF_INSTALLIERTE_LEISTUNG_KW: 10.0}
-        )
-        assert result["step_id"] == "tariff_pick"
+        result = await flow.async_step_user({
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "not-a-date",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+        })
+        assert result["step_id"] == "user"
         assert result["errors"][CONF_VALID_FROM] == "invalid_valid_from"
 
     @pytest.mark.asyncio
     async def test_pick_no_active_rate_rejected(self):
         flow = self._make_flow("aew")
         # 1999 is before any AEW rate window in bundled data.
-        result = await flow.async_step_tariff_pick(
-            {CONF_VALID_FROM: "1999-04-01", CONF_INSTALLIERTE_LEISTUNG_KW: 10.0}
-        )
-        assert result["step_id"] == "tariff_pick"
+        result = await flow.async_step_user({
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "1999-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 10.0,
+        })
+        assert result["step_id"] == "user"
         assert result["errors"][CONF_VALID_FROM] == "no_active_rate"
 
     @pytest.mark.asyncio
     async def test_pick_advances_to_details(self):
         flow = self._make_flow("aew")
-        result = await flow.async_step_tariff_pick(
-            {CONF_VALID_FROM: "2026-04-01", CONF_INSTALLIERTE_LEISTUNG_KW: 15.0}
-        )
+        result = await flow.async_step_user({
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KW: 15.0,
+        })
         # On valid submit, pick is stashed and we render Step 2.
         assert flow._setup_pick == {
             CONF_ENERGIEVERSORGER: "aew",

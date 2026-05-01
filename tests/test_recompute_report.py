@@ -46,6 +46,28 @@ from custom_components.bfe_rueckliefertarif.services import (
 from custom_components.bfe_rueckliefertarif.tariff import classify_ht
 from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
+
+@pytest.fixture(autouse=True)
+def _freeze_today(monkeypatch):
+    """v0.18.0 (Issue 8.6): _should_emit_today_block now suppresses the
+    'Active configuration (today)' block when today's date is outside all
+    recomputed periods. Most existing tests use rows in 2026-Q1 / 2026-01..03;
+    pin today to 2026-02-15 so the today block stays emitted (preserving
+    historical assertions). Tests that specifically exercise the
+    suppression rule override this fixture."""
+    from datetime import date as _date
+
+    real_date = _date
+
+    class _FrozenDate(_date):
+        @classmethod
+        def today(cls):
+            return real_date(2026, 1, 15)
+
+    import custom_components.bfe_rueckliefertarif.services as _svc
+    monkeypatch.setattr(_svc, "date", _FrozenDate, raising=False)
+
+
 # ----- _aggregate_by_period --------------------------------------------------
 
 
@@ -1820,3 +1842,75 @@ class TestCanonFingerprintUserInputs:
         a = _canon_fingerprint("u", 8.0, True, True, "quartal")
         b = _canon_fingerprint("u", 8.0, True, True, "quartal", None)
         assert a == b
+
+
+class TestTodayBlockSuppression:
+    """v0.18.0 Issue 8.6 — _should_emit_today_block suppresses the
+    'Active configuration (today)' header when today's date falls outside
+    every recomputed period. Editing a past-quarter transition fires
+    recompute over that quarter only; today's config is irrelevant noise."""
+
+    def test_today_block_emitted_when_today_inside_range(self, monkeypatch):
+        # autouse fixture sets today=2026-01-15; row 2026-Q1 covers it.
+        rows = [_row("2026Q1", 10.0, 100.0, 10.0)]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        assert "## Active configuration (today)" in body
+
+    def test_today_block_suppressed_when_editing_past_quarter(
+        self, monkeypatch
+    ):
+        # Override autouse fixture: today is well past the recomputed
+        # range (user edited a past quarter; today is months later).
+        from datetime import date as _date
+        real_date = _date
+
+        class _Today(_date):
+            @classmethod
+            def today(cls):
+                return real_date(2026, 6, 15)
+
+        import custom_components.bfe_rueckliefertarif.services as _svc
+        monkeypatch.setattr(_svc, "date", _Today, raising=False)
+
+        rows = [_row("2026Q1", 10.0, 100.0, 10.0)]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        assert "## Active configuration (today)" not in body
+        # Per-group heading still emits with the period's date range so
+        # the user knows what was recomputed.
+        assert "## Configuration in effect: 2026-01-01 → 2026-03-31" in body
+
+    def test_today_block_suppressed_when_no_rows(self):
+        # Defensive: empty rows shouldn't render today block either.
+        report = _RecomputeReport(
+            rows=[], quarters_recomputed=0, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        assert "## Active configuration (today)" not in body
+
+    def test_today_block_emitted_for_running_quarter(self, monkeypatch):
+        # User edits the running quarter's transition → recompute fires
+        # for the running quarter only → today is inside that quarter
+        # → today block emitted (running estimate is useful context).
+        from datetime import date as _date
+        real_date = _date
+
+        class _Today(_date):
+            @classmethod
+            def today(cls):
+                return real_date(2026, 5, 1)  # in 2026-Q2
+
+        import custom_components.bfe_rueckliefertarif.services as _svc
+        monkeypatch.setattr(_svc, "date", _Today, raising=False)
+
+        rows = [_row("2026Q2", 10.0, 100.0, 10.0)]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        assert "## Active configuration (today)" in body

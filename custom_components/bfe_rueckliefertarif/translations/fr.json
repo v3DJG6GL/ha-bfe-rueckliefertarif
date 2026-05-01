@@ -2,8 +2,18 @@
   "config": {
     "step": {
       "user": {
-        "title": "BFE Rückliefertarif — Choisir le fournisseur",
-        "description": "## Aperçu des tarifs de reprise 2026\n\nSeuls EKZ, Groupe E et Primeo appliquent un plafond sur la rétribution. Tous les autres fournisseurs versent base + GO de manière additive. Le *mécanisme* du plafond découle de [OApEl art. 4 al. 3 let. e]({stromvv_url}); les valeurs numériques sont des dérivations publiées par les fournisseurs.\n\n---\n\n**Source :** [opendata.swiss — dataset prix de référence du marché]({opendata_url}) (publié trimestriellement par l'Office fédéral de l'énergie / OFEN)"
+        "title": "Configuration tarifaire — fournisseur, date et puissance",
+        "description": "Choisis ton **fournisseur**, la **date** d'activation et la **puissance installée** de l'installation. L'étape suivante présente les options spécifiques au fournisseur (autoconsommation, GO, champs spécifiques).\n\nTableau comparatif des fournisseurs dans le [README]({agency_url}).",
+        "data": {
+          "energieversorger": "Fournisseur",
+          "valid_from": "Actif depuis",
+          "installierte_leistung_kw": "Puissance installée (kW)"
+        },
+        "data_description": {
+          "energieversorger": "## Fournisseur\nLe fournisseur qui rémunère la ré-injection. Le gate GO, les notes, la documentation tarifaire et les champs spécifiques de l'étape suivante dépendent de ce choix.",
+          "valid_from": "## Date d'installation\nDate à laquelle ton installation PV est entrée en service (ou à partir de laquelle cette configuration s'applique). Sert d'ancre à l'historique de configuration — les trimestres antérieurs sont silencieusement ignorés lors d'un recalcul, faute de configuration tarifaire qui les couvre.\n\nValeur par défaut : début du trimestre courant.",
+          "installierte_leistung_kw": "## Puissance crête installée\nPuissance crête DC de ton installation PV en kilowatts. Utilisée pour retrouver la **rémunération minimale** fédérale ([OEne Art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026)."
+        }
       },
       "tariff_pick": {
         "title": "Configuration du tarif ({utility_name}) — date & puissance",
@@ -112,7 +122,8 @@
         "description": "Sélectionnez le fournisseur et la date d'effet du changement. L'étape suivante affichera les options spécifiques au fournisseur (informations, documentation tarifaire, champs spécifiques).\n\n**Actuellement actif :** {current_summary}",
         "data": {
           "valid_from": "Effectif depuis",
-          "energieversorger": "Fournisseur"
+          "energieversorger": "Fournisseur",
+          "installierte_leistung_kw": "Puissance installée (kW)"
         },
         "data_description": {
           "valid_from": "## Date d'effet\nPar défaut, le début du trimestre courant. Pour un changement de fournisseur en cours de trimestre, indiquez la date réelle du changement.",
@@ -125,7 +136,11 @@
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO"
+          "hkn_aktiviert": "Opt-in GO",
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "supply_product": "Eco-electricity product subscribed"
         },
         "data_description": {
           "installierte_leistung_kw": "## Puissance crête installée\nDétermine la rémunération minimale fédérale ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138).",
@@ -163,7 +178,11 @@
         "data": {
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
-          "hkn_aktiviert": "Opt-in GO"
+          "hkn_aktiviert": "Opt-in GO",
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "supply_product": "Eco-electricity product subscribed"
         }
       },
       "edit_row": {
@@ -173,7 +192,11 @@
           "installierte_leistung_kw": "Puissance installée (kW)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
           "hkn_aktiviert": "Opt-in GO",
-          "delete": "Supprimer cet enregistrement"
+          "delete": "Supprimer cet enregistrement",
+          "aew_fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "fixpreis_rmp": "Compensation model (fixed price / reference market price)",
+          "regio_top40_opted_in": "Wahltarif TOP-40 subscribed",
+          "supply_product": "Eco-electricity product subscribed"
         }
       },
       "recompute_history": {

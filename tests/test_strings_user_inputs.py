@@ -1,16 +1,17 @@
-"""Guard: every user_input slug expected by the integration has a matching
-translation entry in strings.json + de/en/fr translations.
+"""Guard: every user_input slug + fixed integration field declared in the
+sync script's STEPS_BY_TREE has a matching ``data.<key>`` entry in
+strings.json + de/en/fr translations — across BOTH ``config.step.*``
+(initial setup) and ``options.step.*`` (gear-icon options flow).
 
-The slug set is the union of (a) slugs in bundled tariffs.json and (b)
-``EXTRA_REMOTE_SLUGS`` from the sync script (slugs known to ship in remote
-data ahead of bundled). When bfe-tariffs-data introduces a new slug, this
-test fails until strings entries are added — typically by running
-``scripts/sync_user_input_slugs.py``, which the CI workflow does
-automatically on push.
+When bfe-tariffs-data introduces a new slug or config_flow.py adds a new
+form-bearing step, this test fails until strings entries are added —
+typically by running ``scripts/sync_user_input_slugs.py``, which the CI
+workflow does automatically on push.
 
-Required steps (every config-flow step that builds dynamic user_input
-form fields): tariff_details, apply_change_details, add_new_row,
-edit_row, pick_user_inputs.
+v0.18.0 (Issue 6.3 cont. + 6.4): the v0.17.1 sync script only walked
+``config.step.*``, leaving ``options.step.*`` (where Apply/Edit/Add
+transition flows live) populated only with legacy entries. This test
+now asserts coverage in BOTH trees.
 """
 
 from __future__ import annotations
@@ -31,13 +32,6 @@ SCRIPT_PATH = (
     / "scripts"
     / "sync_user_input_slugs.py"
 )
-USER_INPUT_STEPS = (
-    "tariff_details",
-    "apply_change_details",
-    "add_new_row",
-    "edit_row",
-    "pick_user_inputs",
-)
 
 
 def _load_sync_module():
@@ -55,24 +49,40 @@ def _expected_slugs() -> set[str]:
     return set(sync.collect_slugs(tariffs))
 
 
-def _data_block(translations: dict, step: str) -> dict:
+def _data_block(file_data: dict, tree: str, step: str) -> dict:
     return (
-        translations.get("config", {})
+        file_data.get(tree, {})
         .get("step", {})
         .get(step, {})
         .get("data", {})
     )
 
 
-def test_strings_json_covers_all_user_input_slugs():
+def _expected_fields_for_step(
+    sync, tree: str, step: str, slugs: set[str]
+) -> list[str]:
+    """Resolve the sync script's <user_inputs> sentinel → concrete slug list."""
+    raw_fields = sync.STEPS_BY_TREE.get(tree, {}).get(step, ())
+    out: list[str] = []
+    for f in raw_fields:
+        if f == "<user_inputs>":
+            out.extend(sorted(slugs))
+        else:
+            out.append(f)
+    return out
+
+
+def test_strings_json_covers_all_steps_in_both_trees():
+    sync = _load_sync_module()
     slugs = _expected_slugs()
     strings = json.loads((CC_ROOT / "strings.json").read_text())
     missing: list[str] = []
-    for step in USER_INPUT_STEPS:
-        block = _data_block(strings, step)
-        for slug in slugs:
-            if slug not in block:
-                missing.append(f"{step}.data.{slug}")
+    for tree, steps in sync.STEPS_BY_TREE.items():
+        for step in steps:
+            block = _data_block(strings, tree, step)
+            for field in _expected_fields_for_step(sync, tree, step, slugs):
+                if field not in block:
+                    missing.append(f"{tree}.{step}.data.{field}")
     assert not missing, (
         f"Missing strings.json entries: {missing}. "
         "Run scripts/sync_user_input_slugs.py and commit."
@@ -80,18 +90,44 @@ def test_strings_json_covers_all_user_input_slugs():
 
 
 @pytest.mark.parametrize("lang", ["de", "en", "fr"])
-def test_translations_cover_all_user_input_slugs(lang):
+def test_translations_cover_all_steps_in_both_trees(lang):
+    sync = _load_sync_module()
     slugs = _expected_slugs()
     translations = json.loads(
         (CC_ROOT / "translations" / f"{lang}.json").read_text()
     )
     missing: list[str] = []
-    for step in USER_INPUT_STEPS:
-        block = _data_block(translations, step)
-        for slug in slugs:
-            if slug not in block:
-                missing.append(f"{lang}/{step}.data.{slug}")
+    for tree, steps in sync.STEPS_BY_TREE.items():
+        for step in steps:
+            block = _data_block(translations, tree, step)
+            for field in _expected_fields_for_step(sync, tree, step, slugs):
+                if field not in block:
+                    missing.append(f"{lang}/{tree}.{step}.data.{field}")
     assert not missing, (
         f"Missing translation entries in {lang}.json: {missing}. "
         "Run scripts/sync_user_input_slugs.py and commit."
+    )
+
+
+def test_sync_script_step_ids_exist_in_config_flow():
+    """Drift guard: every step ID in STEPS_BY_TREE must appear somewhere
+    in config_flow.py as a string literal. Catches typos that would
+    otherwise silently leave forms unauthored.
+
+    Some step_ids are set via conditional expressions like
+    ``step_id="edit_row" if is_edit else "add_new_row"``, so we scan all
+    double-quoted bareword strings rather than only ``step_id="..."``.
+    """
+    import re
+    sync = _load_sync_module()
+    cf_text = (CC_ROOT / "config_flow.py").read_text()
+    quoted_strings = set(re.findall(r'"([a-z][a-z0-9_]*)"', cf_text))
+    missing: list[str] = []
+    for tree, steps in sync.STEPS_BY_TREE.items():
+        for step in steps:
+            if step not in quoted_strings:
+                missing.append(f"{tree}.{step}")
+    assert not missing, (
+        f"Step IDs in STEPS_BY_TREE not found in config_flow.py: {missing}. "
+        "Either fix the typo or remove the entry from sync_user_input_slugs.py."
     )
