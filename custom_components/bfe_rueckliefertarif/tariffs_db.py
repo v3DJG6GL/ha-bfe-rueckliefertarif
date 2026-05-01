@@ -268,6 +268,45 @@ def find_active_rate_window(
     return find_active(utility.get("rates", []), on_date)
 
 
+def self_consumption_relevant(
+    utility_key: str, valid_from_iso: str, kw: float
+) -> bool:
+    """Return True iff the self-consumption bool actually changes resolver
+    output for this (utility, valid_from, kW). False → hide the form
+    field (or annotate the recompute notification's EV line as inert)
+    because the resolver picks the same rule regardless.
+
+    Identity comparison: ``find_rule`` returns the rule dict by reference
+    from the input list. Same dict for both EV values means a
+    ``self_consumption=null`` rule matched both, so the user's choice is
+    inert. Different dicts (or one None) means the choice matters.
+
+    Permissive on lookup failure — return True (treat as relevant) so the
+    caller defaults to the conservative path.
+    """
+    try:
+        db = load_tariffs()
+        valid_date = date.fromisoformat(valid_from_iso)
+    except (OSError, KeyError, ValueError):
+        return True
+
+    fed_record = find_active(db.get("federal_minimum") or [], valid_date)
+    if fed_record is not None:
+        rules = fed_record.get("rules") or []
+        if find_rule(rules, kw, True) is not find_rule(rules, kw, False):
+            return True
+
+    utility = db.get("utilities", {}).get(utility_key)
+    if utility is not None:
+        rate = find_active(utility.get("rates") or [], valid_date)
+        if rate is not None and rate.get("cap_mode") and rate.get("cap_rules"):
+            cap_rules = rate["cap_rules"]
+            if find_rule(cap_rules, kw, True) is not find_rule(cap_rules, kw, False):
+                return True
+
+    return False
+
+
 def user_inputs_decl_signature(rate: dict | None) -> tuple:
     """Stable hashable signature of a rate window's ``user_inputs[]``
     declarations.

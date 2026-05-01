@@ -843,6 +843,16 @@ def _record_snapshot(
         # for past quarters even after the rate window has rolled forward.
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
+        # v0.16.0 — fields needed to render Tariff-model rate values,
+        # EV-relevance annotation, and Active-user-inputs/Bonuses lines
+        # in the recompute notification per-period block.
+        "settlement_period": rt.settlement_period,
+        "valid_from": rt.valid_from,
+        "fixed_rp_kwh": rt.fixed_rp_kwh,
+        "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
+        "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
+        "user_inputs": dict(tariff_cfg.user_inputs or {}),
+        "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
     }
 
     # v0.9.9 — segment metadata for sub-row rendering. Only persisted when
@@ -1182,6 +1192,16 @@ async def _import_running_quarter_estimate(
         # gets the same Seasonal/Notes treatment.
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
+        # v0.16.0 — same set of new fields as published-quarter snapshot
+        # (see _reimport_quarter for context). Keeps per-period rendering
+        # uniform between running-quarter and closed-quarter rows.
+        "settlement_period": rt.settlement_period,
+        "valid_from": rt.valid_from,
+        "fixed_rp_kwh": rt.fixed_rp_kwh,
+        "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
+        "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
+        "user_inputs": dict(tariff_cfg.user_inputs or {}),
+        "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
     }
     coordinator._imported[str(q)] = {
         "q_price_chf_mwh": None,
@@ -1407,6 +1427,16 @@ class _RecomputeReportRow:
     # ``None`` keeps legacy single-row rendering; populated when a period
     # spans more than one (config × season) segment.
     sub_rows: tuple = ()
+    # v0.16.0 — extra rate-window context threaded through so per-group
+    # blocks can render Tariff-model rate values, EV-relevance annotation,
+    # Active-user-inputs/Bonuses lines, and a settlement-period suffix.
+    settlement_period_at_period: str | None = None
+    valid_from_at_period: str | None = None
+    fixed_rp_kwh_at_period: float | None = None
+    fixed_ht_rp_kwh_at_period: float | None = None
+    fixed_nt_rp_kwh_at_period: float | None = None
+    user_inputs_at_period: dict | None = None
+    bonuses_active_at_period: list | None = None
     # v0.11.0 (Batch D) — applied bonus per kWh (kWh-weighted) for the
     # period. ``None`` for legacy snapshots predating the field.
     bonus_rp_kwh_avg: float | None = None
@@ -1470,9 +1500,16 @@ def _build_recompute_report(
         "notes_active": list(rt.notes) if rt.notes else None,
         "notes_lang": user_lang,
         # v0.10.0 — Batch C / Phase 1: display-only bonuses for the
-        # active-today block. Per-period blocks intentionally don't
-        # carry bonuses yet (no real bonus data in tariffs.json today).
+        # active-today block. v0.16.0 also threads them per-period via
+        # the snapshot so per-group blocks can render the same.
         "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
+        # v0.16.0 — fields used by Tariff-model rate rendering, EV-line
+        # relevance gating, and Active-user-inputs line.
+        "valid_from": rt.valid_from,
+        "fixed_rp_kwh": rt.fixed_rp_kwh,
+        "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
+        "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
+        "user_inputs": dict(tariff_cfg.user_inputs or {}),
     }
 
     rows: list[_RecomputeReportRow] = []
@@ -1506,6 +1543,16 @@ def _build_recompute_report(
                 "is_current_estimate": bool(snap.get("is_current_estimate", False)),
                 "seasonal_at_period": snap.get("seasonal"),
                 "notes_active_at_period": snap.get("notes_active"),
+                # v0.16.0 — per-period rate-window context for richer
+                # per-group rendering. .get() defaults to None for
+                # legacy snapshots predating these fields.
+                "settlement_period_at_period": snap.get("settlement_period"),
+                "valid_from_at_period": snap.get("valid_from"),
+                "fixed_rp_kwh_at_period": snap.get("fixed_rp_kwh"),
+                "fixed_ht_rp_kwh_at_period": snap.get("fixed_ht_rp_kwh"),
+                "fixed_nt_rp_kwh_at_period": snap.get("fixed_nt_rp_kwh"),
+                "user_inputs_at_period": snap.get("user_inputs"),
+                "bonuses_active_at_period": snap.get("bonuses_active"),
             }
             # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
@@ -1558,14 +1605,33 @@ def _build_recompute_report(
     )
 
 
+def _canon_fingerprint(
+    utility_key, kw, ev, hkn_optin, billing
+) -> tuple:
+    """Canonicalize a config fingerprint so int-vs-float / bool-vs-int /
+    None-vs-missing variations don't break equality between the
+    active-today block and per-period rows. v0.16.0."""
+    return (
+        str(utility_key) if utility_key is not None else None,
+        float(kw) if isinstance(kw, (int, float)) and not isinstance(kw, bool) else None,
+        bool(ev) if ev is not None else None,
+        bool(hkn_optin) if hkn_optin is not None else None,
+        str(billing) if billing else None,
+    )
+
+
 def _row_config_fingerprint(r: _RecomputeReportRow) -> tuple:
     """Group key — rows sharing this fingerprint render under one heading.
 
     v0.8.6: covers the rate-affecting fields (utility, kw, EV, HKN opt-in,
     billing). Cap mode / floor / tariffs version are presentation-only and
     don't change the group identity.
+
+    v0.16.0: routed through ``_canon_fingerprint`` so type drifts (e.g.
+    snapshot ``kw=8`` int vs live config ``kw=8.0`` float) collapse to
+    the same key.
     """
-    return (
+    return _canon_fingerprint(
         r.utility_key_at_period,
         r.kw_at_period,
         r.eigenverbrauch_at_period,
@@ -1594,6 +1660,63 @@ def _group_rows_by_config(
     return [(key, buckets[key]) for key in order]
 
 
+def _format_tariff_model(c: dict) -> str | None:
+    """Format the Tariff-model bullet's value with rate values for fixed
+    models. Returns None when ``base_model`` is missing.
+
+    fixed_flat plain         → "fixed_flat (6.20 Rp/kWh)"
+    fixed_flat seasonal      → "fixed_flat (summer 6.20 / winter 9.00 Rp/kWh)"
+    fixed_ht_nt plain        → "fixed_ht_nt (HT 12.34 / NT 5.67 Rp/kWh)"
+    fixed_ht_nt seasonal     → "fixed_ht_nt (HT summer 12.34 / winter 14.00; NT summer 5.67 / winter 6.50 Rp/kWh)"
+    rmp_quartal / rmp_monat  → "rmp_quartal" (no rate suffix; rate is per-quarter from BFE)
+
+    Settlement period is appended in parens. When the model has no rate
+    suffix, settlement renders as ``(settlement: …)``; otherwise as
+    ``(<rates>, settlement: …)``. Legacy snapshots without rate keys
+    fall back gracefully to the model name + settlement only.
+    """
+    base_model = c.get("base_model")
+    if not base_model:
+        return None
+    settlement = c.get("settlement_period")
+    seasonal = c.get("seasonal") or {}
+
+    rate_suffix: str | None = None
+    if base_model == "fixed_flat":
+        s_summer = seasonal.get("summer_rp_kwh")
+        s_winter = seasonal.get("winter_rp_kwh")
+        if s_summer is not None and s_winter is not None:
+            rate_suffix = f"summer {s_summer:.2f} / winter {s_winter:.2f} Rp/kWh"
+        else:
+            fr = c.get("fixed_rp_kwh")
+            if fr is not None:
+                rate_suffix = f"{fr:.2f} Rp/kWh"
+    elif base_model == "fixed_ht_nt":
+        s_ht_summer = seasonal.get("summer_ht_rp_kwh")
+        s_ht_winter = seasonal.get("winter_ht_rp_kwh")
+        s_nt_summer = seasonal.get("summer_nt_rp_kwh")
+        s_nt_winter = seasonal.get("winter_nt_rp_kwh")
+        if all(v is not None for v in (s_ht_summer, s_ht_winter, s_nt_summer, s_nt_winter)):
+            rate_suffix = (
+                f"HT summer {s_ht_summer:.2f} / winter {s_ht_winter:.2f}; "
+                f"NT summer {s_nt_summer:.2f} / winter {s_nt_winter:.2f} Rp/kWh"
+            )
+        else:
+            ht = c.get("fixed_ht_rp_kwh")
+            nt = c.get("fixed_nt_rp_kwh")
+            if ht is not None and nt is not None:
+                rate_suffix = f"HT {ht:.2f} / NT {nt:.2f} Rp/kWh"
+
+    parts: list[str] = []
+    if rate_suffix:
+        parts.append(rate_suffix)
+    if settlement:
+        parts.append(f"settlement: {settlement}")
+    if parts:
+        return f"{base_model} ({', '.join(parts)})"
+    return base_model
+
+
 def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     """Shared bullet-list renderer used by both the active-today block and
     each per-group "Configuration in effect" block (v0.9.2).
@@ -1608,6 +1731,8 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     - ``cap_mode`` (bool), ``cap_rp_kwh`` (float)
     - ``tariffs_version`` (str), ``tariffs_source`` (str)
     - ``bonuses_active`` (list[dict] | None) — v0.10.0 display-only
+    - v0.16.0: ``valid_from`` (str), ``fixed_rp_kwh`` / ``fixed_ht_rp_kwh``
+      / ``fixed_nt_rp_kwh`` (float | None), ``user_inputs`` (dict | None)
 
     ``is_today=True`` causes the cap line to read "Active — current cap …"
     (today's value); otherwise it reads "Active — cap …" (the snapshot's
@@ -1618,12 +1743,9 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     utility_name = c.get("utility_name") or utility_key
     lines.append(f"- **Utility:** {utility_key} — {utility_name}")
 
-    base_model = c.get("base_model")
-    settlement = c.get("settlement_period")
-    if base_model and settlement:
-        lines.append(f"- **Tariff model:** {base_model} (settlement: {settlement})")
-    elif base_model:
-        lines.append(f"- **Tariff model:** {base_model}")
+    model_str = _format_tariff_model(c)
+    if model_str is not None:
+        lines.append(f"- **Tariff model:** {model_str}")
 
     kw = c.get("kw")
     if kw is not None:
@@ -1631,8 +1753,25 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     else:
         lines.append("- **Installed power:** —")
 
+    # v0.16.0 — annotate EV line as "(no effect on rates)" when the
+    # resolver is independent of the user's choice for this (utility,
+    # valid_from, kW). Pre-v0.16.0 snapshots lack `valid_from` → predicate
+    # is skipped → plain "Yes"/"No" (no regression).
     ev = c.get("eigenverbrauch")
-    ev_str = "Yes" if ev else ("No" if ev is False else "—")
+    if ev is None:
+        ev_str = "—"
+    else:
+        ev_str = "Yes" if ev else "No"
+        utility_key = c.get("utility_key")
+        valid_from = c.get("valid_from")
+        if utility_key and valid_from and kw is not None:
+            try:
+                from .tariffs_db import self_consumption_relevant
+                if not self_consumption_relevant(utility_key, valid_from, float(kw)):
+                    ev_str = f"{ev_str} (no effect on rates)"
+            except Exception:
+                # Permissive: leave plain Yes/No on any lookup failure.
+                pass
     lines.append(f"- **Eigenverbrauch (self-consumption):** {ev_str}")
 
     hkn_optin = c.get("hkn_optin")
@@ -1697,6 +1836,14 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
 
     notes_lang = c.get("notes_lang") or "en"
     lines.extend(_render_notes_lines(c.get("notes_active"), notes_lang))
+
+    # v0.16.0 — Active user inputs line (suppressed when empty/missing
+    # so utilities without declared inputs render unchanged).
+    ui = c.get("user_inputs")
+    if isinstance(ui, dict) and ui:
+        pairs = ", ".join(f"{k}={v}" for k, v in sorted(ui.items()))
+        lines.append(f"- **Active user inputs:** {pairs}")
+
     lines.extend(_render_bonuses_lines(c.get("bonuses_active")))
 
     return lines
@@ -1793,8 +1940,8 @@ def _render_group_heading(
         "utility_key": utility_key,
         "utility_name": sample_row.utility_name_at_period,
         "base_model": sample_row.base_model_at_period,
-        # settlement_period not carried per-row; omit (renderer handles None).
-        "settlement_period": None,
+        # v0.16.0 — settlement_period now carried per-row.
+        "settlement_period": sample_row.settlement_period_at_period,
         "kw": kw,
         "eigenverbrauch": ev,
         "hkn_optin": hkn_optin,
@@ -1813,6 +1960,14 @@ def _render_group_heading(
         "seasonal": sample_row.seasonal_at_period,
         "notes_active": sample_row.notes_active_at_period,
         "notes_lang": notes_lang,
+        # v0.16.0 — fields used by Tariff-model rate rendering, EV-line
+        # relevance gating, and Active-user-inputs/Bonuses lines.
+        "valid_from": sample_row.valid_from_at_period,
+        "fixed_rp_kwh": sample_row.fixed_rp_kwh_at_period,
+        "fixed_ht_rp_kwh": sample_row.fixed_ht_rp_kwh_at_period,
+        "fixed_nt_rp_kwh": sample_row.fixed_nt_rp_kwh_at_period,
+        "user_inputs": sample_row.user_inputs_at_period,
+        "bonuses_active": sample_row.bonuses_active_at_period,
     }
     return [heading, *_render_config_block(config_dict)]
 
@@ -1992,8 +2147,10 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
 
     # Suppress the redundant per-group heading when there's exactly one
     # group and it matches today's active config — the active-today block
-    # alone already says what's going on.
-    today_fingerprint = (
+    # alone already says what's going on. v0.16.0: route through the same
+    # canonicalizer the row-fingerprint uses so int-vs-float / bool-vs-int
+    # drift between live config and snapshot doesn't break equality.
+    today_fingerprint = _canon_fingerprint(
         c.get("utility_key"),
         c.get("kw"),
         c.get("eigenverbrauch"),

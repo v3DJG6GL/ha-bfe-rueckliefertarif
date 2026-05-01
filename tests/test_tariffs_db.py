@@ -1159,3 +1159,54 @@ class TestComputeUserInputsPeriods:
             "syn", date(2026, 1, 1), None
         )
         assert len(periods) == 1
+
+
+class TestSelfConsumptionRelevantPublicExport:
+    """v0.16.0 — Issue 3: helper moved from config_flow to tariffs_db so
+    services can import it without a circular dependency. Smoke-test the
+    public re-export with one relevant + one irrelevant case.
+    """
+
+    def test_relevant_case_returns_true(self, monkeypatch):
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01", "valid_to": None,
+                "rules": [
+                    {"kw_min": 0, "kw_max": 30,
+                     "self_consumption": True, "min_rp_kwh": 6.0},
+                    {"kw_min": 0, "kw_max": 30,
+                     "self_consumption": False, "min_rp_kwh": 4.0},
+                ],
+            }],
+            "utilities": {"syn": {"name_de": "Syn", "rates": []}},
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        assert tdb.self_consumption_relevant("syn", "2026-04-01", 10.0) is True
+
+    def test_irrelevant_case_returns_false(self, monkeypatch):
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2026-01-01", "valid_to": None,
+                "rules": [{"kw_min": 0, "kw_max": None,
+                           "self_consumption": None, "min_rp_kwh": 4.0}],
+            }],
+            "utilities": {
+                "syn": {"name_de": "Syn", "rates": [{
+                    "valid_from": "2026-01-01", "valid_to": None,
+                    "settlement_period": "quartal", "cap_mode": False,
+                    "power_tiers": [{"kw_min": 0, "kw_max": None,
+                                     "base_model": "fixed_flat",
+                                     "fixed_rp_kwh": 8.0,
+                                     "hkn_rp_kwh": 0.0,
+                                     "hkn_structure": "none"}],
+                }]},
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        assert tdb.self_consumption_relevant("syn", "2026-04-01", 10.0) is False

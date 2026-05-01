@@ -51,11 +51,11 @@ from .tariffs_db import (  # noqa: E402
     compute_user_inputs_periods,
     find_active,
     find_active_rate_window,
-    find_rule,
     find_tier_for,
     list_utility_keys,
     load_tariffs,
     match_applies_when,
+    self_consumption_relevant,
 )
 
 
@@ -340,43 +340,6 @@ def _active_hkn_structure(utility_key: str, valid_from_iso: str) -> str | None:
         return rate["power_tiers"][0].get("hkn_structure")
     except (KeyError, ValueError, LookupError):
         return None
-
-
-def _self_consumption_relevant(
-    utility_key: str, valid_from_iso: str, kw: float
-) -> bool:
-    """Return True iff the self-consumption bool actually changes resolver
-    output for this (utility, valid_from, kW). False → hide the form
-    field because the resolver will pick the same rule regardless.
-
-    Identity comparison: ``find_rule`` returns the rule dict by reference
-    from the input list. Same dict for both EV values means a
-    ``self_consumption=null`` rule matched both, so the user's choice is
-    inert. Different dicts (or one None) means the choice matters.
-
-    Permissive on lookup failure — show the field if we can't tell.
-    """
-    try:
-        db = load_tariffs()
-        valid_date = date.fromisoformat(valid_from_iso)
-    except (OSError, KeyError, ValueError):
-        return True
-
-    fed_record = find_active(db.get("federal_minimum") or [], valid_date)
-    if fed_record is not None:
-        rules = fed_record.get("rules") or []
-        if find_rule(rules, kw, True) is not find_rule(rules, kw, False):
-            return True
-
-    utility = db.get("utilities", {}).get(utility_key)
-    if utility is not None:
-        rate = find_active(utility.get("rates") or [], valid_date)
-        if rate is not None and rate.get("cap_mode") and rate.get("cap_rules"):
-            cap_rules = rate["cap_rules"]
-            if find_rule(cap_rules, kw, True) is not find_rule(cap_rules, kw, False):
-                return True
-
-    return False
 
 
 def _find_tier_dry_run(
@@ -1230,7 +1193,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-                show_eigenverbrauch = _self_consumption_relevant(
+                show_eigenverbrauch = self_consumption_relevant(
                     gate_utility, gate_valid_from, gate_kw
                 )
                 ev_value = bool(
@@ -1277,7 +1240,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input if user_input is not None else {}
         )
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-        show_eigenverbrauch = _self_consumption_relevant(
+        show_eigenverbrauch = self_consumption_relevant(
             gate_utility, gate_valid_from, gate_kw
         )
 
@@ -1603,7 +1566,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
 
             if not errors:
                 hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-                show_eigenverbrauch = _self_consumption_relevant(
+                show_eigenverbrauch = self_consumption_relevant(
                     gate_utility, gate_valid_from, gate_kw
                 )
                 ev_value = bool(
@@ -1679,7 +1642,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             else (open_cfg or build_history_config(self.config_entry.data))
         )
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-        show_eigenverbrauch = _self_consumption_relevant(
+        show_eigenverbrauch = self_consumption_relevant(
             gate_utility, gate_valid_from, gate_kw
         )
 
@@ -2049,7 +2012,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
                 hkn_structure = _active_hkn_structure(
                     gate_utility, gate_valid_from
                 )
-                show_eigenverbrauch = _self_consumption_relevant(
+                show_eigenverbrauch = self_consumption_relevant(
                     gate_utility, gate_valid_from, gate_kw
                 )
                 ev_default = bool(
@@ -2126,7 +2089,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             )
 
         hkn_structure = _active_hkn_structure(gate_utility, gate_valid_from)
-        show_eigenverbrauch = _self_consumption_relevant(
+        show_eigenverbrauch = self_consumption_relevant(
             gate_utility, gate_valid_from, gate_kw
         )
         schema_dict: dict[Any, Any] = {}

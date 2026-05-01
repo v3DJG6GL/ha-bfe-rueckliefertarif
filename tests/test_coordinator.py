@@ -229,3 +229,101 @@ class TestCoordinatorAutoImportSkipsPreValidFrom:
 
         # Both quarters reach _reimport_quarter — no history filter applied.
         assert sorted(str(q) for q in called) == ["2024Q4", "2025Q2"]
+
+
+class TestRecomputeNotificationGate:
+    """v0.16.0 — Issue 1: editing the *current active* tariff (running
+    quarter only) used to produce no notification because the gate at
+    `coordinator.py:385` was `if reimported:`. The fix extends the gate
+    to also fire when only the running-quarter config changed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fires_for_active_edit_only(self):
+        # Setup: no past quarters published (so reimported=[]), but
+        # `_running_q_config_changed` returns True and the running-quarter
+        # estimate succeeds. Pre-v0.16.0 produced no notification; now it does.
+        coord = _make_coordinator()
+        coord.entry = SimpleNamespace(
+            entry_id="test_entry",
+            data={"stromnetzeinspeisung_kwh": "sensor.export"},
+            options={},
+        )
+        coord.quarterly = {}  # No past quarters published.
+        coord._imported = {}
+
+        async def _fake_notify(*args, **kwargs):
+            return None
+
+        coord._notify_skipped_quarters = _fake_notify
+        # Force "config changed" so the running-quarter estimate runs and
+        # the new gate condition fires.
+        coord._running_q_config_changed = MagicMock(return_value=True)
+
+        async def _fake_estimate(*_args, **_kwargs):
+            return None
+
+        notify_calls: list[tuple] = []
+
+        def _fake_notify_recompute(_hass, _entry_id, _report):
+            notify_calls.append((_entry_id, _report))
+
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._import_running_quarter_estimate",
+            new=_fake_estimate,
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._build_recompute_report",
+            return_value="report-stub",
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._notify_recompute",
+            new=_fake_notify_recompute,
+        ):
+            await coord._auto_import_newly_published(is_user_reload=True)
+
+        assert len(notify_calls) == 1, (
+            "v0.16.0: notification must fire even when only the running "
+            "quarter changed (active-tariff edit case)"
+        )
+        assert notify_calls[0][0] == "test_entry"
+
+    @pytest.mark.asyncio
+    async def test_no_fire_when_nothing_changed(self):
+        # Setup: no past quarters AND `_running_q_config_changed` returns
+        # False. With is_user_reload=True the running-quarter estimate is
+        # gated off (would only run on the kWh roll-forward path), so
+        # `running_q_estimated=False` and no notification fires.
+        coord = _make_coordinator()
+        coord.entry = SimpleNamespace(
+            entry_id="test_entry",
+            data={"stromnetzeinspeisung_kwh": "sensor.export"},
+            options={},
+        )
+        coord.quarterly = {}
+        coord._imported = {}
+
+        async def _fake_notify(*args, **kwargs):
+            return None
+
+        coord._notify_skipped_quarters = _fake_notify
+        coord._running_q_config_changed = MagicMock(return_value=False)
+
+        notify_calls: list[tuple] = []
+
+        def _fake_notify_recompute(_hass, _entry_id, _report):
+            notify_calls.append((_entry_id, _report))
+
+        with patch(
+            "custom_components.bfe_rueckliefertarif.services._import_running_quarter_estimate",
+            new=AsyncMock(),
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._build_recompute_report",
+            return_value="report-stub",
+        ), patch(
+            "custom_components.bfe_rueckliefertarif.services._notify_recompute",
+            new=_fake_notify_recompute,
+        ):
+            await coord._auto_import_newly_published(is_user_reload=True)
+
+        assert notify_calls == [], (
+            "v0.16.0: notification must NOT fire when nothing changed"
+        )

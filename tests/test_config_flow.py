@@ -689,20 +689,20 @@ class TestSelfConsumptionRelevant:
 
     def test_relevant_when_federal_rule_distinguishes(self, monkeypatch):
         """30-150 kW band of bundled federal_minimum has a 'mit/ohne EV' split."""
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _self_consumption_relevant,
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            self_consumption_relevant,
         )
 
         # Bundled federal_minimum has self_consumption=true/false for
         # the 30–<150 kW band. So at kW=50, EV bool changes which rule
         # is selected.
-        assert _self_consumption_relevant("ekz", "2026-04-01", 50.0) is True
+        assert self_consumption_relevant("ekz", "2026-04-01", 50.0) is True
 
     def test_irrelevant_when_federal_rule_uses_null(self, monkeypatch):
         """≥150 kW band uses self_consumption=null → field is inert."""
         from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _self_consumption_relevant,
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            self_consumption_relevant,
         )
 
         synthetic = {
@@ -724,19 +724,16 @@ class TestSelfConsumptionRelevant:
                 }
             },
         }
-        # config_flow.py imports load_tariffs at module load, so we must
-        # patch both names. Same for find_active (used inside the helper).
-        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        # Helper lives in tariffs_db; patch its load_tariffs.
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
-        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
-        assert _self_consumption_relevant("syn", "2026-04-01", 200.0) is False
+        assert self_consumption_relevant("syn", "2026-04-01", 200.0) is False
 
     def test_irrelevant_when_no_federal_record(self, monkeypatch):
         """valid_from before any federal_minimum → no rule path. No
         cap_rules either → False (inert)."""
         from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _self_consumption_relevant,
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            self_consumption_relevant,
         )
 
         synthetic = {
@@ -772,20 +769,17 @@ class TestSelfConsumptionRelevant:
                 }
             },
         }
-        # config_flow.py imports load_tariffs at module load, so we must
-        # patch both names. Same for find_active (used inside the helper).
-        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        # Helper lives in tariffs_db; patch its load_tariffs.
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
-        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
         # 2025-04-01 is before the only federal_minimum record (2026-01-01).
-        assert _self_consumption_relevant("syn", "2025-04-01", 10.0) is False
+        assert self_consumption_relevant("syn", "2025-04-01", 10.0) is False
 
     def test_relevant_via_cap_rules(self, monkeypatch):
         """Federal rule has self_consumption=null but cap_rules distinguish
         → field IS relevant via the cap-rule path."""
         from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _self_consumption_relevant,
+        from custom_components.bfe_rueckliefertarif.tariffs_db import (
+            self_consumption_relevant,
         )
 
         synthetic = {
@@ -827,12 +821,9 @@ class TestSelfConsumptionRelevant:
                 }
             },
         }
-        # config_flow.py imports load_tariffs at module load, so we must
-        # patch both names. Same for find_active (used inside the helper).
-        from custom_components.bfe_rueckliefertarif import config_flow as cf
+        # Helper lives in tariffs_db; patch its load_tariffs.
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
-        monkeypatch.setattr(cf, "load_tariffs", lambda: synthetic)
-        assert _self_consumption_relevant("syn", "2026-04-01", 10.0) is True
+        assert self_consumption_relevant("syn", "2026-04-01", 10.0) is True
 
 
 class TestFindTierDryRun:

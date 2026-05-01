@@ -35,8 +35,10 @@ from custom_components.bfe_rueckliefertarif.quarters import (
 from custom_components.bfe_rueckliefertarif.services import (
     _aggregate_by_period,
     _format_recompute_notification,
+    _format_tariff_model,
     _RecomputeReport,
     _RecomputeReportRow,
+    _render_config_block,
 )
 from custom_components.bfe_rueckliefertarif.tariff import classify_ht
 from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
@@ -1048,3 +1050,340 @@ class TestPeriodTableBonusColumn:
         assert len(periods) == 1
         # bonus = (10 * 1.0 + 10 * 2.0) / 20 = 1.5
         assert periods[0]["bonus_rp_kwh_avg"] == pytest.approx(1.5)
+
+
+# ----- v0.16.0 — Issue 2: user_inputs / bonuses_active rendering -------------
+
+
+class TestUserInputsRendering:
+    """v0.16.0: ``Active user inputs:`` line surfaces the resolved
+    user_inputs dict in the recompute notification's config block.
+    """
+
+    def test_config_block_renders_user_inputs_line(self):
+        cfg = _config_dict(user_inputs={
+            "regio_top40_opted_in": True,
+            "ekz_segment": "kleq30_mit_ev",
+        })
+        lines = _render_config_block(cfg)
+        ui_line = next(
+            (line for line in lines if "Active user inputs:" in line), None
+        )
+        assert ui_line is not None
+        # Sorted alphabetically — ekz_segment first, regio_top40 second.
+        assert "ekz_segment=kleq30_mit_ev" in ui_line
+        assert "regio_top40_opted_in=True" in ui_line
+
+    def test_config_block_omits_user_inputs_when_empty(self):
+        cfg = _config_dict(user_inputs={})
+        lines = _render_config_block(cfg)
+        assert not any("Active user inputs:" in line for line in lines)
+
+    def test_config_block_omits_user_inputs_when_missing_key(self):
+        # Legacy snapshot — no `user_inputs` key at all.
+        cfg = _config_dict()
+        lines = _render_config_block(cfg)
+        assert not any("Active user inputs:" in line for line in lines)
+
+    def test_config_block_omits_user_inputs_when_not_a_dict(self):
+        # Defensive — corrupted snapshot stored a list.
+        cfg = _config_dict(user_inputs=["broken"])
+        lines = _render_config_block(cfg)
+        assert not any("Active user inputs:" in line for line in lines)
+
+    def test_per_group_heading_includes_bonuses_from_sample_row(self):
+        # Two groups, each with a sample bonus declaration. Both groups'
+        # per-group blocks should render the Bonuses section.
+        bonus_a = [{"kind": "additive_rp_kwh", "rate_rp_kwh": 0.5,
+                    "name": "Boost A", "applies_when": "always"}]
+        bonus_b = [{"kind": "multiplier_pct", "multiplier_pct": 108.0,
+                    "name": "Boost B", "applies_when": "always"}]
+        rows = [
+            _RecomputeReportRow(
+                period="2026Q1", rate_rp_kwh_avg=10.0, base_rp_kwh_avg=10.0,
+                hkn_rp_kwh_avg=0.0, intended_hkn_rp_kwh=None,
+                total_kwh=100.0, total_chf=10.0,
+                utility_key_at_period="ekz", utility_name_at_period="EKZ",
+                kw_at_period=8.0, eigenverbrauch_at_period=True,
+                hkn_optin_at_period=False, billing_at_period="quartal",
+                base_model_at_period="rmp_quartal",
+                bonuses_active_at_period=bonus_a,
+            ),
+            _RecomputeReportRow(
+                period="2025Q4", rate_rp_kwh_avg=8.0, base_rp_kwh_avg=8.0,
+                hkn_rp_kwh_avg=0.0, intended_hkn_rp_kwh=None,
+                total_kwh=80.0, total_chf=6.4,
+                utility_key_at_period="regio_energie_solothurn",
+                utility_name_at_period="Regio",
+                kw_at_period=8.0, eigenverbrauch_at_period=True,
+                hkn_optin_at_period=False, billing_at_period="quartal",
+                base_model_at_period="fixed_flat",
+                bonuses_active_at_period=bonus_b,
+            ),
+        ]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=2, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        assert "Boost A" in body
+        assert "Boost B" in body
+
+
+# ----- v0.16.0 — Issue 3: EV-relevance annotation ----------------------------
+
+
+class TestEigenverbrauchAnnotation:
+    """v0.16.0: when EV doesn't change the resolved rate (e.g. EWZ
+    fixed_ht_nt with no cap_rules), the recompute notification's
+    Eigenverbrauch line is annotated as "(no effect on rates)" instead
+    of asserting "Yes" outright.
+    """
+
+    def test_ev_line_plain_when_relevant(self):
+        # EKZ at 50 kW falls in federal floor 30-150 kW band where rules
+        # differ on self_consumption — predicate returns True → plain "Yes".
+        cfg = _config_dict(
+            utility_key="ekz", valid_from="2026-04-01", kw=50.0,
+            eigenverbrauch=True,
+        )
+        lines = _render_config_block(cfg)
+        ev_line = next(
+            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
+            None,
+        )
+        assert ev_line is not None
+        assert ev_line.endswith(" Yes")
+
+    def test_ev_line_annotated_when_irrelevant(self, monkeypatch):
+        # Synthetic tariff: federal floor uses self_consumption=null AND
+        # the utility has no cap_rules → predicate returns False.
+        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
+        synthetic = {
+            "schema_version": "1.2.0",
+            "last_updated": "2026-01-01",
+            "federal_minimum": [{
+                "valid_from": "2025-01-01", "valid_to": None,
+                "rules": [{"kw_min": 0, "kw_max": None,
+                           "self_consumption": None, "min_rp_kwh": 4.0}],
+            }],
+            "utilities": {
+                "syn": {"name_de": "Syn", "homepage": "https://example.test",
+                        "rates": [{
+                            "valid_from": "2025-01-01", "valid_to": None,
+                            "settlement_period": "quartal",
+                            "cap_mode": False,
+                            "power_tiers": [{"kw_min": 0, "kw_max": None,
+                                             "base_model": "fixed_flat",
+                                             "fixed_rp_kwh": 8.0,
+                                             "hkn_rp_kwh": 0.0,
+                                             "hkn_structure": "none"}],
+                        }]},
+            },
+        }
+        monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
+        cfg = _config_dict(
+            utility_key="syn", valid_from="2025-04-01", kw=10.0,
+            eigenverbrauch=True,
+        )
+        lines = _render_config_block(cfg)
+        ev_line = next(
+            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
+            None,
+        )
+        assert ev_line is not None
+        assert "Yes (no effect on rates)" in ev_line
+
+    def test_ev_line_falls_back_to_plain_when_valid_from_missing(self):
+        # Legacy snapshot lacks `valid_from` → predicate skipped → plain "Yes".
+        cfg = _config_dict(eigenverbrauch=True)
+        cfg.pop("valid_from", None)
+        lines = _render_config_block(cfg)
+        ev_line = next(
+            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
+            None,
+        )
+        assert ev_line is not None
+        assert ev_line.endswith(" Yes")  # No annotation.
+
+    def test_ev_line_dash_when_ev_is_none(self):
+        cfg = _config_dict(eigenverbrauch=None)
+        lines = _render_config_block(cfg)
+        ev_line = next(
+            (line for line in lines if "Eigenverbrauch (self-consumption):" in line),
+            None,
+        )
+        assert ev_line is not None
+        assert ev_line.endswith(" —")
+
+
+# ----- v0.16.0 — Issue 4.1: fingerprint canonicalization ---------------------
+
+
+class TestFingerprintCoercion:
+    """v0.16.0: today_fingerprint and per-row fingerprints both go through
+    ``_canon_fingerprint``, so int-vs-float / bool-vs-int / None-vs-missing
+    drifts collapse to the same key — single-period running-quarter
+    notifications no longer duplicate the active-config block.
+    """
+
+    def test_int_kw_matches_float_kw_in_today_block(self):
+        # Snapshot has kw_at_period=8 (int); header has kw=8.0 (float).
+        # Without canonicalizer, tuple eq passes (Python (8,)==(8.0,)),
+        # but with bool-vs-int drift this still tests the canonicalizer
+        # is in effect.
+        rows = [_row_with_meta(
+            "2026Q1", 6.20, 1000.0, 62.0,
+            utility_key="ekz", utility_name="EKZ",
+            kw=8, eigenverbrauch=True, hkn_optin=False, billing="quartal",
+            base_model="fixed_flat",
+        )]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1,
+            config=_config_dict(
+                utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                hkn_optin=False, billing="quartal",
+            ),
+        )
+        _, body = _format_recompute_notification(report)
+        # Per-group heading suppressed → only the active-today block.
+        assert "## Active configuration (today)" in body
+        assert "## Configuration in effect" not in body
+
+    def test_genuine_config_change_keeps_per_group_heading(self):
+        # Snapshot's EV differs from today's → fingerprints DO differ →
+        # per-group heading renders.
+        rows = [_row_with_meta(
+            "2026Q1", 6.20, 1000.0, 62.0,
+            utility_key="ekz", utility_name="EKZ",
+            kw=8.0, eigenverbrauch=False, hkn_optin=False, billing="quartal",
+            base_model="fixed_flat",
+        )]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=1,
+            config=_config_dict(
+                utility_key="ekz", kw=8.0, eigenverbrauch=True,
+                hkn_optin=False, billing="quartal",
+            ),
+        )
+        _, body = _format_recompute_notification(report)
+        assert "## Configuration in effect" in body
+
+    def test_settlement_period_threaded_into_per_group_heading(self):
+        # Multi-group report — per-group heading should now show
+        # settlement suffix (was hard-coded None pre-v0.16.0).
+        rows = [
+            _RecomputeReportRow(
+                period="2026Q1", rate_rp_kwh_avg=10.0, base_rp_kwh_avg=10.0,
+                hkn_rp_kwh_avg=0.0, intended_hkn_rp_kwh=None,
+                total_kwh=100.0, total_chf=10.0,
+                utility_key_at_period="ekz", utility_name_at_period="EKZ",
+                kw_at_period=8.0, eigenverbrauch_at_period=True,
+                hkn_optin_at_period=False, billing_at_period="quartal",
+                base_model_at_period="rmp_quartal",
+                settlement_period_at_period="quartal",
+            ),
+            _RecomputeReportRow(
+                period="2025Q4", rate_rp_kwh_avg=8.0, base_rp_kwh_avg=8.0,
+                hkn_rp_kwh_avg=0.0, intended_hkn_rp_kwh=None,
+                total_kwh=80.0, total_chf=6.4,
+                utility_key_at_period="other", utility_name_at_period="Other",
+                kw_at_period=8.0, eigenverbrauch_at_period=True,
+                hkn_optin_at_period=False, billing_at_period="quartal",
+                base_model_at_period="fixed_flat",
+                settlement_period_at_period="quartal",
+                fixed_rp_kwh_at_period=8.0,
+            ),
+        ]
+        report = _RecomputeReport(
+            rows=rows, quarters_recomputed=2, config=_config_dict()
+        )
+        _, body = _format_recompute_notification(report)
+        # Per-group blocks now show settlement.
+        assert "Tariff model:** rmp_quartal (settlement: quartal)" in body
+        assert (
+            "Tariff model:** fixed_flat (8.00 Rp/kWh, settlement: quartal)"
+            in body
+        )
+
+
+# ----- v0.16.0 — Issue 5: Tariff-model rate values ---------------------------
+
+
+class TestTariffModelRateRendering:
+    """v0.16.0: ``Tariff model:`` line shows actual Rp/kWh values for
+    fixed_flat / fixed_ht_nt so the user can sanity-check what's applied.
+    Pure-function tests on ``_format_tariff_model``.
+    """
+
+    def test_fixed_flat_plain_renders_rate(self):
+        s = _format_tariff_model({
+            "base_model": "fixed_flat",
+            "fixed_rp_kwh": 6.20,
+            "settlement_period": "stunde",
+        })
+        assert s == "fixed_flat (6.20 Rp/kWh, settlement: stunde)"
+
+    def test_fixed_flat_seasonal_renders_summer_winter(self):
+        s = _format_tariff_model({
+            "base_model": "fixed_flat",
+            "fixed_rp_kwh": 7.6,
+            "seasonal": {
+                "summer_months": [4, 5, 6, 7, 8, 9],
+                "winter_months": [10, 11, 12, 1, 2, 3],
+                "summer_rp_kwh": 6.20,
+                "winter_rp_kwh": 9.00,
+            },
+            "settlement_period": "quartal",
+        })
+        assert s == (
+            "fixed_flat (summer 6.20 / winter 9.00 Rp/kWh, settlement: quartal)"
+        )
+
+    def test_fixed_ht_nt_plain(self):
+        s = _format_tariff_model({
+            "base_model": "fixed_ht_nt",
+            "fixed_ht_rp_kwh": 12.34,
+            "fixed_nt_rp_kwh": 5.67,
+            "settlement_period": "quartal",
+        })
+        assert s == (
+            "fixed_ht_nt (HT 12.34 / NT 5.67 Rp/kWh, settlement: quartal)"
+        )
+
+    def test_fixed_ht_nt_seasonal(self):
+        s = _format_tariff_model({
+            "base_model": "fixed_ht_nt",
+            "fixed_ht_rp_kwh": 12.34,
+            "fixed_nt_rp_kwh": 5.67,
+            "seasonal": {
+                "summer_ht_rp_kwh": 12.34,
+                "winter_ht_rp_kwh": 14.00,
+                "summer_nt_rp_kwh": 5.67,
+                "winter_nt_rp_kwh": 6.50,
+            },
+            "settlement_period": "quartal",
+        })
+        assert s == (
+            "fixed_ht_nt (HT summer 12.34 / winter 14.00; "
+            "NT summer 5.67 / winter 6.50 Rp/kWh, settlement: quartal)"
+        )
+
+    def test_rmp_unchanged(self):
+        s = _format_tariff_model({
+            "base_model": "rmp_quartal",
+            "settlement_period": "quartal",
+        })
+        assert s == "rmp_quartal (settlement: quartal)"
+
+    def test_legacy_snapshot_no_fixed_fields(self):
+        # base_model known but no rate fields (pre-v0.16.0 cache) — should
+        # gracefully render model + settlement, no crash.
+        s = _format_tariff_model({
+            "base_model": "fixed_flat",
+            "settlement_period": "stunde",
+        })
+        assert s == "fixed_flat (settlement: stunde)"
+
+    def test_returns_none_when_base_model_missing(self):
+        assert _format_tariff_model({"settlement_period": "quartal"}) is None
+        assert _format_tariff_model({}) is None

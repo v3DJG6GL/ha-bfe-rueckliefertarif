@@ -382,13 +382,12 @@ class BfeCoordinator(DataUpdateCoordinator):
                         )
 
             await self._notify_skipped_quarters(no_data_skipped)
-            if reimported:
-                # v0.9.15 — only list the running quarter when its
-                # resolved config actually changed (NOT just because
-                # the estimate ran on a kWh-roll-forward tick). Mirrors
-                # `_snapshot_is_stale`'s rule for published quarters:
-                # the recompute notification reflects what changed
-                # because of the user's edit, not all maintenance work.
+            # v0.9.15 — only list the running quarter when its resolved
+            # config actually changed (NOT just because the estimate ran
+            # on a kWh-roll-forward tick). v0.16.0 — also fire when ONLY
+            # the running quarter changed (active-tariff edit case), so
+            # editing the open record produces a notification too.
+            if reimported or (running_q_estimated and running_q_config_changed):
                 notify_quarters = list(reimported)
                 if running_q_estimated and running_q_config_changed:
                     notify_quarters.append(running_q)
