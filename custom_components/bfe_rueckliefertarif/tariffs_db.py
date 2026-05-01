@@ -593,6 +593,14 @@ def resolve_tariff_at(
 
     tier_applies_when = tier.get("applies_when") or None
 
+    # Schema (oneOf: [number, null]) permits null/missing for hkn_structure
+    # in {"none", "bundled"} — those tiers don't carry an additive HKN bonus,
+    # so the value is "not applicable". Coerce to 0.0 at the boundary; the
+    # importer's _resolve_hkn_for_hour short-circuits before reading this on
+    # non-additive_optin tiers, so 0.0 is unobservable for those paths.
+    raw_hkn = tier.get("hkn_rp_kwh")
+    hkn_rp_kwh_value = float(raw_hkn) if raw_hkn is not None else 0.0
+
     return ResolvedTariff(
         utility_key=utility_key,
         valid_from=rate["valid_from"],
@@ -601,7 +609,7 @@ def resolve_tariff_at(
         fixed_rp_kwh=tier.get("fixed_rp_kwh"),
         fixed_ht_rp_kwh=tier.get("fixed_ht_rp_kwh"),
         fixed_nt_rp_kwh=tier.get("fixed_nt_rp_kwh"),
-        hkn_rp_kwh=float(tier["hkn_rp_kwh"]),
+        hkn_rp_kwh=hkn_rp_kwh_value,
         hkn_structure=tier["hkn_structure"],
         cap_mode=bool(rate.get("cap_mode", False)),
         cap_rp_kwh=cap_rp_kwh,

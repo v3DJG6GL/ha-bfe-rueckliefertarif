@@ -375,6 +375,46 @@ class TestResolveTariffAt:
                 eigenverbrauch=True, data=db,
             )
 
+    def test_resolve_with_hkn_rp_kwh_null_returns_zero(self):
+        # Schema permits hkn_rp_kwh: null for hkn_structure in {none, bundled}.
+        # Lint case_22 in the data repo enforces null specifically. The runtime
+        # must coerce null to 0.0 at the boundary (the dataclass field is float).
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_rp_kwh": None,
+                "hkn_structure": "bundled",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.hkn_rp_kwh == 0.0
+        assert rt.hkn_structure == "bundled"
+
+    def test_resolve_with_hkn_rp_kwh_missing_returns_zero(self):
+        # Schema doesn't list hkn_rp_kwh as required for power_tier; for
+        # hkn_structure in {none, bundled} the field can be omitted entirely.
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal", "cap_mode": False,
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "rmp_quartal",
+                "hkn_structure": "none",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.hkn_rp_kwh == 0.0
+        assert rt.hkn_structure == "none"
+
 
 def _synthetic_db(utility_key: str, rates: list[dict]) -> dict:
     return {
