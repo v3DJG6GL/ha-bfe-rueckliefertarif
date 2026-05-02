@@ -24,7 +24,15 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.2";
+const CARD_VERSION = "0.21.3";
+
+// v0.21.3 — timing diagnostic. Logs where time is spent during card load
+// so we can pinpoint the multi-minute hangs reported in v0.21.0-v0.21.2.
+function _bfeT(label) {
+  const t = performance.now();
+  console.log(`[BFE] ${label} @ ${t.toFixed(1)}ms`);
+  return t;
+}
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 // v0.20.2 scope-isolated ApexCharts loader (avoid window.ApexCharts pollution
@@ -34,16 +42,23 @@ let _apexPromise = null;
 function _loadApexScoped() {
   if (_apexPromise) return _apexPromise;
   _apexPromise = (async () => {
+    const tFetchStart = performance.now();
     const code = await fetch(APEX_URL).then((r) => {
       if (!r.ok) throw new Error(`Failed to fetch ApexCharts: ${r.status}`);
       return r.text();
     });
+    const tFetchEnd = performance.now();
+    console.log(`[BFE] ApexCharts bundle fetched (${(tFetchEnd - tFetchStart).toFixed(0)}ms, ${(code.length / 1024).toFixed(0)}KB)`);
     const factory = new Function(
       "module", "exports",
       code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
     );
+    const tCompiled = performance.now();
+    console.log(`[BFE] ApexCharts compiled via Function() (${(tCompiled - tFetchEnd).toFixed(0)}ms)`);
     const moduleObj = { exports: {} };
     const Apex = factory(moduleObj, moduleObj.exports);
+    const tFactoryDone = performance.now();
+    console.log(`[BFE] ApexCharts factory ran (${(tFactoryDone - tCompiled).toFixed(0)}ms)`);
     if (!Apex) throw new Error("ApexCharts UMD bundle did not export anything");
     return Apex;
   })();
@@ -158,10 +173,12 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
   async _fetch() {
     if (!this._hass || this._loading) return;
+    const t0 = _bfeT("_fetch start");
     this._loading = true;
     this._error = null;
     try {
       try { this._renderBody(); } catch (e) { console.error("BFE card pre-render failed:", e); }
+      _bfeT("calling get_breakdown × 2");
       const detailPromise = this._hass.callService(
         DOMAIN, SERVICE,
         { year: this._year, quarter: this._quarter },
@@ -173,17 +190,20 @@ class BfeTariffAnalysisCard extends HTMLElement {
         undefined, false, true,
       );
       const [detail, history] = await Promise.all([detailPromise, historyPromise]);
+      _bfeT(`services returned (Δ ${(performance.now() - t0).toFixed(0)}ms)`);
       this._response = detail?.response ?? detail;
       this._history = history?.response ?? history;
+      console.log("[BFE] detail rows:", this._response?.rows?.length, "history rows:", this._history?.rows?.length);
     } catch (err) {
+      console.error("[BFE] fetch failed after", (performance.now() - t0).toFixed(0), "ms:", err);
       this._error = err?.message || String(err);
       this._response = null;
       this._history = null;
     } finally {
-      // v0.20.2 — guarantee loading clears even if rendering throws mid-flight
       this._loading = false;
       try {
         this._renderBody();
+        _bfeT(`render done (Δ ${(performance.now() - t0).toFixed(0)}ms total)`);
       } catch (e) {
         console.error("BFE card post-render failed:", e);
         const body = this.shadowRoot?.querySelector(".body");
