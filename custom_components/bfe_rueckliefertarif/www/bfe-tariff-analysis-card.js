@@ -24,46 +24,9 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.3";
+const CARD_VERSION = "0.21.4";
 
-// v0.21.3 — timing diagnostic. Logs where time is spent during card load
-// so we can pinpoint the multi-minute hangs reported in v0.21.0-v0.21.2.
-function _bfeT(label) {
-  const t = performance.now();
-  console.log(`[BFE] ${label} @ ${t.toFixed(1)}ms`);
-  return t;
-}
 const HISTORY_QUARTERS_DEFAULT = 8;
-
-// v0.20.2 scope-isolated ApexCharts loader (avoid window.ApexCharts pollution
-// that conflicts with RomRider/apexcharts-card).
-const APEX_URL = "/api/bfe_rueckliefertarif/static/apexcharts.min.js";
-let _apexPromise = null;
-function _loadApexScoped() {
-  if (_apexPromise) return _apexPromise;
-  _apexPromise = (async () => {
-    const tFetchStart = performance.now();
-    const code = await fetch(APEX_URL).then((r) => {
-      if (!r.ok) throw new Error(`Failed to fetch ApexCharts: ${r.status}`);
-      return r.text();
-    });
-    const tFetchEnd = performance.now();
-    console.log(`[BFE] ApexCharts bundle fetched (${(tFetchEnd - tFetchStart).toFixed(0)}ms, ${(code.length / 1024).toFixed(0)}KB)`);
-    const factory = new Function(
-      "module", "exports",
-      code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
-    );
-    const tCompiled = performance.now();
-    console.log(`[BFE] ApexCharts compiled via Function() (${(tCompiled - tFetchEnd).toFixed(0)}ms)`);
-    const moduleObj = { exports: {} };
-    const Apex = factory(moduleObj, moduleObj.exports);
-    const tFactoryDone = performance.now();
-    console.log(`[BFE] ApexCharts factory ran (${(tFactoryDone - tCompiled).toFixed(0)}ms)`);
-    if (!Apex) throw new Error("ApexCharts UMD bundle did not export anything");
-    return Apex;
-  })();
-  return _apexPromise;
-}
 
 // Time range presets — map to service-call params.
 const RANGE_PRESETS = [
@@ -834,46 +797,20 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 }
 
-// v0.21.1 — defensive registration. customElements.define throws if the
-// name is already taken (e.g. browser cached an older module from a
-// previous integration version). Log the conflict instead of swallowing
-// the throw silently — the user knows to hard-refresh.
-//
-// v0.21.2 — diagnostic logging: confirm the post-register customElements.get
-// actually finds the class. If not, the scoped-custom-element-registry
-// polyfill HA uses may be intercepting the global define.
-try {
-  const existing = customElements.get("bfe-tariff-analysis-card");
-  if (existing && existing !== BfeTariffAnalysisCard) {
-    console.warn(
-      `[BFE] bfe-tariff-analysis-card already registered — likely a stale module ` +
-      `from a previous integration version. Hard-refresh (Ctrl+Shift+R) to load ` +
-      `v${CARD_VERSION}.`
-    );
-  } else if (!existing) {
-    customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
-  }
-  // Sanity check — confirm the registration is actually findable.
-  const post = customElements.get("bfe-tariff-analysis-card");
-  if (!post) {
-    console.error(
-      "[BFE] customElements.define ran but customElements.get returned undefined! " +
-      "The scoped-custom-element-registry polyfill may be intercepting our global " +
-      "define. Please paste this entire console output to the integration issue tracker."
-    );
-  } else {
-    console.info(
-      `[BFE] customElements registered OK. ctor: ${post.name || "(anonymous)"}`
-    );
-  }
-} catch (err) {
-  console.error("[BFE] customElements.define failed:", err);
-  // Re-raise so HA's dashboard error reporting picks it up
-  throw err;
+// v0.21.4 — registration runs IMMEDIATELY after the class declaration so
+// customElements.define wins HA's tryCreateCardElement race on cold reloads.
+// HA's create-element-base.ts gives us a 2-second whenDefined window before
+// the error placeholder un-hides; v0.20.2 won this race, v0.21.0-v0.21.3
+// lost it because the file grew + a defensive try/guard added microtask
+// latency. Minimal form (matches HACS card pattern):
+if (!customElements.get("bfe-tariff-analysis-card")) {
+  customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
 }
+console.info(
+  `[BFE] customElements registered OK. ctor: ${BfeTariffAnalysisCard.name}`
+);
 
 window.customCards = window.customCards || [];
-// Avoid duplicate entries when the script loads twice (cached + fresh).
 if (!window.customCards.some((c) => c.type === "bfe-tariff-analysis-card")) {
   window.customCards.push({
     type: "bfe-tariff-analysis-card",
@@ -888,3 +825,72 @@ console.info(
   "color: white; background: #4caf50; font-weight: 500;",
   "color: #4caf50; background: white; font-weight: 500;",
 );
+
+// v0.21.4 — belt-and-suspenders recovery. If our script loaded after HA's
+// 2s whenDefined window, the user sees "Custom element doesn't exist".
+// Walk the DOM (incl. shadow roots) for any error placeholders whose
+// config references our card and dispatch ll-rebuild on them — this is
+// the same event HA's create-element-base.ts fires on whenDefined, so
+// the parent hui-card knows to rebuild its child.
+function _bfeRebuildErrorCards() {
+  const targetType = "bfe-tariff-analysis-card";
+  const matches = (cfg) =>
+    cfg && (cfg.type === targetType || cfg.type === `custom:${targetType}`);
+  const visit = (root) => {
+    if (!root || !root.querySelectorAll) return 0;
+    let rebuilt = 0;
+    for (const el of root.querySelectorAll("*")) {
+      if (el.shadowRoot) rebuilt += visit(el.shadowRoot);
+      const cfg = el._config || el.config;
+      if (matches(cfg)) {
+        el.dispatchEvent(
+          new CustomEvent("ll-rebuild", { bubbles: true, composed: true })
+        );
+        rebuilt += 1;
+      }
+    }
+    return rebuilt;
+  };
+  setTimeout(() => {
+    const n = visit(document);
+    if (n > 0) console.info(`[BFE] ll-rebuild dispatched on ${n} placeholder(s)`);
+  }, 100);
+}
+_bfeRebuildErrorCards();
+
+// Helpers — declared after registration so they don't delay define().
+// Function declarations are hoisted, so class methods can still reference
+// them via lexical closure even though they appear textually later.
+const APEX_URL = "/api/bfe_rueckliefertarif/static/apexcharts.min.js";
+let _apexPromise = null;
+function _loadApexScoped() {
+  if (_apexPromise) return _apexPromise;
+  _apexPromise = (async () => {
+    const tFetchStart = performance.now();
+    const code = await fetch(APEX_URL).then((r) => {
+      if (!r.ok) throw new Error(`Failed to fetch ApexCharts: ${r.status}`);
+      return r.text();
+    });
+    const tFetchEnd = performance.now();
+    console.log(`[BFE] ApexCharts bundle fetched (${(tFetchEnd - tFetchStart).toFixed(0)}ms, ${(code.length / 1024).toFixed(0)}KB)`);
+    const factory = new Function(
+      "module", "exports",
+      code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
+    );
+    const tCompiled = performance.now();
+    console.log(`[BFE] ApexCharts compiled via Function() (${(tCompiled - tFetchEnd).toFixed(0)}ms)`);
+    const moduleObj = { exports: {} };
+    const Apex = factory(moduleObj, moduleObj.exports);
+    const tFactoryDone = performance.now();
+    console.log(`[BFE] ApexCharts factory ran (${(tFactoryDone - tCompiled).toFixed(0)}ms)`);
+    if (!Apex) throw new Error("ApexCharts UMD bundle did not export anything");
+    return Apex;
+  })();
+  return _apexPromise;
+}
+
+function _bfeT(label) {
+  const t = performance.now();
+  console.log(`[BFE] ${label} @ ${t.toFixed(1)}ms`);
+  return t;
+}
