@@ -40,16 +40,16 @@
       },
       "entities": {
         "title": "Zuordnung von Entitäten",
-        "description": "Verbinde kWh-Zähler und CHF-Sensor und vergib einen Anlagen-Namen.",
+        "description": "Verbinde den Stromexport-Sensor (kWh) und Einspeise-Vergütungssensor (CHF) und setze einen Namen.",
         "data": {
           "stromnetzeinspeisung_kwh": "Stromnetzeinspeisung (kWh)",
           "rueckliefervergutung_chf": "Rückliefervergütung (CHF)",
-          "plant_name": "Anlagen-Name",
+          "plant_name": "Name der PV-Anlage",
           "namenspraefix": "Sensor-Namenspräfix (optional)"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "## kWh-Zähler\nDer **kWh-Zähler** deiner Einspeisung ins Stromnetz.\n\nMuss bereits im **Energy-Dashboard** unter *'Zurück ins Netz'* verwendet werden.",
-          "rueckliefervergutung_chf": "## Auto-erzeugter CHF-Sensor\nDer vom Energy-Dashboard beim Einrichten von *'Zurück ins Netz mit Preis'* automatisch erzeugte **CHF-Sensor**.\n\nHA hängt den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Diese Integration schreibt in dessen **Long-Term-Statistics**.",
+          "stromnetzeinspeisung_kwh": "## Stromexport-Sensor\nDer **Stromexport-Sensor** deiner Solaranlage, welcher die ins Stromnetz exportierte PV-Energie misst.\n\Sollte bereits im **Energie-Dashboard** unter *'In das Netz eingespeiste Energie'* verwendet werden.",
+          "rueckliefervergutung_chf": "## Vom **Energie-Dashboard"" automatisch erzeugter CHF-Sensor\nHome Assistant hängt üblicherweise den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Wird benötigt, dass die *Langzeit-Statistiken* mit den korrekten Einspeisevergütungstarigen be- und überschrieben werden können.",
           "plant_name": "Anzeigename für diese PV-Anlage – z.B. `PV-Anlage`. Wird als Titel der Integration unter „Einstellungen\" → „Geräte & Dienste\" sowie als Standard-Präfix für Entitäten verwendet.",
           "namenspraefix": "Das Präfix für die *Sensoren* dieser Integration (z.B. `sensor.PREFIX_basisverguetung`).\n\nLeer lassen, um das Präfix automatisch aus dem Anzeigenamen abzuleiten (z.B. `sensor.solaranlage_basisverguetung`)."
         }
