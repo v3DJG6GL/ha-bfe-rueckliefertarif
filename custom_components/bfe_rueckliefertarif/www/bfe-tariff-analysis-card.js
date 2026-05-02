@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.0";
+const CARD_VERSION = "0.21.1";
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 // v0.20.2 scope-isolated ApexCharts loader (avoid window.ApexCharts pollution
@@ -814,15 +814,36 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 }
 
-customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
+// v0.21.1 — defensive registration. customElements.define throws if the
+// name is already taken (e.g. browser cached an older module from a
+// previous integration version). Log the conflict instead of swallowing
+// the throw silently — the user knows to hard-refresh.
+try {
+  if (customElements.get("bfe-tariff-analysis-card")) {
+    console.warn(
+      `[BFE] bfe-tariff-analysis-card already registered — likely a stale module ` +
+      `from a previous integration version. Hard-refresh (Ctrl+Shift+R) to load ` +
+      `v${CARD_VERSION}.`
+    );
+  } else {
+    customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
+  }
+} catch (err) {
+  console.error("[BFE] customElements.define failed:", err);
+  // Re-raise so HA's dashboard error reporting picks it up
+  throw err;
+}
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "bfe-tariff-analysis-card",
-  name: "BFE Rückliefertarif — Analyse",
-  description: "Interaktive Tarifanalyse für BFE-Einspeisevergütung",
-  preview: false,
-});
+// Avoid duplicate entries when the script loads twice (cached + fresh).
+if (!window.customCards.some((c) => c.type === "bfe-tariff-analysis-card")) {
+  window.customCards.push({
+    type: "bfe-tariff-analysis-card",
+    name: "BFE Rückliefertarif — Analyse",
+    description: "Interaktive Tarifanalyse für BFE-Einspeisevergütung",
+    preview: false,
+  });
+}
 
 console.info(
   `%c BFE-TARIFF-ANALYSIS-CARD %c v${CARD_VERSION} `,
