@@ -340,7 +340,10 @@ def _active_hkn_structure(utility_key: str, valid_from_iso: str) -> str | None:
         rate = find_active(utility["rates"], date.fromisoformat(valid_from_iso))
         if rate is None or not rate.get("power_tiers"):
             return None
-        return rate["power_tiers"][0].get("hkn_structure")
+        # v0.22.0 — schema 1.5.0 lifts homogeneous tier `hkn_structure` to
+        # the rate-level default. Fall back when the tier omits the field.
+        tier = rate["power_tiers"][0]
+        return tier.get("hkn_structure") or rate.get("hkn_structure_default")
     except (KeyError, ValueError, LookupError):
         return None
 

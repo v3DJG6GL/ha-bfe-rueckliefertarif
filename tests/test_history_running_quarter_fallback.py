@@ -43,7 +43,6 @@ def _resolved(base_model: str, *, floor: float = 6.00, hkn: float = 0.0) -> Reso
         fixed_nt_rp_kwh=11.60 if base_model == "fixed_ht_nt" else None,
         hkn_rp_kwh=hkn,
         hkn_structure="none",
-        cap_mode=False,
         cap_rp_kwh=None,
         federal_floor_rp_kwh=floor,
         federal_floor_label="<30 kW",

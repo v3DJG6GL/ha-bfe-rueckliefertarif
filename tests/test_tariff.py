@@ -108,14 +108,14 @@ def _cap(kw: float, ev: bool) -> float | None:
 
 
 class TestEffectiveOhneObergrenze:
-    """cap_mode=False — base + HKN paid additively, no upper cap."""
+    """cap_rp_kwh=None — base + HKN paid additively, no upper cap."""
 
     def test_normal_market_base_plus_hkn(self):
         # Q1 2026 BFE reference 10.266 + HKN 3 → 13.266 (no cap)
         rp = effective_rp_kwh(
             10.266, 3.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rp == pytest.approx(13.266)
 
@@ -124,7 +124,7 @@ class TestEffectiveOhneObergrenze:
         rp = effective_rp_kwh(
             3.0, 2.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rp == pytest.approx(8.0)
 
@@ -133,7 +133,7 @@ class TestEffectiveOhneObergrenze:
         rp = effective_rp_kwh(
             12.95, 0.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rp == pytest.approx(12.95)
 
@@ -142,7 +142,7 @@ class TestEffectiveOhneObergrenze:
         rp = effective_rp_kwh(
             7.91, 5.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rp == pytest.approx(12.91)
 
@@ -151,7 +151,7 @@ class TestEffectiveOhneObergrenze:
         rp = effective_rp_kwh(
             8.2, 0.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rp == pytest.approx(8.2)
 
@@ -159,20 +159,20 @@ class TestEffectiveOhneObergrenze:
         rp = effective_rp_kwh(
             3.0, 0.0,
             federal_floor_rp_kwh=_floor(200, False),
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rp == pytest.approx(3.0)
 
 
 class TestEffectiveMitObergrenze:
-    """cap_mode=True — EKZ-style cap with two sub-rules."""
+    """cap_rp_kwh set (schema 1.5.0: non-empty cap_rules) — EKZ-style cap."""
 
     def test_q1_2026_ekz_no_hkn_below_cap(self):
         # 10.266 < cap 10.96, no HKN → 10.266 (cap not engaged)
         rp = effective_rp_kwh(
             10.266, 0.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=_cap(10, True), cap_mode=True,
+            cap_rp_kwh=_cap(10, True),
         )
         assert rp == pytest.approx(10.266)
 
@@ -181,7 +181,7 @@ class TestEffectiveMitObergrenze:
         rp = effective_rp_kwh(
             10.266, 3.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=_cap(10, True), cap_mode=True,
+            cap_rp_kwh=_cap(10, True),
         )
         assert rp == 10.96
 
@@ -190,7 +190,7 @@ class TestEffectiveMitObergrenze:
         rp = effective_rp_kwh(
             10.96, 3.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=_cap(10, True), cap_mode=True,
+            cap_rp_kwh=_cap(10, True),
         )
         assert rp == 10.96
 
@@ -199,7 +199,7 @@ class TestEffectiveMitObergrenze:
         rp = effective_rp_kwh(
             12.0, 3.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=_cap(10, True), cap_mode=True,
+            cap_rp_kwh=_cap(10, True),
         )
         assert rp == pytest.approx(12.0)
 
@@ -207,7 +207,7 @@ class TestEffectiveMitObergrenze:
         rp = effective_rp_kwh(
             7.0, 3.0,
             federal_floor_rp_kwh=_floor(200, True),
-            cap_rp_kwh=_cap(200, True), cap_mode=True,
+            cap_rp_kwh=_cap(200, True),
         )
         # 7.0 + 3.0 = 10.0 > cap 7.20 → reduced to 7.20.
         assert rp == 7.20
@@ -217,7 +217,7 @@ class TestEffectiveMitObergrenze:
         rp = effective_rp_kwh(
             3.0, 3.0,
             federal_floor_rp_kwh=_floor(10, True),
-            cap_rp_kwh=_cap(10, True), cap_mode=True,
+            cap_rp_kwh=_cap(10, True),
         )
         assert rp == pytest.approx(9.0)
 
@@ -392,3 +392,26 @@ class TestUnitConversion:
 
     def test_zero(self):
         assert chf_per_mwh_to_rp_per_kwh(0.0) == 0.0
+
+
+class TestCapActivationViaCapRpKwhOnly:
+    """v0.22.0 — schema 1.5.0 dropped the legacy ``cap_mode`` boolean.
+    Cap activation now flows through ``cap_rp_kwh is not None`` only;
+    callers no longer pass a separate ``cap_mode=True``."""
+
+    def test_no_cap_when_cap_rp_kwh_none_full_hkn_passes_through(self):
+        rp = effective_rp_kwh(
+            10.266, 3.0,
+            federal_floor_rp_kwh=_floor(10, True),
+            cap_rp_kwh=None,
+        )
+        assert rp == pytest.approx(13.266)
+
+    def test_cap_active_when_cap_rp_kwh_set_truncates_hkn(self):
+        rp = effective_rp_kwh(
+            10.266, 3.0,
+            federal_floor_rp_kwh=_floor(10, True),
+            cap_rp_kwh=10.96,
+        )
+        # base 10.266 + min(3.0, 10.96-10.266) = 10.266 + 0.694 = 10.96
+        assert rp == 10.96

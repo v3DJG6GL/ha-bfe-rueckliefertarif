@@ -528,7 +528,7 @@ class TestApplyChangeWizard:
 
     @pytest.mark.asyncio
     async def test_user_inputs_persist_into_history_record(self):
-        # AEW declares user_inputs.aew_fixpreis_rmp (v1.2.0 bundled data).
+        # AEW declares user_inputs.fixpreis_rmp (v1.2.0 bundled data).
         # The Step 2 form renders the dropdown for the utility chosen in
         # Step 1; the chosen value persists into the new record.
         existing = [
@@ -541,14 +541,14 @@ class TestApplyChangeWizard:
             valid_from="2026-04-01",
             utility="aew",
             # v0.13.0 — kW=50 lands in AEW's upper tier (kw_min=30,
-            # kw_max=3000) which is gated on "Referenzmarktpreis"; the
+            # kw_max=3000) which is gated on "rmp"; the
             # O4 dry-run accepts this combination. (kW=10 + RMP would
             # be correctly rejected by the new no_matching_tier check.)
             details={
                 CONF_INSTALLIERTE_LEISTUNG_KWP: 50.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                "aew_fixpreis_rmp": "Referenzmarktpreis",
+                "fixpreis_rmp": "rmp",
             },
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
@@ -556,13 +556,13 @@ class TestApplyChangeWizard:
         new_rec = history[-1]
         assert new_rec["config"]["energieversorger"] == "aew"
         assert new_rec["config"]["user_inputs"] == {
-            "aew_fixpreis_rmp": "Referenzmarktpreis"
+            "fixpreis_rmp": "rmp"
         }
 
     @pytest.mark.asyncio
     async def test_user_inputs_default_used_when_not_provided(self):
         # Submission omits the declared user_input — resolver falls back
-        # to decl.default ("AEW Fixpreis").
+        # to decl.default ("fixpreis").
         existing = [
             {"valid_from": "1970-01-01", "valid_to": None,
              "config": _entry_data(utility="ekz")},
@@ -576,13 +576,13 @@ class TestApplyChangeWizard:
                 CONF_INSTALLIERTE_LEISTUNG_KWP: 10.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                # aew_fixpreis_rmp intentionally omitted.
+                # fixpreis_rmp intentionally omitted.
             },
         )
         assert result["type"].name in ("CREATE_ENTRY", "create_entry")
         history = result["data"][OPT_CONFIG_HISTORY]
         assert history[-1]["config"]["user_inputs"] == {
-            "aew_fixpreis_rmp": "AEW Fixpreis"
+            "fixpreis_rmp": "fixpreis"
         }
 
     @pytest.mark.asyncio
@@ -602,11 +602,11 @@ class TestApplyChangeWizard:
                 CONF_INSTALLIERTE_LEISTUNG_KWP: 10.0,
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
-                "aew_fixpreis_rmp": "bogus_value_not_in_enum",
+                "fixpreis_rmp": "bogus_value_not_in_enum",
             },
         )
         assert result["type"].name in ("FORM", "form")
-        assert result["errors"].get("aew_fixpreis_rmp") == "invalid_choice"
+        assert result["errors"].get("fixpreis_rmp") == "invalid_choice"
         assert result["step_id"] == "add_new_row"
 
     @pytest.mark.asyncio
@@ -697,7 +697,7 @@ class TestPerPeriodEditor:
         rates = [
             {
                 "valid_from": "2026-01-01", "valid_to": "2027-01-01",
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [{
                     "kw_min": 0, "kw_max": None,
                     "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
@@ -710,7 +710,7 @@ class TestPerPeriodEditor:
             },
             {
                 "valid_from": "2027-01-01", "valid_to": None,
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [{
                     "kw_min": 0, "kw_max": None,
                     "base_model": "fixed_flat", "fixed_rp_kwh": 9.0,
@@ -749,7 +749,7 @@ class TestPerPeriodEditor:
         rates = [
             {
                 "valid_from": "2026-01-01", "valid_to": "2027-01-01",
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [{
                     "kw_min": 0, "kw_max": None,
                     "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
@@ -762,7 +762,7 @@ class TestPerPeriodEditor:
             },
             {
                 "valid_from": "2027-01-01", "valid_to": None,
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [{
                     "kw_min": 0, "kw_max": None,
                     "base_model": "fixed_flat", "fixed_rp_kwh": 9.0,
@@ -814,7 +814,7 @@ class TestPerPeriodEditor:
         rates = [
             {
                 "valid_from": "2026-01-01", "valid_to": "2027-01-01",
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [{
                     "kw_min": 0, "kw_max": None,
                     "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
@@ -824,7 +824,7 @@ class TestPerPeriodEditor:
             },
             {
                 "valid_from": "2027-01-01", "valid_to": None,
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [{
                     "kw_min": 0, "kw_max": None,
                     "base_model": "fixed_flat", "fixed_rp_kwh": 9.5,
@@ -871,7 +871,6 @@ class TestRecomputeHistoryEstimate:
             "eigenverbrauch_aktiviert": True,
             "hkn_rp_kwh": 5.0,
             "hkn_optin": True,
-            "cap_mode": False,
             "cap_rp_kwh": None,
             "cap_applied": False,
             "total_kwh": 100.0,
@@ -967,7 +966,6 @@ class TestRecomputeHistoryEstimate:
                 hkn_optin_at_period=True,
                 billing_at_period=ABRECHNUNGS_RHYTHMUS_QUARTAL,
                 base_model_at_period="fixpreis",
-                cap_mode_at_period=False,
                 cap_rp_kwh_at_period=None,
                 floor_label_at_period=None,
                 floor_rp_kwh_at_period=None,
@@ -991,7 +989,6 @@ class TestRecomputeHistoryEstimate:
                 "billing": ABRECHNUNGS_RHYTHMUS_QUARTAL,
                 "floor_label": None,
                 "floor_rp_kwh": None,
-                "cap_mode": False,
                 "cap_rp_kwh": None,
                 "tariffs_version": "2026.01",
                 "tariffs_source": "bundled",
@@ -1360,8 +1357,8 @@ class TestFirstTimeSetupSplitFlow:
     @pytest.mark.asyncio
     async def test_details_aew_kw50_filters_enum_to_rmp_only(self):
         # AEW kW=50: tier 1 covers (kw 30–3000) gated on
-        # "Referenzmarktpreis"; tier 0 (kw 0–30) doesn't cover. Page 2's
-        # aew_fixpreis_rmp dropdown should show only "Referenzmarktpreis".
+        # "rmp"; tier 0 (kw 0–30) doesn't cover. Page 2's
+        # fixpreis_rmp dropdown should show only "rmp".
         flow = self._make_flow("aew")
         flow._setup_pick = {
             CONF_ENERGIEVERSORGER: "aew",
@@ -1370,18 +1367,20 @@ class TestFirstTimeSetupSplitFlow:
         }
         result = await flow.async_step_tariff_details(None)
         assert result["step_id"] == "tariff_details"
-        # Schema's aew_fixpreis_rmp options: only "Referenzmarktpreis".
+        # Schema's fixpreis_rmp options: only "rmp".
         for k, v in result["data_schema"].schema.items():
-            if str(k) == "aew_fixpreis_rmp":
+            if str(k) == "fixpreis_rmp":
                 opts = [opt["value"] for opt in v.config["options"]]
-                assert opts == ["Referenzmarktpreis"]
+                assert opts == ["rmp"]
                 break
         else:
-            raise AssertionError("aew_fixpreis_rmp not in schema")
+            raise AssertionError("fixpreis_rmp not in schema")
 
     @pytest.mark.asyncio
-    async def test_details_aew_kw15_filters_enum_to_fixpreis_only(self):
-        # AEW kW=15: only tier 0 (kw 0-30) covers, gated on "AEW Fixpreis".
+    async def test_details_aew_kw15_offers_both_enum_options(self):
+        # v1.5.0 AEW data: at kW=15 BOTH tiers cover (fixed_flat 2..30 AND
+        # rmp_quartal 2..3000), so the kw-aware filter should expose BOTH
+        # enum options.
         flow = self._make_flow("aew")
         flow._setup_pick = {
             CONF_ENERGIEVERSORGER: "aew",
@@ -1390,12 +1389,12 @@ class TestFirstTimeSetupSplitFlow:
         }
         result = await flow.async_step_tariff_details(None)
         for k, v in result["data_schema"].schema.items():
-            if str(k) == "aew_fixpreis_rmp":
+            if str(k) == "fixpreis_rmp":
                 opts = [opt["value"] for opt in v.config["options"]]
-                assert opts == ["AEW Fixpreis"]
+                assert sorted(opts) == ["fixpreis", "rmp"]
                 break
         else:
-            raise AssertionError("aew_fixpreis_rmp not in schema")
+            raise AssertionError("fixpreis_rmp not in schema")
 
     @pytest.mark.asyncio
     async def test_details_save_stashes_history_for_create_entry(self):
@@ -1411,7 +1410,7 @@ class TestFirstTimeSetupSplitFlow:
         result = await flow.async_step_tariff_details(
             {
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
-                "aew_fixpreis_rmp": "AEW Fixpreis",
+                "fixpreis_rmp": "fixpreis",
             }
         )
         # Advances to entities form (no user_input → form, not create_entry).
@@ -1425,7 +1424,7 @@ class TestFirstTimeSetupSplitFlow:
         assert rec["config"][CONF_ENERGIEVERSORGER] == "aew"
         assert rec["config"][CONF_INSTALLIERTE_LEISTUNG_KWP] == 15.0
         assert rec["config"]["user_inputs"] == {
-            "aew_fixpreis_rmp": "AEW Fixpreis"
+            "fixpreis_rmp": "fixpreis"
         }
 
     @pytest.mark.asyncio
@@ -1449,7 +1448,7 @@ class TestFirstTimeSetupSplitFlow:
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                 CONF_HKN_AKTIVIERT: False,
                 CONF_ABRECHNUNGS_RHYTHMUS: ABRECHNUNGS_RHYTHMUS_QUARTAL,
-                "user_inputs": {"aew_fixpreis_rmp": "AEW Fixpreis"},
+                "user_inputs": {"fixpreis_rmp": "fixpreis"},
             },
         }]
         result = await flow.async_step_entities({
@@ -1464,7 +1463,7 @@ class TestFirstTimeSetupSplitFlow:
         history = result["options"][OPT_CONFIG_HISTORY]
         # Last record (post-normalize) has the user_input.
         assert history[-1]["config"]["user_inputs"] == {
-            "aew_fixpreis_rmp": "AEW Fixpreis"
+            "fixpreis_rmp": "fixpreis"
         }
 
 
@@ -2811,7 +2810,6 @@ class TestRunningQuarterEstimatePerHourRates:
             fixed_nt_rp_kwh=6.45,
             hkn_rp_kwh=3.00,
             hkn_structure="additive_optin",
-            cap_mode=False,
             cap_rp_kwh=None,
             federal_floor_rp_kwh=6.00,
             federal_floor_label="<30 kW",
@@ -2935,7 +2933,6 @@ class TestRunningQuarterEstimatePerHourRates:
             fixed_nt_rp_kwh=None,
             hkn_rp_kwh=4.00,
             hkn_structure="additive_optin",
-            cap_mode=False,
             cap_rp_kwh=None,
             federal_floor_rp_kwh=6.00,
             federal_floor_label="<30 kW",
@@ -3039,7 +3036,6 @@ class TestRunningEstimateDuringFirstRefresh:
             fixed_nt_rp_kwh=None,
             hkn_rp_kwh=4.00,
             hkn_structure="additive_optin",
-            cap_mode=False,
             cap_rp_kwh=None,
             federal_floor_rp_kwh=6.00,
             federal_floor_label="<30 kW",
@@ -3137,7 +3133,6 @@ class TestRenderConfigBlockShared:
             "billing": "quartal",
             "floor_label": "<30 kW",
             "floor_rp_kwh": 6.0,
-            "cap_mode": True,
             "cap_rp_kwh": 10.96,
             "tariffs_version": "1.0.0",
             "tariffs_source": "remote",
@@ -3158,7 +3153,7 @@ class TestRenderConfigBlockShared:
             "    - **Self-consumption:**",
             "    - **HKN opt-in:**",
             "**Federal floor (Mindestvergütung):**",
-            "**Cap mode (Anrechenbarkeitsgrenze):**",
+            "**Cap (Anrechenbarkeitsgrenze):**",
             "**Tariff data:**",
         ):
             assert label in today_block, f"{label} missing in today block"

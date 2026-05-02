@@ -51,8 +51,12 @@ class ResolvedTariff:
     hkn_rp_kwh: float
     hkn_structure: str              # "additive_optin" | "bundled" | "none"
 
-    cap_mode: bool
-    cap_rp_kwh: float | None        # picked from cap_rules by (kw, ev); None if no cap
+    # v0.22.0 — schema 1.5.0 dropped `cap_mode`. Cap activation is signaled
+    # solely by a non-empty ``cap_rules`` array at the rate-window level;
+    # the resolver evaluates ``find_rule(cap_rules, kw, ev)`` and exposes
+    # the resulting cap. ``None`` here = no cap (either no ``cap_rules``,
+    # an empty array, or no rule covered (kw, ev)).
+    cap_rp_kwh: float | None
 
     federal_floor_rp_kwh: float | None
     federal_floor_label: str        # runtime-rendered: "<30 kW", "≥150 kW", etc.
@@ -111,6 +115,24 @@ class ResolvedTariff:
     # config-block "active because: tariff_model=ht"). ``None`` when the
     # matched tier has no clause (the unconditional default tier).
     tier_applies_when: dict | None = None
+
+    # v0.22.0 — schema 1.5.0 rate-level HKN defaults. When a tier omits
+    # ``hkn_structure`` / ``hkn_rp_kwh``, the resolver inherits these
+    # values into ``hkn_structure`` / ``hkn_rp_kwh`` above. The defaults
+    # are also retained verbatim so downstream consumers (curator UIs,
+    # diagnostic exports) can distinguish "tier explicitly set" from
+    # "tier inherited from rate-level default".
+    hkn_structure_default: str = "none"
+    hkn_rp_kwh_default: float | None = None
+
+    # v0.22.0 — schema 1.5.0 tier-level overrides for seasonal classification
+    # and bonuses (both additive). Tier-level seasonal only affects BASE-RATE
+    # resolution per-hour (Decision 4); cap-binding still pivots on rate-level
+    # ``seasonal``. Tier-level bonuses concatenate AFTER rate-level bonuses;
+    # ``multiplier_pct`` stacking is multiplicative (rate first, then tier
+    # compounds on the rate-modified base).
+    tier_seasonal: dict | None = None
+    tier_bonuses: tuple[dict, ...] | None = None
 
 
 # ----- Loader ---------------------------------------------------------------
@@ -299,7 +321,8 @@ def self_consumption_relevant(
     utility = db.get("utilities", {}).get(utility_key)
     if utility is not None:
         rate = find_active(utility.get("rates") or [], valid_date)
-        if rate is not None and rate.get("cap_mode") and rate.get("cap_rules"):
+        # v0.22.0 — schema 1.5.0: cap activation = non-empty `cap_rules`.
+        if rate is not None and rate.get("cap_rules"):
             cap_rules = rate["cap_rules"]
             if find_rule(cap_rules, kw, True) is not find_rule(cap_rules, kw, False):
                 return True
@@ -726,8 +749,10 @@ def resolve_tariff_at(
                 f"{tier['base_model']!r}"
             )
 
+    # v0.22.0 — schema 1.5.0: cap activation by non-empty `cap_rules` only.
+    # `[]` (empty array) and missing key both → no cap.
     cap_rp_kwh: float | None = None
-    if rate.get("cap_mode") and rate.get("cap_rules"):
+    if rate.get("cap_rules"):
         cap_rule = find_rule(rate["cap_rules"], kw, eigenverbrauch)
         if cap_rule is not None:
             cap_rp_kwh = float(cap_rule["cap_rp_kwh"])
@@ -759,13 +784,34 @@ def resolve_tariff_at(
 
     tier_applies_when = tier.get("applies_when") or None
 
-    # Schema (oneOf: [number, null]) permits null/missing for hkn_structure
-    # in {"none", "bundled"} — those tiers don't carry an additive HKN bonus,
-    # so the value is "not applicable". Coerce to 0.0 at the boundary; the
-    # importer's _resolve_hkn_for_hour short-circuits before reading this on
-    # non-additive_optin tiers, so 0.0 is unobservable for those paths.
+    # v0.22.0 — schema 1.5.0 rate-level HKN defaults. When a tier omits
+    # `hkn_structure` / `hkn_rp_kwh`, the resolver inherits the rate-level
+    # default. Curators dedupe homogeneous tiers in the importer pipeline
+    # by lifting common values to the rate-level default; heterogeneous
+    # tiers each declare their own. Schema (oneOf: [number, null]) permits
+    # null/missing for `hkn_rp_kwh` in {"none", "bundled"} — those tiers
+    # don't carry an additive HKN bonus, so the value is "not applicable".
+    # Coerce to 0.0 at the boundary; the importer's _resolve_hkn_for_hour
+    # short-circuits before reading this on non-additive_optin tiers.
+    rate_hkn_struct_default = rate.get("hkn_structure_default") or "none"
+    rate_hkn_rp_kwh_default = rate.get("hkn_rp_kwh_default")
+    tier_hkn_struct = tier.get("hkn_structure") or rate_hkn_struct_default
     raw_hkn = tier.get("hkn_rp_kwh")
+    if raw_hkn is None:
+        raw_hkn = rate_hkn_rp_kwh_default
     hkn_rp_kwh_value = float(raw_hkn) if raw_hkn is not None else 0.0
+
+    # v0.22.0 — schema 1.5.0 tier-level seasonal + bonuses overrides.
+    # Both are optional and additive: ``tier_seasonal`` overrides
+    # rate-level ``seasonal`` for base-rate resolution only (cap binding
+    # still uses rate-level per Decision 4); ``tier_bonuses`` is
+    # concatenated after rate-level ``bonuses`` at evaluation time
+    # (multiplier_pct stacks multiplicatively in iteration order).
+    tier_seasonal = tier.get("seasonal")
+    raw_tier_bonuses = tier.get("bonuses")
+    tier_bonuses_loaded: tuple[dict, ...] | None = (
+        tuple(raw_tier_bonuses) if raw_tier_bonuses else None
+    )
 
     return ResolvedTariff(
         utility_key=utility_key,
@@ -776,8 +822,7 @@ def resolve_tariff_at(
         fixed_ht_rp_kwh=tier.get("fixed_ht_rp_kwh"),
         fixed_nt_rp_kwh=tier.get("fixed_nt_rp_kwh"),
         hkn_rp_kwh=hkn_rp_kwh_value,
-        hkn_structure=tier["hkn_structure"],
-        cap_mode=bool(rate.get("cap_mode", False)),
+        hkn_structure=tier_hkn_struct,
         cap_rp_kwh=cap_rp_kwh,
         federal_floor_rp_kwh=federal_floor,
         federal_floor_label=floor_lbl,
@@ -791,6 +836,10 @@ def resolve_tariff_at(
         user_inputs_decl=user_inputs_decl,
         hkn_cases=hkn_cases_loaded,
         tier_applies_when=tier_applies_when,
+        hkn_structure_default=rate_hkn_struct_default,
+        hkn_rp_kwh_default=rate_hkn_rp_kwh_default,
+        tier_seasonal=tier_seasonal,
+        tier_bonuses=tier_bonuses_loaded,
     )
 
 

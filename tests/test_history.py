@@ -246,9 +246,10 @@ class TestDeriveBilling:
 
         from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
 
-        # Bundled rates start 2026-01-01.
+        # v1.5.0 bundled data: EKZ + AEW now carry historical rate windows.
+        # Pick a utility with only 2026+ rates (e.g. bkw) and a date before that.
         with pytest.raises(LookupError):
-            _derive_billing("ekz", "2025-06-01")
+            _derive_billing("bkw", "2025-06-01")
 
 
 class TestHknGate:

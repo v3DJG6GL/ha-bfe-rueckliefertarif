@@ -71,7 +71,6 @@ def effective_rp_kwh_breakdown(
     *,
     federal_floor_rp_kwh: float | None,
     cap_rp_kwh: float | None,
-    cap_mode: bool = False,
 ) -> tuple[float, float, float]:
     """Decomposed effective rate: ``(rate, base_after_floor, applied_hkn)``.
 
@@ -83,11 +82,16 @@ def effective_rp_kwh_breakdown(
     already resolved — typically ``max(federal_floor, utility_floor)``.
     The name is historical; this function does not distinguish the
     floor's source.
+
+    Schema 1.5.0 (v0.22.0) — cap activation is signaled solely by
+    ``cap_rp_kwh is not None``. The legacy ``cap_mode`` boolean was
+    dropped; resolvers now derive the cap from a non-empty ``cap_rules``
+    array at the rate-window level.
     """
     floor = federal_floor_rp_kwh or 0.0
     base = max(base_input_rp_kwh, floor)
 
-    if not cap_mode or cap_rp_kwh is None:
+    if cap_rp_kwh is None:
         return base + hkn_rp_kwh, base, hkn_rp_kwh
     if base >= cap_rp_kwh:
         return base, base, 0.0
@@ -101,7 +105,6 @@ def effective_rp_kwh(
     *,
     federal_floor_rp_kwh: float | None,
     cap_rp_kwh: float | None,
-    cap_mode: bool = False,
 ) -> float:
     """Effective Rückliefervergütung in Rp/kWh.
 
@@ -114,9 +117,11 @@ def effective_rp_kwh(
     Abs. 3 Bst. e) acts as a payment cap is a per-utility commercial choice —
     most Swiss utilities pay base + HKN additively without enforcing the cap;
     only EKZ, Groupe E, and Primeo apply it strictly per their published
-    2026 terms (those ship with ``cap_mode=true`` in tariffs.json).
+    2026 terms (those ship with a non-empty ``cap_rules`` array in
+    ``tariffs.json``).
 
-    When ``cap_mode`` is True, the EKZ-style two-clause cap rule applies:
+    When the cap is active (``cap_rp_kwh is not None``), the EKZ-style
+    two-clause cap rule applies:
     - If base alone already meets/exceeds the cap → HKN forfeited entirely.
     - Otherwise → HKN reduced just enough to keep base + HKN ≤ cap.
     """
@@ -125,7 +130,6 @@ def effective_rp_kwh(
         hkn_rp_kwh,
         federal_floor_rp_kwh=federal_floor_rp_kwh,
         cap_rp_kwh=cap_rp_kwh,
-        cap_mode=cap_mode,
     )
     return rate
 

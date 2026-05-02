@@ -59,7 +59,6 @@ class TestSetOverridePath:
                         "hkn_rp_kwh": 0.0,
                         "hkn_structure": "none",
                     }],
-                    "cap_mode": False,
                 }],
             }},
         }))
@@ -172,7 +171,7 @@ class TestScanHistoryForDrift:
 
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [{
                 "key": "k", "type": "enum", "default": "x",
@@ -195,7 +194,7 @@ class TestScanHistoryForDrift:
 
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [
                 {"key": "k", "type": "enum", "default": "x",
@@ -224,7 +223,7 @@ class TestScanHistoryForDrift:
 
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [{
                 "key": "k", "type": "enum", "default": "new1",
@@ -252,7 +251,7 @@ class TestScanHistoryForDrift:
 
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [],
         }]
@@ -278,13 +277,13 @@ class TestScanHistoryForDrift:
         rates = [
             {
                 "valid_from": "2026-01-01", "valid_to": "2027-01-01",
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [],
                 "user_inputs": common_decl,
             },
             {
                 "valid_from": "2027-01-01", "valid_to": None,
-                "settlement_period": "quartal", "cap_mode": False,
+                "settlement_period": "quartal",
                 "power_tiers": [],
                 "user_inputs": common_decl,
             },
@@ -306,7 +305,7 @@ class TestScanHistoryForDrift:
 
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [{
                 "key": "k", "type": "enum", "default": "x",
@@ -374,7 +373,7 @@ class TestTariffDriftRepairFlow:
         # Synthetic rate window: declares a renamed key the stored entry doesn't have.
         rates = [{
             "valid_from": "2027-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [{
                 "key": "renamed", "type": "enum", "default": "fix",
@@ -494,7 +493,6 @@ class TestRemoteSchemaFetch:
                         "hkn_rp_kwh": 0.0,
                         "hkn_structure": "none",
                     }],
-                    "cap_mode": False,
                 }],
             }},
         }
@@ -684,9 +682,11 @@ class TestRemoteSchemaFetch:
         )
         from custom_components.bfe_rueckliefertarif.tariffs_db import get_source
 
-        # Tariffs payload that violates v1.4.x: rate without required `cap_mode`.
+        # Tariffs payload that violates v1.5.0: rate is missing the
+        # required `power_tiers` array (schema 1.5.0 dropped `cap_mode`,
+        # but `power_tiers` remains required).
         bad_tariffs = {
-            "schema_version": "1.4.0",
+            "schema_version": "1.5.0",
             "federal_minimum": [{
                 "valid_from": "2026-01-01", "valid_to": None,
                 "rules": [{"kw_min": 0, "kw_max": 30,
@@ -696,7 +696,7 @@ class TestRemoteSchemaFetch:
                 "name_de": "Test",
                 "homepage": "https://example.com",
                 "rates": [{
-                    # Missing required `cap_mode` and `power_tiers`.
+                    # Missing required `power_tiers`.
                     "valid_from": "2026-01-01", "valid_to": None,
                     "settlement_period": "quartal",
                 }],

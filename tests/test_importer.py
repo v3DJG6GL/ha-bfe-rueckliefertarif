@@ -50,12 +50,19 @@ def _make_resolved(
     ht_window: dict | None = None,
     seasonal: dict | None = None,
     hkn_rp_kwh: float = 0.0,
-    cap_mode: bool = False,
     cap_rp_kwh: float | None = None,
     federal_floor_rp_kwh: float | None = 6.00,
     price_floor_rp_kwh: float | None = None,
+    bonuses: tuple[dict, ...] | None = None,
+    tier_seasonal: dict | None = None,
+    tier_bonuses: tuple[dict, ...] | None = None,
 ) -> ResolvedTariff:
-    """Build a ResolvedTariff for tests without going through tariffs.json."""
+    """Build a ResolvedTariff for tests without going through tariffs.json.
+
+    v0.22.0: dropped legacy ``cap_mode``; cap activation = ``cap_rp_kwh``
+    set. Added ``bonuses`` / ``tier_seasonal`` / ``tier_bonuses`` so tier-
+    level overrides can be exercised without round-tripping JSON.
+    """
     return ResolvedTariff(
         utility_key="test",
         valid_from="2026-01-01",
@@ -66,7 +73,6 @@ def _make_resolved(
         fixed_nt_rp_kwh=fixed_nt_rp_kwh,
         hkn_rp_kwh=hkn_rp_kwh,
         hkn_structure="additive_optin" if hkn_rp_kwh > 0 else "none",
-        cap_mode=cap_mode,
         cap_rp_kwh=cap_rp_kwh,
         federal_floor_rp_kwh=federal_floor_rp_kwh,
         federal_floor_label="<30 kW",
@@ -75,6 +81,9 @@ def _make_resolved(
         tariffs_json_source="bundled",
         ht_window=ht_window,
         seasonal=seasonal,
+        bonuses=bonuses,
+        tier_seasonal=tier_seasonal,
+        tier_bonuses=tier_bonuses,
     )
 
 
@@ -133,7 +142,7 @@ class TestQuarterlyMode:
         expected = effective_rp_kwh(
             chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
             federal_floor_rp_kwh=6.00,  # ≤30 kW small-band floor
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         assert rates.pop() == pytest.approx(expected)
 
@@ -147,7 +156,7 @@ class TestQuarterlyMode:
         q_rate_rp = effective_rp_kwh(
             chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
             federal_floor_rp_kwh=6.00,
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         total_kwh = sum(kwh.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
@@ -225,7 +234,7 @@ class TestMonthlyMode:
         q_rate_rp = effective_rp_kwh(
             chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
             federal_floor_rp_kwh=6.00,
-            cap_rp_kwh=None, cap_mode=False,
+            cap_rp_kwh=None,
         )
         total_kwh = sum(monthly_totals.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
@@ -304,7 +313,6 @@ class TestFixedMode:
             resolved=_make_resolved(
                 base_model="rmp_quartal",
                 hkn_rp_kwh=5.0,
-                cap_mode=True,
                 cap_rp_kwh=10.96,  # ≤100 kW mit EV
             ),
         )
@@ -343,7 +351,6 @@ class TestFixedHtNtMode:
                 fixed_nt_rp_kwh=self.EKZ_NT_RP,
                 ht_window=self.EKZ_HT_WINDOW,
                 hkn_rp_kwh=self.EKZ_HKN_RP,
-                cap_mode=False,
                 cap_rp_kwh=None,
                 # Pre-2026: no federal floor existed. Test against the
                 # math-only signal, not the AS 2025 138 reform.
@@ -1148,3 +1155,129 @@ class TestBatchDPerHourBonusesAndHknCases:
         )
         assert b_off == 0.0
         assert b_on == pytest.approx(1.0)
+
+
+# ----- v0.22.0 — schema 1.5.0 tier-level overlays -------------------------
+
+
+class TestSeasonAtTierOverride:
+    """v0.22.0 — `_season_at(rt, h, prefer_tier_seasonal=True)` reads
+    `rt.tier_seasonal` when set, falling back to `rt.seasonal` otherwise.
+    The default keyword (False) preserves cap-binding's rate-level scope."""
+
+    def _hour(self, year, month, day, hour):
+        from zoneinfo import ZoneInfo
+        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
+        return local.astimezone(UTC)
+
+    def test_prefers_tier_when_set_and_kwarg_true(self):
+        from custom_components.bfe_rueckliefertarif.importer import _season_at
+
+        # Rate-level says Apr is winter; tier-level says Apr is summer.
+        rate_seasonal = {"summer_months": [7, 8], "winter_months": [1, 2, 3, 4, 5, 6, 9, 10, 11, 12]}
+        tier_seasonal = {"summer_months": [4, 5, 6, 7, 8, 9], "winter_months": [10, 11, 12, 1, 2, 3]}
+        rt = _make_resolved(seasonal=rate_seasonal, tier_seasonal=tier_seasonal)
+        h = self._hour(2026, 4, 15, 12)
+        assert _season_at(rt, h) == "winter"  # default scope = rate-level
+        assert _season_at(rt, h, prefer_tier_seasonal=True) == "summer"  # tier-level
+
+    def test_falls_back_to_rate_when_tier_absent(self):
+        from custom_components.bfe_rueckliefertarif.importer import _season_at
+
+        rate_seasonal = {"summer_months": [4, 5, 6, 7, 8, 9], "winter_months": [10, 11, 12, 1, 2, 3]}
+        rt = _make_resolved(seasonal=rate_seasonal, tier_seasonal=None)
+        h = self._hour(2026, 4, 15, 12)
+        # With or without prefer_tier_seasonal, falls through to rate-level.
+        assert _season_at(rt, h) == "summer"
+        assert _season_at(rt, h, prefer_tier_seasonal=True) == "summer"
+
+    def test_returns_none_when_neither_seasonal(self):
+        from custom_components.bfe_rueckliefertarif.importer import _season_at
+
+        rt = _make_resolved(seasonal=None, tier_seasonal=None)
+        h = self._hour(2026, 4, 15, 12)
+        assert _season_at(rt, h) is None
+        assert _season_at(rt, h, prefer_tier_seasonal=True) is None
+
+
+class TestBonusConcatRateThenTier:
+    """v0.22.0 — `_resolve_bonuses_for_hour_detailed` iterates rate-level
+    bonuses first, tier-level second. Multiplier_pct stacks compound in
+    iteration order (rate-then-tier)."""
+
+    def _cfg(self, *, bonuses=None, tier_bonuses=None, hkn=0.0):
+        return TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kwp=10.0,
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=hkn,
+            resolved=_make_resolved(
+                base_model="rmp_quartal",
+                bonuses=bonuses,
+                tier_bonuses=tier_bonuses,
+            ),
+        )
+
+    def test_rate_only_bonuses_apply(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _resolve_bonuses_for_hour_detailed,
+        )
+        cfg = self._cfg(
+            bonuses=({"kind": "additive_rp_kwh", "name": "R", "rate_rp_kwh": 0.5},),
+            tier_bonuses=None,
+        )
+        total, detail = _resolve_bonuses_for_hour_detailed(cfg, None, 10.0, 0.0)
+        assert total == pytest.approx(0.5)
+        assert len(detail) == 1
+        assert detail[0]["name"] == "R"
+
+    def test_tier_only_bonuses_apply(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _resolve_bonuses_for_hour_detailed,
+        )
+        cfg = self._cfg(
+            bonuses=None,
+            tier_bonuses=({"kind": "additive_rp_kwh", "name": "T", "rate_rp_kwh": 0.3},),
+        )
+        total, detail = _resolve_bonuses_for_hour_detailed(cfg, None, 10.0, 0.0)
+        assert total == pytest.approx(0.3)
+        assert detail[0]["name"] == "T"
+
+    def test_rate_and_tier_concat_in_order(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _resolve_bonuses_for_hour_detailed,
+        )
+        cfg = self._cfg(
+            bonuses=({"kind": "additive_rp_kwh", "name": "R", "rate_rp_kwh": 0.5},),
+            tier_bonuses=({"kind": "additive_rp_kwh", "name": "T", "rate_rp_kwh": 0.3},),
+        )
+        total, detail = _resolve_bonuses_for_hour_detailed(cfg, None, 10.0, 0.0)
+        assert total == pytest.approx(0.8)
+        assert [d["name"] for d in detail] == ["R", "T"]   # rate first, tier after
+
+    def test_multiplier_pct_stacks_multiplicatively(self):
+        # Rate +5% then Tier +3% on a base of (10 + 0): expect ~+8.15%.
+        # Iteration 1 (rate, mp=105): current=10, contribution=10*0.05=0.5; acc=0.5
+        # Iteration 2 (tier, mp=103): current=10+0.5=10.5, contribution=10.5*0.03=0.315; acc=0.815
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _resolve_bonuses_for_hour_detailed,
+        )
+        cfg = self._cfg(
+            bonuses=({"kind": "multiplier_pct", "name": "R", "multiplier_pct": 105.0},),
+            tier_bonuses=({"kind": "multiplier_pct", "name": "T", "multiplier_pct": 103.0},),
+        )
+        total, _detail = _resolve_bonuses_for_hour_detailed(cfg, None, 10.0, 0.0)
+        assert total == pytest.approx(0.815, rel=1e-6)
+
+    def test_tier_bonuses_empty_handled(self):
+        from custom_components.bfe_rueckliefertarif.importer import (
+            _resolve_bonuses_for_hour_detailed,
+        )
+        cfg = self._cfg(
+            bonuses=({"kind": "additive_rp_kwh", "name": "R", "rate_rp_kwh": 0.5},),
+            tier_bonuses=(),
+        )
+        total, detail = _resolve_bonuses_for_hour_detailed(cfg, None, 10.0, 0.0)
+        assert total == pytest.approx(0.5)
+        assert len(detail) == 1
+

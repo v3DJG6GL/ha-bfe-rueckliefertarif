@@ -226,7 +226,6 @@ def _make_resolved() -> ResolvedTariff:
         fixed_nt_rp_kwh=None,
         hkn_rp_kwh=0.0,
         hkn_structure="none",
-        cap_mode=False,
         cap_rp_kwh=None,
         federal_floor_rp_kwh=6.00,
         federal_floor_label="<30 kW",
@@ -332,7 +331,6 @@ def _config_dict(**overrides) -> dict:
         "billing": "quartal",
         "floor_label": "<30 kW",
         "floor_rp_kwh": 6.00,
-        "cap_mode": True,
         "cap_rp_kwh": 10.96,
         "tariffs_version": "1.0.0",
         "tariffs_source": "bundled",
@@ -390,7 +388,7 @@ class TestFormatRecomputeNotification:
         assert "**Federal floor (Mindestvergütung):** <30 kW (6.00 Rp/kWh)" in body
         # Cap value is now embedded in the line.
         assert (
-            "**Cap mode (Anrechenbarkeitsgrenze):** Active — current cap "
+            "**Cap (Anrechenbarkeitsgrenze):** Active — current cap "
             "10.96 Rp/kWh (25.0 kWp, EV=Yes)"
         ) in body
         # Slim 6-column table headers + unit-disclaimer line.
@@ -429,15 +427,16 @@ class TestFormatRecomputeNotification:
         assert "| 2026Q1 |" in body
 
     def test_cap_off_omitted_entirely(self):
-        # v0.17.1 — Issue 8.4: when cap_mode is False, the line is dropped
+        # v0.17.1 — Issue 8.4: when no cap is active, the line is dropped
         # entirely (mirrors HKN: don't echo state with no impact).
+        # v0.22.0 — schema 1.5.0: cap activation = cap_rp_kwh present.
         rows = [_row("2026Q1", 10.0, 100.0, 10.0)]
         report = _RecomputeReport(
             rows=rows, quarters_recomputed=1,
-            config=_config_dict(cap_mode=False, cap_rp_kwh=None),
+            config=_config_dict(cap_rp_kwh=None),
         )
         _, body = _format_recompute_notification(report)
-        assert "Cap mode (Anrechenbarkeitsgrenze):" not in body
+        assert "Cap (Anrechenbarkeitsgrenze):" not in body
         assert "current cap" not in body
 
     def test_truncation_at_24_periods(self):
@@ -585,7 +584,6 @@ def _row_with_meta(
     hkn_optin: bool | None = None,
     billing: str | None = None,
     base_model: str | None = None,
-    cap_mode: bool | None = None,
     cap_rp_kwh: float | None = None,
     floor_label: str | None = None,
     floor_rp_kwh: float | None = None,
@@ -609,7 +607,6 @@ def _row_with_meta(
         hkn_optin_at_period=hkn_optin,
         billing_at_period=billing,
         base_model_at_period=base_model,
-        cap_mode_at_period=cap_mode,
         cap_rp_kwh_at_period=cap_rp_kwh,
         floor_label_at_period=floor_label,
         floor_rp_kwh_at_period=floor_rp_kwh,
@@ -645,13 +642,13 @@ class TestPerConfigGrouping:
                 intended_hkn=3.00,
                 utility_key="ekz", utility_name="EKZ",
                 kwp=8.0, eigenverbrauch=True, hkn_optin=True, billing="quartal",
-                base_model="rmp_quartal", cap_mode=True, cap_rp_kwh=10.96,
+                base_model="rmp_quartal", cap_rp_kwh=10.96,
             ),
             _row_with_meta(
                 "2025Q4", 8.0, 335.38, 26.83, base=8.0, hkn=0.0,
                 utility_key="age_sa", utility_name="Acqua Gas Elettricità SA Chiasso",
                 kwp=105.0, eigenverbrauch=True, hkn_optin=False, billing="quartal",
-                base_model="fixed_flat", cap_mode=False,
+                base_model="fixed_flat",
             ),
         ]
         report = _RecomputeReport(rows=rows, quarters_recomputed=2, config=_config_dict())
@@ -674,11 +671,12 @@ class TestPerConfigGrouping:
         # v0.17.0 — model labels are now localised.
         assert "**Tariff model:** Reference market price (quarterly)" in body
         assert "**Tariff model:** Fixed flat rate" in body
-        assert "Cap mode (Anrechenbarkeitsgrenze):** Active — cap 10.96 Rp/kWh" in body
-        # v0.17.1 — cap_mode=False (age_sa group) emits no cap line at all.
-        # The "today" block (from _config_dict default) has cap_mode=True →
-        # one occurrence; ekz group has cap_mode=True → another. age_sa = 0.
-        assert body.count("Cap mode (Anrechenbarkeitsgrenze):") == 2
+        assert "Cap (Anrechenbarkeitsgrenze):** Active — cap 10.96 Rp/kWh" in body
+        # v0.22.0 — cap activation = `cap_rp_kwh` set. age_sa group has no
+        # cap (cap_rp_kwh is None), so its bullet block emits no cap line.
+        # The "today" block (from _config_dict default) has cap_rp_kwh=10.96
+        # → one occurrence; ekz group has cap_rp_kwh=10.96 → another. age_sa = 0.
+        assert body.count("Cap (Anrechenbarkeitsgrenze):") == 2
 
     def test_grouping_preserves_newest_first_order(self):
         rows = [
@@ -1291,7 +1289,6 @@ class TestEigenverbrauchAnnotation:
                         "rates": [{
                             "valid_from": "2025-01-01", "valid_to": None,
                             "settlement_period": "quartal",
-                            "cap_mode": False,
                             "power_tiers": [{"kw_min": 0, "kw_max": None,
                                              "base_model": "fixed_flat",
                                              "fixed_rp_kwh": 8.0,

@@ -586,10 +586,10 @@ class TestPickValueLabel:
             "key": "model",
             "type": "enum",
             "values": ["fixpreis", "rmp"],
-            "value_labels_de": {"fixpreis": "AEW Fixpreis", "rmp": "RMP"},
+            "value_labels_de": {"fixpreis": "fixpreis", "rmp": "RMP"},
             "value_labels_en": {"fixpreis": "AEW Fixed", "rmp": "RMP"},
         }
-        assert pick_value_label(decl, "fixpreis", "de") == "AEW Fixpreis"
+        assert pick_value_label(decl, "fixpreis", "de") == "fixpreis"
         assert pick_value_label(decl, "fixpreis", "en") == "AEW Fixed"
 
     def test_falls_back_to_de_then_en(self):
@@ -845,7 +845,6 @@ class TestSelfConsumptionRelevant:
                             "valid_from": "2025-01-01",
                             "valid_to": "2026-01-01",
                             "settlement_period": "quartal",
-                            "cap_mode": False,
                             "power_tiers": [
                                 {"kw_min": 0, "kw_max": None,
                                  "base_model": "fixed_flat",
@@ -891,7 +890,6 @@ class TestSelfConsumptionRelevant:
                             "valid_from": "2026-01-01",
                             "valid_to": None,
                             "settlement_period": "quartal",
-                            "cap_mode": True,
                             "cap_rules": [
                                 {"kw_min": 0, "kw_max": None,
                                  "self_consumption": True, "cap_rp_kwh": 12.0},
@@ -916,28 +914,33 @@ class TestSelfConsumptionRelevant:
 
 
 class TestFindTierDryRun:
-    """v0.13.0 — A2.3 / O4 defensive check at form submit. AEW kW=10 +
-    'Referenzmarktpreis' is the canonical hole: no covering tier."""
+    """v0.13.0 — A2.3 / O4 defensive check at form submit.
+
+    v0.22.0 — schema 1.5.0 AEW data: tiers `fixed_flat` (kw_min=2..30)
+    and `rmp_quartal` (kw_min=2..3000) both have ``kw_min=2`` — kW below
+    that, or above the rmp tier's 3000 cap, has no covering tier and
+    should be rejected at submit time.
+    """
 
     def test_resolvable_combination_passes(self):
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _find_tier_dry_run,
         )
-        # AEW kW=10 + AEW Fixpreis matches tier 0 (kw 0-30, fixpreis).
+        # AEW kW=10 + fixpreis matches the fixed_flat tier (kw 2-30, fixpreis).
         assert _find_tier_dry_run(
             "aew", "2026-04-01", 10.0,
-            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            {"fixpreis_rmp": "fixpreis"},
         ) is True
 
-    def test_aew_kw10_rmp_combination_rejected(self):
+    def test_aew_below_kw_min_rejected(self):
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _find_tier_dry_run,
         )
-        # The canonical AEW hole: kW=10 + Referenzmarktpreis covers
-        # neither tier 0 (clause mismatch) nor tier 1 (kW out of range).
+        # kW=1 falls below both AEW tiers' kw_min=2 — neither covers,
+        # regardless of user_input choice.
         assert _find_tier_dry_run(
-            "aew", "2026-04-01", 10.0,
-            {"aew_fixpreis_rmp": "Referenzmarktpreis"},
+            "aew", "2026-04-01", 1.0,
+            {"fixpreis_rmp": "rmp"},
         ) is False
 
     def test_no_rate_window_returns_true_permissive(self):
@@ -993,16 +996,16 @@ class TestKwAwareUserInputFiltering:
 
     def _aew_2026_decl(self) -> dict:
         return {
-            "key": "aew_fixpreis_rmp",
+            "key": "fixpreis_rmp",
             "type": "enum",
-            "default": "AEW Fixpreis",
-            "values": ["AEW Fixpreis", "Referenzmarktpreis"],
+            "default": "fixpreis",
+            "values": ["fixpreis", "rmp"],
         }
 
     def test_aew_kw31_filters_to_rmp_only(self):
-        # AEW 2026: tier 0 covers [0, 30) with "AEW Fixpreis"; tier 1
-        # covers [30, 3000) with "Referenzmarktpreis". At kW=31 only tier 1
-        # resolves, so "AEW Fixpreis" must be filtered out.
+        # AEW 2026: tier 0 covers [0, 30) with "fixpreis"; tier 1
+        # covers [30, 3000) with "rmp". At kW=31 only tier 1
+        # resolves, so "fixpreis" must be filtered out.
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _add_user_input_fields_namespaced,
         )
@@ -1011,18 +1014,19 @@ class TestKwAwareUserInputFiltering:
         _add_user_input_fields_namespaced(
             schema_dict,
             (self._aew_2026_decl(),),
-            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            {"fixpreis_rmp": "fixpreis"},
             "de",
             gate_utility="aew",
             gate_valid_from="2026-04-01",
             gate_kw=31.0,
         )
-        assert self._enum_options(schema_dict, "aew_fixpreis_rmp") == [
-            "Referenzmarktpreis"
+        assert self._enum_options(schema_dict, "fixpreis_rmp") == [
+            "rmp"
         ]
 
-    def test_aew_kw15_filters_to_fixpreis_only(self):
-        # At kW=15 only tier 0 resolves (kw_max=30 excludes tier 1).
+    def test_aew_kw15_offers_both_options(self):
+        # v1.5.0 AEW data: at kW=15 BOTH tiers cover (fixed_flat 2..30 AND
+        # rmp_quartal 2..3000), so the kw-aware filter exposes BOTH options.
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _add_user_input_fields_namespaced,
         )
@@ -1031,14 +1035,14 @@ class TestKwAwareUserInputFiltering:
         _add_user_input_fields_namespaced(
             schema_dict,
             (self._aew_2026_decl(),),
-            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            {"fixpreis_rmp": "fixpreis"},
             "de",
             gate_utility="aew",
             gate_valid_from="2026-04-01",
             gate_kw=15.0,
         )
-        assert self._enum_options(schema_dict, "aew_fixpreis_rmp") == [
-            "AEW Fixpreis"
+        assert sorted(self._enum_options(schema_dict, "fixpreis_rmp")) == [
+            "fixpreis", "rmp",
         ]
 
     def test_no_gate_args_no_filtering(self):
@@ -1051,12 +1055,12 @@ class TestKwAwareUserInputFiltering:
         _add_user_input_fields_namespaced(
             schema_dict,
             (self._aew_2026_decl(),),
-            {"aew_fixpreis_rmp": "AEW Fixpreis"},
+            {"fixpreis_rmp": "fixpreis"},
             "de",
         )
-        assert self._enum_options(schema_dict, "aew_fixpreis_rmp") == [
-            "AEW Fixpreis",
-            "Referenzmarktpreis",
+        assert self._enum_options(schema_dict, "fixpreis_rmp") == [
+            "fixpreis",
+            "rmp",
         ]
 
     def test_filter_empty_omits_field(self, monkeypatch):

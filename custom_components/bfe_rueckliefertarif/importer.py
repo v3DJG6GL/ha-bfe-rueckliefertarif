@@ -106,7 +106,6 @@ def _apply_floor_cap_hkn(base_rp_kwh: float, cfg: TariffConfig) -> float:
         cfg.hkn_rp_kwh_resolved,
         federal_floor_rp_kwh=_effective_floor(rt),
         cap_rp_kwh=rt.cap_rp_kwh,
-        cap_mode=rt.cap_mode,
     )
 
 
@@ -124,7 +123,6 @@ def _apply_floor_cap_hkn_breakdown(
         cfg.hkn_rp_kwh_resolved,
         federal_floor_rp_kwh=_effective_floor(rt),
         cap_rp_kwh=rt.cap_rp_kwh,
-        cap_mode=rt.cap_mode,
     )
 
 
@@ -187,11 +185,21 @@ def _resolve_bonuses_for_hour_detailed(
     (skipped opt-in / when-clause-mismatched bonuses are omitted).
     """
     rt = cfg.resolved
-    if not rt.bonuses:
+    # v0.22.0 — schema 1.5.0 supports tier-level bonuses as an additive
+    # extension. Iterate rate-level first, tier-level second; multiplier_pct
+    # stacking compounds in that order (rate's +5% applied first, tier's +3%
+    # multiplies the rate-modified base → +8.15% combined).
+    #
+    # Trap 3 (deferred): both lists' `when.season` evaluates against the
+    # SAME `season` argument. When a real utility ships divergent rate/tier
+    # seasonal month splits, this single-season call will need to fork
+    # (per-bonus scope). Currently no fixture exercises that.
+    all_bonuses = (rt.bonuses or ()) + (rt.tier_bonuses or ())
+    if not all_bonuses:
         return 0.0, []
     accumulator = 0.0
     detail: list[dict] = []
-    for b in rt.bonuses:
+    for b in all_bonuses:
         when_clause = b.get("when")
         applies_when = b.get("applies_when", "always")
         if applies_when == "opt_in" and not when_clause:
@@ -234,7 +242,6 @@ def _apply_floor_cap_hkn_bonus_breakdown(
         per_hkn,
         federal_floor_rp_kwh=_effective_floor(rt),
         cap_rp_kwh=rt.cap_rp_kwh,
-        cap_mode=rt.cap_mode,
     )
     applied_bonus = _resolve_bonuses_for_hour(
         cfg, season, base_after, applied_hkn
@@ -242,15 +249,33 @@ def _apply_floor_cap_hkn_bonus_breakdown(
     return rate_billing + applied_bonus, base_after, applied_hkn, applied_bonus
 
 
-def _season_at(rt: ResolvedTariff, hour_utc: datetime) -> str | None:
-    """Hour's season per ``rt.seasonal``, or ``None`` when no overlay."""
-    if rt.seasonal is None:
+def _season_at(
+    rt: ResolvedTariff,
+    hour_utc: datetime,
+    *,
+    prefer_tier_seasonal: bool = False,
+) -> str | None:
+    """Hour's season per ``rt.seasonal`` (or ``rt.tier_seasonal`` when
+    ``prefer_tier_seasonal=True`` and the tier has its own seasonal block).
+
+    v0.22.0 (Decision 4) — base-rate resolution callers pass
+    ``prefer_tier_seasonal=True`` so a tier's seasonal override shifts the
+    base rate per-hour. All other callers (cap binding, HKN cases, bonus
+    when-clauses) leave the kwarg False so they pivot on the rate-level
+    season — keeping the cap calculation a global utility constraint.
+    Returns ``None`` when no seasonal overlay applies (or only one of
+    rate/tier is set and the other is the chosen scope).
+    """
+    seasonal = (
+        rt.tier_seasonal if (prefer_tier_seasonal and rt.tier_seasonal) else rt.seasonal
+    )
+    if seasonal is None:
         return None
     from .tariff import classify_season
     return classify_season(
         hour_utc,
-        rt.seasonal["summer_months"],
-        rt.seasonal["winter_months"],
+        seasonal["summer_months"],
+        seasonal["winter_months"],
     )
 
 
@@ -382,7 +407,13 @@ def _effective_rate_breakdown_at_hour(
     from .tariff import classify_ht
 
     rt = cfg.resolved
-    season = _season_at(rt, hour_utc)
+    # v0.22.0 — base-rate resolution honors `tier_seasonal` override
+    # (Decision 4 half: tier-level seasonal can shift the base rate
+    # per-hour). Per Trap 3 (deferred), the same `season` flows downstream
+    # into HKN cases / bonus when-clauses; splitting that into rate-level
+    # season for cap-binding evaluation is left for a future release —
+    # no real utility today has divergent rate/tier seasonal splits.
+    season = _season_at(rt, hour_utc, prefer_tier_seasonal=True)
 
     if rt.base_model == "fixed_ht_nt":
         is_ht = classify_ht(hour_utc, rt.ht_window)
@@ -448,7 +479,8 @@ def _resolve_base_at_hour(
     from .tariff import classify_ht
 
     rt = cfg.resolved
-    season = _season_at(rt, hour_utc)
+    # v0.22.0 — base-rate path; honor tier_seasonal override.
+    season = _season_at(rt, hour_utc, prefer_tier_seasonal=True)
     is_ht: bool | None = None
 
     if rt.base_model == "fixed_ht_nt":
@@ -521,7 +553,9 @@ def compute_breakdown_at(
 
     floor = _effective_floor(rt)
     floor_value = floor if floor is not None else 0.0
-    cap = rt.cap_rp_kwh if rt.cap_mode else None
+    # v0.22.0 — schema 1.5.0: cap activation = `cap_rp_kwh` set
+    # (resolver derived from non-empty `cap_rules` array).
+    cap = rt.cap_rp_kwh
 
     per_hkn = _resolve_hkn_for_hour(cfg, season)
     rate, base_after_floor, applied_hkn, applied_bonus = (
@@ -531,8 +565,11 @@ def compute_breakdown_at(
         cfg, season, base_after_floor, applied_hkn
     )
 
+    # v0.22.0 — display-side: advertise rate-level + tier-level bonuses
+    # together. Iteration order matches `_resolve_bonuses_for_hour_detailed`
+    # so per-bonus contributions in `bonuses_applied` align by index.
     bonuses_advertised: list[dict] = []
-    for b in rt.bonuses or []:
+    for b in (rt.bonuses or ()) + (rt.tier_bonuses or ()):
         kind = b.get("kind", "additive_rp_kwh")
         if kind == "additive_rp_kwh":
             value = b.get("rate_rp_kwh")
@@ -550,7 +587,7 @@ def compute_breakdown_at(
         )
 
     theoretical_total = base_after_floor + per_hkn
-    if rt.cap_mode and cap is not None:
+    if cap is not None:
         obergrenze_aktiv = theoretical_total > cap
         hkn_gekuerzt_auf = (
             max(0.0, cap - base_after_floor)

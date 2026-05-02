@@ -68,13 +68,22 @@ class TestSchemaConformance:
         assert "aew_fixpreis" not in keys
         assert "aew_rmp" not in keys
 
-    def test_cap_mode_true_implies_cap_rules(self, db):
+    def test_cap_rules_truthy_or_absent(self, db):
+        """v0.22.0 — schema 1.5.0 dropped cap_mode. Cap activation is now
+        signaled solely by a non-empty ``cap_rules`` array. Verify every
+        rate either has a non-empty cap_rules array or omits the field
+        entirely; ``cap_rules: []`` (empty) is also valid (= no cap)."""
         for ukey, u in db["utilities"].items():
             for rate in u["rates"]:
-                if rate["cap_mode"]:
-                    assert rate["cap_rules"], (
-                        f"{ukey}@{rate['valid_from']}: cap_mode=True but cap_rules empty"
+                cap_rules = rate.get("cap_rules")
+                if cap_rules:
+                    assert isinstance(cap_rules, list), (
+                        f"{ukey}@{rate['valid_from']}: cap_rules must be a list"
                     )
+                    for rule in cap_rules:
+                        assert "cap_rp_kwh" in rule, (
+                            f"{ukey}@{rate['valid_from']}: cap_rules entry missing cap_rp_kwh"
+                        )
 
 
 class TestSeasonalConsistency:
@@ -278,7 +287,8 @@ class TestResolveTariffAt:
         assert rt.utility_key == "ekz"
         assert rt.base_model == "rmp_quartal"
         assert rt.hkn_rp_kwh == 3.00
-        assert rt.cap_mode is True
+        # v0.22.0 — cap activation = `cap_rp_kwh` set (resolver derived
+        # from a non-empty `cap_rules` array).
         assert rt.cap_rp_kwh == 10.96
         assert rt.federal_floor_rp_kwh == 6.00
         assert rt.federal_floor_label == "<30 kW"
@@ -305,10 +315,11 @@ class TestResolveTariffAt:
 
     def test_aew_fixpreis_via_user_inputs(self, db):
         # AEW unified user_input gates fixed_flat vs rmp_quartal tiers.
-        # v1.2.0 bundled data: key "aew_fixpreis_rmp" with prose values.
+        # v1.5.0 bundled data: key "fixpreis_rmp" with enum values
+        # "fixpreis"/"rmp"; the fixed_flat tier covers 2..30 kW.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True,
-            user_inputs={"aew_fixpreis_rmp": "AEW Fixpreis"}, data=db,
+            user_inputs={"fixpreis_rmp": "fixpreis"}, data=db,
         )
         assert rt.base_model == "fixed_flat"
         assert rt.fixed_rp_kwh == 8.20
@@ -316,39 +327,39 @@ class TestResolveTariffAt:
         assert rt.notes is not None and len(rt.notes) >= 1
         assert rt.notes[0]["severity"] == "info"
         assert "fix" in rt.notes[0]["text"]["de"].lower()
-        assert rt.cap_mode is False
         assert rt.cap_rp_kwh is None
         # Tier's applies_when is captured for downstream introspection.
-        assert rt.tier_applies_when == {"aew_fixpreis_rmp": "AEW Fixpreis"}
+        assert rt.tier_applies_when == {"fixpreis_rmp": "fixpreis"}
 
     def test_aew_rmp_via_user_inputs_at_50kw(self, db):
-        # "Referenzmarktpreis" picks the RMP-quartal tier (kw_max=3000).
+        # "rmp" picks the RMP-quartal tier (kw_max=3000).
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=50.0, eigenverbrauch=True,
-            user_inputs={"aew_fixpreis_rmp": "Referenzmarktpreis"}, data=db,
+            user_inputs={"fixpreis_rmp": "rmp"}, data=db,
         )
         assert rt.base_model == "rmp_quartal"
         assert rt.hkn_structure == "none"
 
     def test_aew_at_30kw_requires_rmp_choice(self, db):
-        # v1.2.0 bundled data: at 30 kW only the rmp_quartal tier covers
-        # (kw_min=30..3000) and it's gated on "Referenzmarktpreis".
-        # Without that user_input the resolver finds no covering tier.
+        # v1.5.0 bundled data: at exactly 30 kW the fixed_flat tier
+        # (kw_min=2, kw_max=30, half-open) no longer covers; only the
+        # rmp_quartal tier (kw_min=2..3000) does. So the user must have
+        # picked "rmp" to get a covering tier.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=30.0, eigenverbrauch=True,
-            user_inputs={"aew_fixpreis_rmp": "Referenzmarktpreis"}, data=db,
+            user_inputs={"fixpreis_rmp": "rmp"}, data=db,
         )
         assert rt.base_model == "rmp_quartal"
-        assert rt.tier_applies_when == {"aew_fixpreis_rmp": "Referenzmarktpreis"}
+        assert rt.tier_applies_when == {"fixpreis_rmp": "rmp"}
 
     def test_aew_default_user_input_falls_back_to_declaration_default(self, db):
         # No user_inputs supplied → resolver defaults from decl.default
-        # ("AEW Fixpreis"). Same outcome as test_aew_fixpreis_via_user_inputs.
+        # ("fixpreis"). Same outcome as test_aew_fixpreis_via_user_inputs.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True, data=db,
         )
         assert rt.base_model == "fixed_flat"
-        assert rt.tier_applies_when == {"aew_fixpreis_rmp": "AEW Fixpreis"}
+        assert rt.tier_applies_when == {"fixpreis_rmp": "fixpreis"}
 
     def test_iwb_bundled_hkn(self, db):
         rt = resolve_tariff_at(
@@ -358,7 +369,7 @@ class TestResolveTariffAt:
         # IWB pays 12.95 — above the 10.96 small-band ceiling — empirical proof
         # that the cap is a *cost-recovery ceiling*, not a payment cap on producers.
         assert rt.fixed_rp_kwh > 10.96
-        assert rt.cap_mode is False
+        assert rt.cap_rp_kwh is None
 
     def test_unknown_utility_raises(self, db):
         with pytest.raises(KeyError):
@@ -368,10 +379,12 @@ class TestResolveTariffAt:
             )
 
     def test_no_active_rate_raises_lookup_error(self, db):
-        # Bundled rates start 2026-01-01; pre-2026 → LookupError.
+        # Many utilities have only 2026+ rate windows; pre-2026 → LookupError.
+        # (EKZ + AEW now carry historical 2017/2025 windows; pick a utility
+        # with no historical data for a clean miss.)
         with pytest.raises(LookupError):
             resolve_tariff_at(
-                "ekz", date(2025, 6, 1), kw=25.0,
+                "bkw", date(2025, 6, 1), kw=25.0,
                 eigenverbrauch=True, data=db,
             )
 
@@ -381,7 +394,7 @@ class TestResolveTariffAt:
         # must coerce null to 0.0 at the boundary (the dataclass field is float).
         synthetic = _synthetic_db("synth", [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [{
                 "kw_min": 0, "kw_max": None,
                 "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
@@ -401,7 +414,7 @@ class TestResolveTariffAt:
         # hkn_structure in {none, bundled} the field can be omitted entirely.
         synthetic = _synthetic_db("synth", [{
             "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [{
                 "kw_min": 0, "kw_max": None,
                 "base_model": "rmp_quartal",
@@ -452,7 +465,7 @@ class TestResolveSettlementPeriodStunde:
                         {"kw_min": 0, "kw_max": None, "base_model": "rmp_quartal",
                          "hkn_rp_kwh": 2.0, "hkn_structure": "additive_optin"}
                     ],
-                    "cap_mode": False, "cap_rules": None,
+                    "cap_rules": None,
                 }
             ],
         )
@@ -484,7 +497,7 @@ class TestPerTierBaseModelVariation:
                         {"kw_min": 150, "kw_max": None, "base_model": "rmp_quartal",
                          "hkn_rp_kwh": 2.0, "hkn_structure": "additive_optin"},
                     ],
-                    "cap_mode": False, "cap_rules": None,
+                    "cap_rules": None,
                 }
             ],
         )
@@ -535,7 +548,7 @@ class TestRateWindowNotes:
                          "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 2.0,
                          "hkn_structure": "additive_optin"}
                     ],
-                    "cap_mode": False, "cap_rules": None,
+                    "cap_rules": None,
                     "notes": [
                         {
                             "severity": "warning",
@@ -572,7 +585,7 @@ class TestRateWindowNotes:
                          "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 0.0,
                          "hkn_structure": "none"}
                     ],
-                    "cap_mode": False, "cap_rules": None,
+                    "cap_rules": None,
                     "notes": [
                         {
                             "valid_from": "2026-01-01", "valid_to": "2026-04-01",
@@ -621,7 +634,7 @@ class TestRateWindowNotes:
                          "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 0.0,
                          "hkn_structure": "none"}
                     ],
-                    "cap_mode": False, "cap_rules": None,
+                    "cap_rules": None,
                 }
             ],
         )
@@ -647,7 +660,7 @@ class TestRateWindowBonuses:
                  "fixed_rp_kwh": 9.0, "hkn_rp_kwh": 2.0,
                  "hkn_structure": "additive_optin"}
             ],
-            "cap_mode": False, "cap_rules": None,
+            "cap_rules": None,
             "bonuses": [
                 {"name": "Eco", "rate_rp_kwh": rate_rp_kwh,
                  "applies_when": applies_when, **extra}
@@ -814,7 +827,6 @@ class TestResolveTariffAtBatchD:
         rate = {
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
-            "cap_mode": False,
             "power_tiers": [
                 {
                     "kw_min": 0, "kw_max": None, "base_model": "fixed_flat",
@@ -1021,7 +1033,6 @@ class TestComputeUserInputsPeriods:
             "valid_from": "2026-01-01",
             "valid_to": "2027-01-01",
             "settlement_period": "quartal",
-            "cap_mode": False,
             "power_tiers": [],
         }])
         # Span is entirely BEFORE the only rate window.
@@ -1034,7 +1045,6 @@ class TestComputeUserInputsPeriods:
             "valid_from": "2026-01-01",
             "valid_to": None,
             "settlement_period": "quartal",
-            "cap_mode": False,
             "power_tiers": [],
             "user_inputs": [
                 {"key": "k", "type": "boolean", "default": True,
@@ -1057,13 +1067,13 @@ class TestComputeUserInputsPeriods:
         rate_a = {
             "valid_from": "2026-01-01",
             "valid_to": "2027-01-01",
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [], "user_inputs": common,
         }
         rate_b = {
             "valid_from": "2027-01-01",
             "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [], "user_inputs": common,
         }
         self._patch_db(monkeypatch, [rate_a, rate_b])
@@ -1082,7 +1092,7 @@ class TestComputeUserInputsPeriods:
         rate_a = {
             "valid_from": "2026-01-01",
             "valid_to": "2027-01-01",
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [
                 {"key": "old_key", "type": "enum", "default": "fix",
@@ -1092,7 +1102,7 @@ class TestComputeUserInputsPeriods:
         rate_b = {
             "valid_from": "2027-01-01",
             "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [
                 {"key": "new_key", "type": "enum", "default": "fix",
@@ -1117,7 +1127,7 @@ class TestComputeUserInputsPeriods:
         rate = {
             "valid_from": "2025-01-01",
             "valid_to": "2028-01-01",
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [],
             "user_inputs": [{"key": "k", "type": "boolean",
                              "default": True, "label_de": "K"}],
@@ -1138,7 +1148,7 @@ class TestComputeUserInputsPeriods:
                  "label_de": "K"}]
         rate_a = {
             "valid_from": "2026-01-01", "valid_to": "2027-01-01",
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [{"kw_min": 0, "kw_max": None,
                              "base_model": "fixed_flat",
                              "fixed_rp_kwh": 8.0,
@@ -1147,7 +1157,7 @@ class TestComputeUserInputsPeriods:
         }
         rate_b = {
             "valid_from": "2027-01-01", "valid_to": None,
-            "settlement_period": "quartal", "cap_mode": False,
+            "settlement_period": "quartal",
             "power_tiers": [{"kw_min": 0, "kw_max": None,
                              "base_model": "fixed_flat",
                              "fixed_rp_kwh": 9.5,  # different rate
@@ -1199,7 +1209,7 @@ class TestSelfConsumptionRelevantPublicExport:
             "utilities": {
                 "syn": {"name_de": "Syn", "rates": [{
                     "valid_from": "2026-01-01", "valid_to": None,
-                    "settlement_period": "quartal", "cap_mode": False,
+                    "settlement_period": "quartal",
                     "power_tiers": [{"kw_min": 0, "kw_max": None,
                                      "base_model": "fixed_flat",
                                      "fixed_rp_kwh": 8.0,
@@ -1260,7 +1270,7 @@ class TestUserInputLabelHelpers:
             "utilities": {
                 "syn": {"name_de": "Syn", "rates": [{
                     "valid_from": "2026-01-01", "valid_to": None,
-                    "settlement_period": "quartal", "cap_mode": False,
+                    "settlement_period": "quartal",
                     "user_inputs": [
                         {"key": "k1", "type": "boolean", "default": False,
                          "label_de": "Eins"}
@@ -1543,3 +1553,251 @@ class TestDiffTariffsData:
         diff = diff_tariffs_data(None, None)
         assert diff["no_changes"] is True
         assert diff["added_utilities"] == []
+
+
+# ----- v0.22.0 — schema 1.5.0 resolver tests -------------------------------
+
+
+class TestSchema150CapRulesActivation:
+    """v0.22.0 — schema 1.5.0 dropped ``cap_mode``. Cap activation is
+    signaled by a non-empty ``cap_rules`` array; missing key or empty
+    array both behave as "no cap"."""
+
+    def test_cap_rules_empty_list_means_no_cap(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "cap_rules": [],
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.cap_rp_kwh is None
+
+    def test_cap_rules_missing_means_no_cap(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            # No cap_rules key at all.
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.cap_rp_kwh is None
+
+    def test_cap_rules_present_picks_matching_rule(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "cap_rules": [
+                {"kw_min": 0, "kw_max": 100,
+                 "self_consumption": True, "cap_rp_kwh": 10.96},
+                {"kw_min": 0, "kw_max": 100,
+                 "self_consumption": False, "cap_rp_kwh": 8.20},
+            ],
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "rmp_quartal",
+                "hkn_structure": "additive_optin", "hkn_rp_kwh": 3.0,
+            }],
+        }])
+        rt_with_ev = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt_with_ev.cap_rp_kwh == 10.96
+        rt_no_ev = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=False, data=synthetic,
+        )
+        assert rt_no_ev.cap_rp_kwh == 8.20
+
+    def test_legacy_cap_mode_key_tolerated_and_ignored(self):
+        # Old data files with stray ``cap_mode`` keys still validate
+        # (additionalProperties:true on tariff_rate_window) and the
+        # resolver simply ignores the field.
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "cap_mode": True,           # stray legacy key
+            "cap_rules": [
+                {"kw_min": 0, "kw_max": None,
+                 "self_consumption": None, "cap_rp_kwh": 7.20},
+            ],
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "rmp_quartal", "hkn_structure": "none",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.cap_rp_kwh == 7.20  # picked from cap_rules, regardless of stray cap_mode
+
+
+class TestSchema150HknDefaultsInheritance:
+    """v0.22.0 — schema 1.5.0 rate-level ``hkn_structure_default`` and
+    ``hkn_rp_kwh_default``. When a tier omits its own ``hkn_structure``
+    / ``hkn_rp_kwh``, the resolver inherits the rate-level default."""
+
+    def test_inherits_hkn_structure_default(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "hkn_structure_default": "additive_optin",
+            "hkn_rp_kwh_default": 3.0,
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "rmp_quartal",
+                # tier omits hkn_structure + hkn_rp_kwh → inherit defaults
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.hkn_structure == "additive_optin"
+        assert rt.hkn_rp_kwh == 3.0
+        assert rt.hkn_structure_default == "additive_optin"
+        assert rt.hkn_rp_kwh_default == 3.0
+
+    def test_tier_explicit_value_wins_over_default(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "hkn_structure_default": "additive_optin",
+            "hkn_rp_kwh_default": 3.0,
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "rmp_quartal",
+                "hkn_structure": "none",  # explicit override
+                "hkn_rp_kwh": None,
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        # Explicit "none" wins; rate-level default still exposed for inspection.
+        assert rt.hkn_structure == "none"
+        assert rt.hkn_structure_default == "additive_optin"
+
+    def test_no_defaults_no_tier_field_falls_back_to_legacy_none(self):
+        # Old shape (no rate-level default, tier omits hkn_structure):
+        # resolver coerces to "none" (existing schema-pre-1.5.0 behaviour).
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.hkn_structure == "none"
+        assert rt.hkn_rp_kwh == 0.0
+
+
+class TestSchema150TierLevelOverrides:
+    """v0.22.0 — schema 1.5.0 optional tier-level ``seasonal`` and
+    ``bonuses`` overrides. Both are additive: tier_seasonal overrides
+    rate-level seasonal for base-rate resolution; tier_bonuses concatenate
+    after rate-level bonuses at evaluation time."""
+
+    def test_resolve_loads_tier_seasonal(self):
+        tier_seasonal = {
+            "summer_months": [4, 5, 6, 7, 8, 9],
+            "winter_months": [10, 11, 12, 1, 2, 3],
+            "summer_rp_kwh": 6.0,
+            "winter_rp_kwh": 9.0,
+        }
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+                "seasonal": tier_seasonal,
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.tier_seasonal == tier_seasonal
+        # Rate-level seasonal stays untouched (None in this fixture).
+        assert rt.seasonal is None
+
+    def test_resolve_loads_tier_bonuses_as_tuple(self):
+        tier_bonus = {
+            "kind": "additive_rp_kwh", "name": "Tier-Bonus",
+            "rate_rp_kwh": 0.5, "applies_when": "always",
+        }
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+                "bonuses": [tier_bonus],
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.tier_bonuses == (tier_bonus,)
+        # Rate-level bonuses untouched.
+        assert rt.bonuses is None
+
+    def test_tier_overrides_default_to_none_when_absent(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.tier_seasonal is None
+        assert rt.tier_bonuses is None
+
+    def test_tier_bonuses_empty_list_collapses_to_none(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+                "bonuses": [],   # explicitly empty
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.tier_bonuses is None

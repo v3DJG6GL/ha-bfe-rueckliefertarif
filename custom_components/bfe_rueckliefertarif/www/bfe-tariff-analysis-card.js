@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.11";
+const CARD_VERSION = "0.22.0";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -718,7 +718,6 @@ class BfeTariffAnalysisCard extends HTMLElement {
       floor_label: row.floor_label_at_period ?? fallback.floor_label,
       floor_rp_kwh: row.floor_rp_kwh_at_period ?? fallback.floor_rp_kwh,
       base_model: row.base_model_at_period ?? fallback.base_model,
-      cap_mode: row.cap_mode_at_period ?? fallback.cap_mode,
       cap_rp_kwh: row.cap_rp_kwh_at_period ?? fallback.cap_rp_kwh,
       tariffs_version: row.tariffs_version_at_period ?? fallback.tariffs_version,
       tariffs_source: row.tariffs_source_at_period ?? fallback.tariffs_source,

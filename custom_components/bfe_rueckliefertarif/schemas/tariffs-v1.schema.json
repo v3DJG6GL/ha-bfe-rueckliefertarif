@@ -108,7 +108,7 @@
       "type": "object",
       "required": [
         "valid_from", "valid_to", "settlement_period",
-        "power_tiers", "cap_mode"
+        "power_tiers"
       ],
       "additionalProperties": true,
       "properties": {
@@ -119,6 +119,14 @@
           "oneOf": [
             { "type": "array",
               "items": { "$ref": "#/$defs/tarif_url_entry" } },
+            { "type": "null" }
+          ]
+        },
+
+        "hkn_structure_default": { "type": "string", "enum": ["additive_optin", "bundled", "none"] },
+        "hkn_rp_kwh_default": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
             { "type": "null" }
           ]
         },
@@ -155,27 +163,18 @@
           ]
         },
 
-        "cap_mode": { "type": "boolean" },
         "cap_rules": {
           "oneOf": [
             { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/cap_rule" } },
             { "type": "null" }
           ]
         }
-      },
-
-      "allOf": [
-        {
-          "comment": "If cap_mode is true, cap_rules MUST be a non-empty array.",
-          "if":   { "properties": { "cap_mode": { "const": true } }, "required": ["cap_mode"] },
-          "then": { "properties": { "cap_rules": { "type": "array", "minItems": 1 } }, "required": ["cap_rules"] }
-        }
-      ]
+      }
     },
 
     "power_tier": {
       "type": "object",
-      "required": ["kw_min", "kw_max", "base_model", "hkn_structure"],
+      "required": ["kw_min", "kw_max", "base_model"],
       "additionalProperties": true,
       "properties": {
         "kw_min": { "type": "number", "minimum": 0 },
@@ -215,6 +214,18 @@
         "hkn_cases": {
           "type": "array",
           "items": { "$ref": "#/$defs/hkn_case" }
+        },
+
+        "seasonal": {
+          "oneOf": [
+            { "$ref": "#/$defs/seasonal" },
+            { "type": "null" }
+          ]
+        },
+
+        "bonuses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/bonus" }
         }
       },
 
@@ -228,16 +239,6 @@
           "comment": "fixed_ht_nt requires HT/NT pair.",
           "if":   { "properties": { "base_model": { "const": "fixed_ht_nt" } }, "required": ["base_model"] },
           "then": { "required": ["fixed_ht_rp_kwh", "fixed_nt_rp_kwh"] }
-        },
-        {
-          "comment": "additive_optin requires hkn_rp_kwh OR non-empty hkn_cases.",
-          "if":   { "properties": { "hkn_structure": { "const": "additive_optin" } }, "required": ["hkn_structure"] },
-          "then": {
-            "anyOf": [
-              { "required": ["hkn_rp_kwh"], "properties": { "hkn_rp_kwh": { "type": "number" } } },
-              { "required": ["hkn_cases"], "properties": { "hkn_cases": { "type": "array", "minItems": 1 } } }
-            ]
-          }
         }
       ]
     },

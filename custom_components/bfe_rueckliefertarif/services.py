@@ -851,9 +851,9 @@ def _record_snapshot(
         # the importer would have applied (first record's rate).
         rate_rp_kwh = plan.records[0].rate_rp_kwh if plan.records else 0.0
 
+    # v0.22.0 — schema 1.5.0: cap activation = `cap_rp_kwh` set.
     cap_applied = (
-        rt.cap_mode
-        and rt.cap_rp_kwh is not None
+        rt.cap_rp_kwh is not None
         and rate_rp_kwh >= rt.cap_rp_kwh - 1e-6
     )
 
@@ -865,7 +865,6 @@ def _record_snapshot(
         "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
         "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
         "hkn_optin": tariff_cfg.hkn_aktiviert,
-        "cap_mode": rt.cap_mode,
         "cap_rp_kwh": rt.cap_rp_kwh,
         "cap_applied": bool(cap_applied),
         "total_kwh": round(total_kwh, 3),
@@ -1222,7 +1221,6 @@ async def _import_running_quarter_estimate(
         "eigenverbrauch_aktiviert": tariff_cfg.eigenverbrauch_aktiviert,
         "hkn_rp_kwh": tariff_cfg.hkn_rp_kwh_resolved,
         "hkn_optin": tariff_cfg.hkn_aktiviert,
-        "cap_mode": rt.cap_mode,
         "cap_rp_kwh": rt.cap_rp_kwh,
         "cap_applied": False,
         "total_kwh": round(total_kwh, 3),
@@ -1967,7 +1965,6 @@ class _RecomputeReportRow:
     hkn_optin_at_period: bool | None = None
     billing_at_period: str | None = None
     base_model_at_period: str | None = None
-    cap_mode_at_period: bool | None = None
     cap_rp_kwh_at_period: float | None = None
     floor_label_at_period: str | None = None
     floor_rp_kwh_at_period: float | None = None
@@ -2057,7 +2054,6 @@ def _build_recompute_report(
         "floor_rp_kwh": rt.federal_floor_rp_kwh,
         "utility_floor_rp_kwh": rt.price_floor_rp_kwh,
         "floor_source": _floor_source(rt),
-        "cap_mode": rt.cap_mode,
         "cap_rp_kwh": rt.cap_rp_kwh,
         "tariffs_version": rt.tariffs_json_version,
         "tariffs_source": rt.tariffs_json_source,
@@ -2104,7 +2100,6 @@ def _build_recompute_report(
                 "hkn_optin_at_period": snap.get("hkn_optin"),
                 "billing_at_period": snap.get("billing"),
                 "base_model_at_period": snap.get("base_model"),
-                "cap_mode_at_period": snap.get("cap_mode"),
                 "cap_rp_kwh_at_period": snap.get("cap_rp_kwh"),
                 "floor_label_at_period": snap.get("floor_label"),
                 "floor_rp_kwh_at_period": snap.get("floor_rp_kwh"),
@@ -2368,7 +2363,8 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     - ``hkn_rp_kwh`` (float, only used when ``hkn_optin`` is True)
     - ``billing`` (str)
     - ``floor_label`` (str), ``floor_rp_kwh`` (float)
-    - ``cap_mode`` (bool), ``cap_rp_kwh`` (float)
+    - ``cap_rp_kwh`` (float | None) — schema 1.5.0 cap activation;
+      ``None`` means no cap rule covered (kw, ev) or no ``cap_rules`` array
     - ``tariffs_version`` (str), ``tariffs_source`` (str)
     - ``bonuses_active`` (list[dict] | None) — v0.10.0 display-only
     - v0.16.0: ``valid_from`` (str), ``fixed_rp_kwh`` / ``fixed_ht_rp_kwh``
@@ -2500,17 +2496,18 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
             f"- **Federal floor (Mindestvergütung):** {floor_label}{suffix}"
         )
 
-    # v0.17.1 — Issue 8.4: drop the "Off" branch. Cap mode is only emitted
+    # v0.17.1 — Issue 8.4: drop the "Off" branch. Cap is only emitted
     # when actually active. Mirrors HKN: don't echo state with no impact.
-    cap_mode = c.get("cap_mode")
-    if cap_mode:
-        cap_v = c.get("cap_rp_kwh")
-        cap_str = f"{cap_v:.2f} Rp/kWh" if cap_v is not None else "n/a"
+    # v0.22.0 — schema 1.5.0: cap activation = cap_rp_kwh present
+    # (resolver derives it from a non-empty `cap_rules` array).
+    cap_v = c.get("cap_rp_kwh")
+    if cap_v is not None:
+        cap_str = f"{cap_v:.2f} Rp/kWh"
         kwp_str = f"{kwp:.1f} kWp" if kwp is not None else "—"
         cap_ev_str = "Yes" if ev else ("No" if ev is False else "—")
         cap_label = "current cap" if is_today else "cap"
         lines.append(
-            f"- **Cap mode (Anrechenbarkeitsgrenze):** Active — {cap_label} "
+            f"- **Cap (Anrechenbarkeitsgrenze):** Active — {cap_label} "
             f"{cap_str} ({kwp_str}, EV={cap_ev_str})"
         )
 
@@ -2669,7 +2666,6 @@ def _render_group_heading(
         "floor_rp_kwh": sample_row.floor_rp_kwh_at_period,
         "utility_floor_rp_kwh": sample_row.utility_floor_rp_kwh_at_period,
         "floor_source": sample_row.floor_source_at_period,
-        "cap_mode": sample_row.cap_mode_at_period,
         "cap_rp_kwh": sample_row.cap_rp_kwh_at_period,
         "tariffs_version": sample_row.tariffs_version_at_period,
         "tariffs_source": sample_row.tariffs_source_at_period,
