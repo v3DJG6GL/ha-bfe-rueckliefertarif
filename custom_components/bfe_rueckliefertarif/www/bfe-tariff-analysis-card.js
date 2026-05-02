@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.9";
+const CARD_VERSION = "0.21.10";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -47,17 +47,17 @@ const RANGE_PRESETS = [
   { id: "current_week",    label: "Aktuelle Woche",   group: "current", params: "current_week",    gran: "tag"    },
   { id: "current_month",   label: "Aktueller Monat",  group: "current", params: "current_month",   gran: "tag"    },
   { id: "current_quarter", label: "Aktuelles Quartal",group: "current", params: "current_quarter", gran: "monat"  },
-  { id: "current_year",    label: "Aktuelles Jahr",   group: "current", params: "current_year"  },
+  { id: "current_year",    label: "Aktuelles Jahr",   group: "current", params: "current_year",    gran: "monat"  },
   // Letzte — previous full calendar window
-  { id: "last_week",    label: "Letzte Woche",   group: "last", params: "last_week",    gran: "tag"   },
-  { id: "last_month",   label: "Letzter Monat",  group: "last", params: "last_month",   gran: "tag"   },
-  { id: "last_quarter", label: "Letztes Quartal",group: "last", params: "last_quarter", gran: "monat" },
-  { id: "last_year",    label: "Letztes Jahr",   group: "last", params: "last_year"    },
+  { id: "last_week",    label: "Letzte Woche",   group: "last", params: "last_week",    gran: "tag"    },
+  { id: "last_month",   label: "Letzter Monat",  group: "last", params: "last_month",   gran: "tag"    },
+  { id: "last_quarter", label: "Letztes Quartal",group: "last", params: "last_quarter", gran: "monat"  },
+  { id: "last_year",    label: "Letztes Jahr",   group: "last", params: "last_year",    gran: "monat"  },
   // Andere — multi-period and custom
-  { id: "last_4q",  label: "Letzte 4Q",  group: "other", params: { last_n_quarters: 4  } },
-  { id: "last_8q",  label: "Letzte 8Q",  group: "other", params: { last_n_quarters: 8  } },
-  { id: "last_12q", label: "Letzte 12Q", group: "other", params: { last_n_quarters: 12 } },
-  { id: "last_3y",  label: "Letzte 3J",  group: "other", params: "last_3y" },
+  { id: "last_4q",  label: "Letzte 4Q",  group: "other", params: { last_n_quarters: 4  }, gran: "quartal" },
+  { id: "last_8q",  label: "Letzte 8Q",  group: "other", params: { last_n_quarters: 8  }, gran: "quartal" },
+  { id: "last_12q", label: "Letzte 12Q", group: "other", params: { last_n_quarters: 12 }, gran: "quartal" },
+  { id: "last_3y",  label: "Letzte 3J",  group: "other", params: "last_3y",               gran: "quartal" },
   { id: "custom",   label: "Custom…",    group: "other", params: "custom" },
 ];
 
@@ -739,7 +739,16 @@ class BfeTariffAnalysisCard extends HTMLElement {
     });
     const sorted = this._filterHistoryToWindow(sortedAll, this._chartState);
     if (sorted.length === 0) {
-      const empty = `<div class="chart-fallback">Keine Daten für gewählten Zeitraum.</div>`;
+      // v0.21.10 — for current_* windows the most likely cause is that BFE
+      // hasn't published the in-progress quarter yet (publication lags ~6
+      // weeks after quarter end). Hint at it so the user doesn't think the
+      // chart is broken.
+      const presetId = this._chartState.range_preset;
+      const isCurrent = presetId && presetId.startsWith("current_");
+      const hint = isCurrent
+        ? "Keine Daten für gewählten Zeitraum — BFE-Veröffentlichung für das laufende Quartal steht noch aus."
+        : "Keine Daten für gewählten Zeitraum.";
+      const empty = `<div class="chart-fallback">${this._escape(hint)}</div>`;
       const r = this.shadowRoot.querySelector("#chart-rate");
       const s = this.shadowRoot.querySelector("#chart-stack");
       if (r) r.innerHTML = empty;
