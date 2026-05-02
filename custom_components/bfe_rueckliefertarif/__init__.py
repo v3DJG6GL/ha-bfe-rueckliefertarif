@@ -69,8 +69,61 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "options": dict(entry.options or {}),
     }
     await async_register_services(hass)
+    await _async_register_card(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """v0.19.0 — auto-register the BFE tariff analysis Lovelace card.
+
+    Ships ``www/bfe-tariff-analysis-card.js`` as a Lovelace resource so
+    users don't need to manually wire it up. Idempotent — the
+    ``_card_registered`` sentinel guards against double-registration
+    when multiple config entries are set up. The ``?v=`` cache-bust
+    query string forces browsers to re-fetch on integration updates.
+
+    Failure to register (e.g. test environments without a real http
+    component, or a frontend that hasn't loaded yet) logs a warning and
+    falls through silently — the integration's core function (LTS
+    writes via the recorder) is unaffected.
+    """
+    if hass.data[DOMAIN].get("_card_registered"):
+        return
+    from pathlib import Path
+
+    card_path = str(Path(__file__).parent / "www" / "bfe-tariff-analysis-card.js")
+    card_url = "/api/bfe_rueckliefertarif/static/bfe-tariff-analysis-card.js"
+
+    try:
+        version = _read_manifest_version()
+    except Exception:
+        version = "dev"
+
+    try:
+        from homeassistant.components.frontend import add_extra_js_url
+        from homeassistant.components.http import StaticPathConfig
+
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(card_url, card_path, cache_headers=False)]
+        )
+        add_extra_js_url(hass, f"{card_url}?v={version}")
+        hass.data[DOMAIN]["_card_registered"] = True
+    except Exception as exc:
+        _LOGGER.debug(
+            "Lovelace card auto-registration skipped (%s) — manual resource "
+            "wiring still works",
+            exc,
+        )
+
+
+def _read_manifest_version() -> str:
+    """Read ``manifest.json`` version. Used as cache-bust query string."""
+    import json
+    from pathlib import Path
+
+    manifest = Path(__file__).parent / "manifest.json"
+    return json.loads(manifest.read_text())["version"]
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

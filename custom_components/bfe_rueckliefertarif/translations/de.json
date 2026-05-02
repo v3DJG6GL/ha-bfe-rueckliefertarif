@@ -10,18 +10,6 @@
           "installierte_leistung_kwp": "Installierte Leistung (kWp)"
         }
       },
-      "tariff_pick": {
-        "title": "Tarif konfigurieren ({utility_name}) — Datum & Leistung",
-        "description": "Wähle das Datum, ab dem diese Konfiguration gilt, und die installierte Spitzenleistung. Im nächsten Schritt erscheinen die versorgerspezifischen Optionen (Eigenverbrauch, HKN, versorgerspezifische Felder).",
-        "data": {
-          "valid_from": "Aktiv seit",
-          "installierte_leistung_kwp": "Installierte Leistung (kWp)"
-        },
-        "data_description": {
-          "valid_from": "## Inbetriebnahme-Datum\nDatum, ab dem deine PV-Anlage am Netz ist (oder ab dem diese Konfiguration gilt). Verankert die Konfigurations-Historie — Quartale vor diesem Datum werden bei einer Neuberechnung still übersprungen, weil keine Tarif-Konfiguration sie abdeckt.\n\nStandardwert: aktueller Quartalsanfang. Setze das tatsächliche Inbetriebnahme-Datum für eine saubere Import-Historie.",
-          "installierte_leistung_kwp": "## Installierte Spitzenleistung\nDC-Spitzenleistung deiner PV-Anlage in Kilowatt. Bestimmt die gesetzliche **Mindestvergütung** ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, seit 1.1.2026 in Kraft):\n\n| Grösse | Modus | Mindestvergütung (Rp/kWh) |\n|---|---|---|\n| <30 kW | beliebig | **6.00** |\n| 30–<150 kW | mit Eigenverbrauch | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | ohne Eigenverbrauch | **6.20** |\n| ≥150 kW | beliebig | keine Mindestvergütung |"
-        }
-      },
       "tariff_details": {
         "title": "Tarifkonfiguration — Versorger-spezifische Optionen",
         "description": "Trag die Tarifdetails für **{utility_name}** ab **{valid_from}** ein.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
@@ -48,8 +36,8 @@
           "namenspraefix": "Sensor-Namenspräfix (optional)"
         },
         "data_description": {
-          "stromnetzeinspeisung_kwh": "## Stromexport-Sensor\nDer **Stromexport-Sensor** deiner Solaranlage, welcher die ins Stromnetz exportierte PV-Energie misst.\n\Sollte bereits im **Energie-Dashboard** unter *'In das Netz eingespeiste Energie'* verwendet werden.",
-          "rueckliefervergutung_chf": "## Vom **Energie-Dashboard"" automatisch erzeugter CHF-Sensor\nHome Assistant hängt üblicherweise den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Wird benötigt, dass die *Langzeit-Statistiken* mit den korrekten Einspeisevergütungstarigen be- und überschrieben werden können.",
+          "stromnetzeinspeisung_kwh": "## Stromexport-Sensor\nDer **Stromexport-Sensor** deiner Solaranlage, welcher die ins Stromnetz exportierte PV-Energie misst.\n\nSollte bereits im **Energie-Dashboard** unter *'In das Netz eingespeiste Energie'* verwendet werden.",
+          "rueckliefervergutung_chf": "## Vom **Energie-Dashboard** automatisch erzeugter CHF-Sensor\nHome Assistant hängt üblicherweise den Suffix `_compensation` an (üblicherweise `sensor.DEINE_STROMNETZEINSPEISUNG_compensation`). Wird benötigt, dass die *Langzeit-Statistiken* mit den korrekten Einspeisevergütungstarifen be- und überschrieben werden können.",
           "plant_name": "Anzeigename für diese PV-Anlage – z.B. `PV-Anlage`. Wird als Titel der Integration unter „Einstellungen\" → „Geräte & Dienste\" sowie als Standard-Präfix für Entitäten verwendet.",
           "namenspraefix": "Das Präfix für die *Sensoren* dieser Integration (z.B. `sensor.PREFIX_basisverguetung`).\n\nLeer lassen, um das Präfix automatisch aus dem Anzeigenamen abzuleiten (z.B. `sensor.solaranlage_basisverguetung`)."
         }
@@ -206,26 +194,8 @@
   "selector": {},
   "entity": {
     "sensor": {
-      "basisverguetung": {
-        "name": "Basisvergütung"
-      },
-      "aktuelle_verguetung_chf_kwh": {
-        "name": "Aktuelle Vergütung"
-      },
-      "hkn_verguetung": {
-        "name": "HKN-Vergütung (resolved)"
-      },
-      "naechste_referenzmarktpreis_publikation": {
-        "name": "Nächste Referenz-Marktpreis-Publikation"
-      },
-      "referenzmarktpreis_q": {
-        "name": "Referenz-Marktpreis (aktuelles Quartal)"
-      },
-      "referenzmarktpreis_m": {
-        "name": "Referenz-Marktpreis (aktueller Monat)"
-      },
-      "tariffs_last_remote_update": {
-        "name": "Tarif-Datenbank — letztes Remote-Update"
+      "grid_export_tariff_current": {
+        "name": "Einspeisetarif (aktuell)"
       }
     }
   },

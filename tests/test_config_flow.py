@@ -22,7 +22,6 @@ from custom_components.bfe_rueckliefertarif.const import (
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
-    CONF_VALID_FROM,
 )
 from custom_components.bfe_rueckliefertarif.tariffs_db import list_utility_keys
 
@@ -107,7 +106,7 @@ class TestStringsAndTranslations:
 
     @pytest.mark.parametrize(
         "step",
-        ["user", "tariff_pick", "tariff_details", "entities"],
+        ["user", "tariff_details", "entities"],
     )
     def test_config_steps_present(self, en_strings, de_translations, step):
         for d in (en_strings, de_translations):
@@ -127,8 +126,11 @@ class TestStringsAndTranslations:
     @pytest.mark.parametrize(
         "field,step",
         [
-            (CONF_VALID_FROM, "tariff_pick"),
-            (CONF_INSTALLIERTE_LEISTUNG_KWP, "tariff_pick"),
+            # v0.18.0 merged tariff_pick into user; v0.19.0 removes the
+            # orphan tariff_pick block from strings.json. valid_from /
+            # installierte_leistung_kwp now live in config.user (which is
+            # exempt from the data_description coverage assertion since
+            # the form is rendered inline alongside utility selector).
             (CONF_EIGENVERBRAUCH_AKTIVIERT, "tariff_details"),
             (CONF_HKN_AKTIVIERT, "tariff_details"),
         ],
@@ -144,7 +146,9 @@ class TestStringsAndTranslations:
         """v0.9.8 — billing toggle is gone from every form (#9). Translations
         must not still ship the field labels or selector options."""
         for d in (en_strings, de_translations):
-            for step in ("tariff_pick", "tariff_details"):
+            # v0.18.0 merged tariff_pick into user; v0.19.0 dropped the
+            # orphan tariff_pick block.
+            for step in ("user", "tariff_details"):
                 assert CONF_ABRECHNUNGS_RHYTHMUS not in d["config"]["step"][step]["data"]
             for step in ("add_new_row", "edit_row"):
                 assert CONF_ABRECHNUNGS_RHYTHMUS not in d["options"]["step"][step]["data"]
@@ -181,12 +185,11 @@ class TestStringsAndTranslations:
     @pytest.mark.parametrize(
         "key",
         [
-            "basisverguetung",
-            "aktuelle_verguetung_chf_kwh",
-            "hkn_verguetung",
-            "naechste_referenzmarktpreis_publikation",
-            "referenzmarktpreis_q",
-            "referenzmarktpreis_m",
+            # v0.19.0: 7 sensors → 1. The remaining sensor surfaces the
+            # full breakdown via extra_state_attributes; per-component
+            # diagnostic sensors were dropped (info still in attrs / the
+            # get_breakdown service response).
+            "grid_export_tariff_current",
         ],
     )
     def test_sensor_translations_present(self, en_strings, de_translations, key):
@@ -232,8 +235,8 @@ class TestStringsAndTranslations:
 
     def test_fr_translations_minimum_keys(self, fr_translations):
         # French has the essentials but may skip detailed help text.
+        # v0.19.0: tariff_pick removed (orphan since v0.18.0 merge into user).
         assert "user" in fr_translations["config"]["step"]
-        assert "tariff_pick" in fr_translations["config"]["step"]
         assert "tariff_details" in fr_translations["config"]["step"]
         assert "entities" in fr_translations["config"]["step"]
 

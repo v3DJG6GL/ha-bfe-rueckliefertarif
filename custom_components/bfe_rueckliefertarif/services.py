@@ -59,6 +59,8 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_register_services(hass: HomeAssistant) -> None:
     """Register services on first integration setup."""
+    from homeassistant.core import SupportsResponse
+
     if hass.services.has_service(DOMAIN, "reimport_all_history"):
         # v0.9.6: drop the legacy ``refresh`` service if it survived from a
         # pre-v0.9.6 install of the integration in the same HA process. The
@@ -74,6 +76,19 @@ async def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "refresh_data", _handle_refresh_data)
     hass.services.async_register(
         DOMAIN, "refresh_tariffs", _handle_refresh_tariffs
+    )
+    # v0.19.0 — Tier 2 analytics service: returns the recompute report as a
+    # JSON dict for consumption by the BFE tariff analysis Lovelace card.
+    hass.services.async_register(
+        DOMAIN,
+        "get_breakdown",
+        _handle_get_breakdown,
+        supports_response=SupportsResponse.ONLY,
+    )
+    # v0.19.0 — Tier 1 diagnostic dump: same markdown report as
+    # `recompute_history` but without any LTS rewrites.
+    hass.services.async_register(
+        DOMAIN, "show_report", _handle_show_report
     )
 
 
@@ -1387,6 +1402,71 @@ async def _handle_refresh_data(call: ServiceCall) -> None:
     tariffs-only ``refresh_tariffs`` service stays for power users.
     """
     await _refresh_upstream_data(call.hass)
+
+
+def _resolve_quarters(data: dict | None) -> list[Quarter]:
+    """Map (year, quarter) call args to a list of Quarters.
+
+    - both year + quarter → ``[Quarter(year, quarter)]``
+    - year only          → all 4 quarters of that year
+    - quarter only       → that quarter of the current year
+    - neither            → ``[current_quarter]``
+    """
+    from datetime import datetime as _dt
+
+    data = data or {}
+    year = data.get("year")
+    quarter = data.get("quarter")
+    today = date.today()
+    if year is not None and quarter is not None:
+        return [Quarter(int(year), int(quarter))]
+    if year is not None:
+        return [Quarter(int(year), q) for q in (1, 2, 3, 4)]
+    if quarter is not None:
+        return [Quarter(today.year, int(quarter))]
+    return [quarter_of(_dt.now(UTC))]
+
+
+def _report_to_dict(report) -> dict:
+    """JSON-serializable dict of a ``_RecomputeReport`` for service responses.
+
+    The report dataclass has no datetime fields — all date-likes are
+    pre-formatted strings (``period``: ``"YYYYQN"``, ``valid_from``:
+    ``"YYYY-MM-DD"``). Plain ``dataclasses.asdict`` handles nested
+    dataclasses + tuple-to-list conversion.
+    """
+    from dataclasses import asdict
+
+    return asdict(report)
+
+
+async def _handle_get_breakdown(call: ServiceCall):
+    """v0.19.0 — Tier 2 analytics service. Returns the recompute report as
+    a JSON dict for the BFE tariff analysis Lovelace card.
+
+    Read-only: no LTS rewrites, no auto-import. Missing quarters surface
+    as empty rows in the response — the card displays a "Run Recompute
+    history first" hint to the user.
+    """
+    quarters = _resolve_quarters(dict(call.data) if call.data else None)
+    report = _build_recompute_report(call.hass, quarters)
+    return _report_to_dict(report)
+
+
+async def _handle_show_report(call: ServiceCall) -> None:
+    """v0.19.0 — Tier 1 diagnostic dump. Builds the same markdown report
+    as ``recompute_history`` and emits it as a persistent notification —
+    no LTS rewrites.
+    """
+    quarters = _resolve_quarters(dict(call.data) if call.data else None)
+    report = _build_recompute_report(call.hass, quarters)
+    # Find the first config entry id (skips the singleton "_tariffs_data" key).
+    entries = call.hass.data.get(DOMAIN, {})
+    entry_id = next(
+        (key for key in entries if not key.startswith("_")), None
+    )
+    if entry_id is not None:
+        _notify_recompute(call.hass, entry_id, report)
 
 
 async def _handle_refresh_tariffs(call: ServiceCall) -> None:

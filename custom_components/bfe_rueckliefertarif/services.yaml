@@ -19,3 +19,52 @@ refresh_tariffs:
     Power-user knob — force-fetch tariffs.json from the companion repo without
     polling BFE. Falls back to the bundled file silently on any error (network
     or schema). For most cases prefer refresh_data which does both.
+
+get_breakdown:
+  name: Get tariff breakdown
+  description: >
+    Returns the structured tariff breakdown as a JSON object. Used by the
+    BFE tariff analysis Lovelace card. Read-only — does NOT trigger LTS
+    rewrites. With both year+quarter set, returns one quarter; with year
+    only, returns all 4 quarters of that year; with no args, returns the
+    current quarter.
+  fields:
+    year:
+      name: Year
+      example: 2026
+      selector:
+        number:
+          min: 2020
+          max: 2099
+          mode: box
+    quarter:
+      name: Quarter (1-4)
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
+
+show_report:
+  name: Show tariff report
+  description: >
+    Builds the same markdown report as 'reimport_all_history' but without
+    rewriting LTS — pure diagnostic dump emitted as a persistent
+    notification. Useful for sanity-checking a quarter's breakdown
+    without touching imports.
+  fields:
+    year:
+      name: Year
+      selector:
+        number:
+          min: 2020
+          max: 2099
+          mode: box
+    quarter:
+      name: Quarter (1-4)
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box

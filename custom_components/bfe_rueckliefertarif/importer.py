@@ -170,10 +170,27 @@ def _resolve_bonuses_for_hour(
       (``base + hkn + accumulator``) by ``multiplier_pct/100``; the delta
       is added to the accumulator. Order in the schema array matters.
     """
+    total, _ = _resolve_bonuses_for_hour_detailed(
+        cfg, season, base_after_floor, applied_hkn
+    )
+    return total
+
+
+def _resolve_bonuses_for_hour_detailed(
+    cfg: TariffConfig,
+    season: str | None,
+    base_after_floor: float,
+    applied_hkn: float,
+) -> tuple[float, list[dict]]:
+    """Like ``_resolve_bonuses_for_hour`` but also returns per-bonus contribution
+    detail. The detail list contains only bonuses that actually contributed
+    (skipped opt-in / when-clause-mismatched bonuses are omitted).
+    """
     rt = cfg.resolved
     if not rt.bonuses:
-        return 0.0
+        return 0.0, []
     accumulator = 0.0
+    detail: list[dict] = []
     for b in rt.bonuses:
         when_clause = b.get("when")
         applies_when = b.get("applies_when", "always")
@@ -184,13 +201,22 @@ def _resolve_bonuses_for_hour(
         ):
             continue
         kind = b.get("kind", "additive_rp_kwh")
+        contribution = 0.0
         if kind == "additive_rp_kwh":
-            accumulator += float(b.get("rate_rp_kwh", 0.0))
+            contribution = float(b.get("rate_rp_kwh", 0.0))
         elif kind == "multiplier_pct":
             mp = float(b.get("multiplier_pct", 100.0))
             current = base_after_floor + applied_hkn + accumulator
-            accumulator += current * (mp / 100.0 - 1.0)
-    return accumulator
+            contribution = current * (mp / 100.0 - 1.0)
+        accumulator += contribution
+        detail.append(
+            {
+                "name": b.get("name", "—"),
+                "kind": kind,
+                "rp_kwh_contribution": round(contribution, 4),
+            }
+        )
+    return accumulator, detail
 
 
 def _apply_floor_cap_hkn_bonus_breakdown(
@@ -402,6 +428,174 @@ def _effective_rate_breakdown_at_hour(
         raise ValueError(f"Unknown base_model {rt.base_model!r}")
 
     return _apply_floor_cap_hkn_bonus_breakdown(base, cfg, season)
+
+
+def _resolve_base_at_hour(
+    cfg: TariffConfig, reference_rp_kwh: float, hour_utc: datetime
+) -> tuple[float, str, str | None, bool | None]:
+    """Resolve raw base rate at one hour. Returns ``(base, label, season, is_ht)``.
+
+    - ``base``: pre-floor, pre-HKN, pre-bonus base rate in Rp/kWh
+    - ``label``: source descriptor (``"fixed_flat"`` / ``"fixed_flat_summer"`` /
+      ``"fixed_ht_nt_ht"`` / ``"rmp_quartal"`` / etc.)
+    - ``season``: ``"summer"`` / ``"winter"`` / ``None`` (no overlay)
+    - ``is_ht``: True/False for fixed_ht_nt; ``None`` otherwise
+
+    Mirrors the base-resolution branches of
+    ``_effective_rate_breakdown_at_hour`` but exposes the metadata needed
+    to render a full breakdown dict (live sensor + analysis service).
+    """
+    from .tariff import classify_ht
+
+    rt = cfg.resolved
+    season = _season_at(rt, hour_utc)
+    is_ht: bool | None = None
+
+    if rt.base_model == "fixed_ht_nt":
+        is_ht = classify_ht(hour_utc, rt.ht_window)
+        seasonal_rate_key = (
+            f"{season}_{'ht' if is_ht else 'nt'}_rp_kwh" if season else None
+        )
+        if season is not None and seasonal_rate_key in (rt.seasonal or {}):
+            base = rt.seasonal[seasonal_rate_key]
+            label = f"fixed_ht_nt_{season}_{'ht' if is_ht else 'nt'}"
+            if base is None:
+                raise ValueError(
+                    f"{rt.utility_key}: fixed_ht_nt × seasonal requires "
+                    f"all 4 rates (missing {seasonal_rate_key})"
+                )
+        else:
+            base = rt.fixed_ht_rp_kwh if is_ht else rt.fixed_nt_rp_kwh
+            label = f"fixed_ht_nt_{'ht' if is_ht else 'nt'}"
+            if base is None:
+                raise ValueError(
+                    f"{rt.utility_key}: fixed_ht_nt requires both "
+                    f"fixed_ht_rp_kwh and fixed_nt_rp_kwh"
+                )
+    elif rt.base_model == "fixed_flat":
+        seasonal_rate_key = f"{season}_rp_kwh" if season else None
+        if season is not None and seasonal_rate_key in (rt.seasonal or {}):
+            base = rt.seasonal[seasonal_rate_key]
+            label = f"fixed_flat_{season}"
+            if base is None:
+                raise ValueError(
+                    f"{rt.utility_key}: fixed_flat × seasonal requires both "
+                    f"summer_rp_kwh and winter_rp_kwh (missing {seasonal_rate_key})"
+                )
+        else:
+            if rt.fixed_rp_kwh is None:
+                raise ValueError(
+                    f"{rt.utility_key}: fixed_flat requires fixed_rp_kwh"
+                )
+            base = rt.fixed_rp_kwh
+            label = "fixed_flat"
+    elif rt.base_model in ("rmp_quartal", "rmp_monat"):
+        base = reference_rp_kwh
+        label = rt.base_model
+    else:
+        raise ValueError(f"Unknown base_model {rt.base_model!r}")
+
+    return base, label, season, is_ht
+
+
+def compute_breakdown_at(
+    cfg: TariffConfig, reference_rp_kwh: float, hour_utc: datetime
+) -> dict:
+    """Full tariff breakdown at one hour — superset of the per-hour 4-tuple.
+
+    Returns the dict shape consumed by:
+    - ``coordinator._tariff_breakdown`` (live sensor, ``hour_utc=now``)
+    - ``services.get_breakdown`` (analysis service, arbitrary hour in the
+      requested period — typically quarter midpoint)
+
+    Includes all classic breakdown keys (utility, tariff_source, floor_label,
+    base_input_rp_kwh, effective_rp_kwh, etc.) plus v0.19.0 additions:
+    ``season_now``, ``ht_nt_now``, ``applied_bonus_rp_kwh``,
+    ``bonuses_applied`` (per-bonus contribution detail), ``bonuses_advertised``
+    (informational list of all rate-window bonuses regardless of opt-in).
+    """
+    rt = cfg.resolved
+    base_input, base_label, season, is_ht = _resolve_base_at_hour(
+        cfg, reference_rp_kwh, hour_utc
+    )
+
+    floor = _effective_floor(rt)
+    floor_value = floor if floor is not None else 0.0
+    cap = rt.cap_rp_kwh if rt.cap_mode else None
+
+    per_hkn = _resolve_hkn_for_hour(cfg, season)
+    rate, base_after_floor, applied_hkn, applied_bonus = (
+        _apply_floor_cap_hkn_bonus_breakdown(base_input, cfg, season)
+    )
+    _bonus_total, bonuses_applied = _resolve_bonuses_for_hour_detailed(
+        cfg, season, base_after_floor, applied_hkn
+    )
+
+    bonuses_advertised: list[dict] = []
+    for b in rt.bonuses or []:
+        kind = b.get("kind", "additive_rp_kwh")
+        if kind == "additive_rp_kwh":
+            value = b.get("rate_rp_kwh")
+        elif kind == "multiplier_pct":
+            value = b.get("multiplier_pct")
+        else:
+            value = None
+        bonuses_advertised.append(
+            {
+                "name": b.get("name", "—"),
+                "kind": kind,
+                "value": value,
+                "applies_when": b.get("applies_when", "always"),
+            }
+        )
+
+    theoretical_total = base_after_floor + per_hkn
+    if rt.cap_mode and cap is not None:
+        obergrenze_aktiv = theoretical_total > cap
+        hkn_gekuerzt_auf = (
+            max(0.0, cap - base_after_floor)
+            if obergrenze_aktiv and base_after_floor < cap
+            else None
+        )
+    else:
+        obergrenze_aktiv = False
+        hkn_gekuerzt_auf = None
+
+    tariff_source = (
+        f"tariffs.json v{rt.tariffs_json_version} {rt.utility_key} "
+        f"@ {rt.valid_from} ({rt.tariffs_json_source})"
+    )
+    return {
+        "utility": rt.utility_key,
+        "tariff_source": tariff_source,
+        "floor_label": rt.federal_floor_label,
+        "eigenverbrauch_aktiviert": cfg.eigenverbrauch_aktiviert,
+        "hkn_aktiviert": cfg.hkn_aktiviert,
+        "base_model": rt.base_model,
+        "base_input_rp_kwh": round(base_input, 4),
+        "base_source": base_label,
+        "minimalverguetung_rp_kwh": round(floor_value, 4),
+        "base_after_floor_rp_kwh": round(base_after_floor, 4),
+        "hkn_verguetung_rp_kwh": round(per_hkn, 4),
+        "theoretical_total_rp_kwh": round(theoretical_total, 4),
+        "anrechenbarkeitsgrenze_rp_kwh": (
+            round(cap, 4) if cap is not None else None
+        ),
+        "effective_rp_kwh": round(rate, 4),
+        "effective_chf_kwh": round(rate / 100.0, 6),
+        "obergrenze_aktiv": obergrenze_aktiv,
+        "hkn_gekuerzt_auf": (
+            round(hkn_gekuerzt_auf, 4)
+            if hkn_gekuerzt_auf is not None
+            else None
+        ),
+        # v0.19.0 — additional applied-factor breakdown
+        "season_now": season,
+        "ht_nt_now": ("ht" if is_ht else "nt") if is_ht is not None else None,
+        "applied_bonus_rp_kwh": round(applied_bonus, 4),
+        "bonuses_applied": bonuses_applied,
+        "bonuses_advertised": bonuses_advertised,
+    }
 
 
 def _rate_rp_kwh_at_hour(

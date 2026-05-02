@@ -10,18 +10,6 @@
           "installierte_leistung_kwp": "Puissance installée (kWp)"
         }
       },
-      "tariff_pick": {
-        "title": "Configuration du tarif ({utility_name}) — date & puissance",
-        "description": "Choisissez la date d'effet de cette configuration et la puissance installée. L'étape suivante affiche les options spécifiques au fournisseur (autoconsommation, GO, champs spécifiques).",
-        "data": {
-          "valid_from": "Valide dès",
-          "installierte_leistung_kwp": "Puissance installée (kWp)"
-        },
-        "data_description": {
-          "valid_from": "## Date de mise en service\nDate à laquelle votre installation PV a été connectée au réseau (ou date de début de cette configuration). Sert d'ancre à l'historique de configuration — les trimestres antérieurs à cette date sont silencieusement ignorés lors du recalcul, car aucune configuration tarifaire ne les couvre.\n\nValeur par défaut : début du trimestre courant. Indiquez la date réelle de mise en service pour un historique d'import propre.",
-          "installierte_leistung_kwp": "## Puissance crête installée\nPuissance crête DC en kilowatts. Détermine la **rémunération minimale fédérale** ([OEne art. 12 al. 1bis]({env_url}), RO 2025 138, en vigueur depuis le 1.1.2026)."
-        }
-      },
       "tariff_details": {
         "title": "Configuration tarifaire — options spécifiques au fournisseur",
         "description": "Renseignez les détails tarifaires pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
@@ -206,26 +194,8 @@
   "selector": {},
   "entity": {
     "sensor": {
-      "basisverguetung": {
-        "name": "Rétribution de base"
-      },
-      "aktuelle_verguetung_chf_kwh": {
-        "name": "Rétribution actuelle"
-      },
-      "hkn_verguetung": {
-        "name": "Rétribution GO (résolue)"
-      },
-      "naechste_referenzmarktpreis_publikation": {
-        "name": "Prochaine publication du prix de référence"
-      },
-      "referenzmarktpreis_q": {
-        "name": "Prix de référence du marché (trimestre courant)"
-      },
-      "referenzmarktpreis_m": {
-        "name": "Prix de référence du marché (mois courant)"
-      },
-      "tariffs_last_remote_update": {
-        "name": "Base de tarifs — dernière mise à jour distante"
+      "grid_export_tariff_current": {
+        "name": "Tarif d'injection (actuel)"
       }
     }
   },

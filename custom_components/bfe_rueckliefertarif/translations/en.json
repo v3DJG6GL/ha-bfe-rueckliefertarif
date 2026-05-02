@@ -10,18 +10,6 @@
           "installierte_leistung_kwp": "Installed power (kWp)"
         }
       },
-      "tariff_pick": {
-        "title": "Tariff configuration ({utility_name}) — pick date & power",
-        "description": "Pick the date this configuration takes effect and your plant's installed power. The next step shows utility-specific options (self-consumption, HKN, utility-specific fields).",
-        "data": {
-          "valid_from": "Valid from",
-          "installierte_leistung_kwp": "Installed power (kWp)"
-        },
-        "data_description": {
-          "valid_from": "## Plant install date\nThe date your PV plant came online (or this configuration started applying). The integration uses this as the anchor of your config history — quarters before this date are silently skipped during recompute since no tariff configuration covers them.\n\nDefault: current quarter start. Set to your actual install date for a clean import history.",
-          "installierte_leistung_kwp": "## Installed peak power\nThe DC peak rating of your PV plant in kilowatts. Used to look up the federal **Mindestvergütung** floor ([EnV Art. 12 Abs. 1bis]({env_url}), AS 2025 138, in force since 1.1.2026):\n\n| Size | Mode | Federal floor (Rp/kWh) |\n|---|---|---|\n| <30 kW | any | **6.00** |\n| 30–<150 kW | with self-consumption | **180÷kW** (1.20–6.00) |\n| 30–<150 kW | feed-in only | **6.20** |\n| ≥150 kW | any | no federal floor |"
-        }
-      },
       "tariff_details": {
         "title": "Tariff configuration — utility-specific options",
         "description": "Fill in the tariff details for **{utility_name}** effective **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
@@ -206,26 +194,8 @@
   "selector": {},
   "entity": {
     "sensor": {
-      "basisverguetung": {
-        "name": "Base remuneration"
-      },
-      "aktuelle_verguetung_chf_kwh": {
-        "name": "Current remuneration"
-      },
-      "hkn_verguetung": {
-        "name": "HKN remuneration (resolved)"
-      },
-      "naechste_referenzmarktpreis_publikation": {
-        "name": "Next reference market price publication"
-      },
-      "referenzmarktpreis_q": {
-        "name": "Reference market price (current quarter)"
-      },
-      "referenzmarktpreis_m": {
-        "name": "Reference market price (current month)"
-      },
-      "tariffs_last_remote_update": {
-        "name": "Tariff database — last remote update"
+      "grid_export_tariff_current": {
+        "name": "Grid export tariff (current)"
       }
     }
   },

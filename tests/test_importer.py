@@ -21,6 +21,7 @@ from custom_components.bfe_rueckliefertarif.importer import (
     TariffConfig,
     _effective_rate,
     _effective_rate_at_hour,
+    compute_breakdown_at,
     compute_quarter_plan,
     cumulative_sums,
 )
@@ -523,6 +524,125 @@ class TestSeasonalFixedFlat:
         cfg = self._make_cfg(seasonal=self.BAGNES_SEASONAL)
         with pytest.raises(ValueError, match="seasonal evaluation requires hour"):
             _effective_rate(cfg, 0.0)
+
+
+class TestComputeBreakdownAt:
+    """v0.19.0 — full breakdown dict at one hour. Used by:
+    - coordinator._tariff_breakdown (live sensor, hour=now)
+    - services.get_breakdown (analysis service, hour=quarter midpoint)
+
+    Verifies the seasonal-bug fix (was: live sensor ignored summer/winter
+    overlay for fixed_flat utilities) plus the v0.19.0 attr additions
+    (season_now, ht_nt_now, bonuses_applied, bonuses_advertised).
+    """
+
+    SEASONAL_FIXED_FLAT = {
+        "summer_months": [4, 5, 6, 7, 8, 9],
+        "winter_months": [10, 11, 12, 1, 2, 3],
+        "summer_rp_kwh": 6.20,
+        "winter_rp_kwh": 9.00,
+    }
+
+    def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
+        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
+        return local.astimezone(UTC)
+
+    def _make_seasonal_cfg(self) -> TariffConfig:
+        return TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kwp=8.0,
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(
+                base_model="fixed_flat",
+                fixed_rp_kwh=7.60,  # Jahresmittel — was incorrectly used in v0.18.x
+                seasonal=self.SEASONAL_FIXED_FLAT,
+                federal_floor_rp_kwh=6.00,
+            ),
+        )
+
+    def test_dict_shape_has_expected_keys(self):
+        cfg = self._make_seasonal_cfg()
+        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 5, 15, 12))
+        for key in (
+            "utility", "tariff_source", "floor_label",
+            "eigenverbrauch_aktiviert", "hkn_aktiviert", "base_model",
+            "base_input_rp_kwh", "base_source", "minimalverguetung_rp_kwh",
+            "base_after_floor_rp_kwh", "hkn_verguetung_rp_kwh",
+            "theoretical_total_rp_kwh", "anrechenbarkeitsgrenze_rp_kwh",
+            "effective_rp_kwh", "effective_chf_kwh", "obergrenze_aktiv",
+            "hkn_gekuerzt_auf",
+            # v0.19.0 additions
+            "season_now", "ht_nt_now", "applied_bonus_rp_kwh",
+            "bonuses_applied", "bonuses_advertised",
+        ):
+            assert key in bd, f"missing breakdown key: {key}"
+
+    def test_summer_picks_seasonal_rate_not_jahresmittel(self):
+        """Bug fix: v0.18.x live sensor returned 7.6 (Jahresmittel) for
+        regio_energie_solothurn in May; should be 6.2 (summer)."""
+        cfg = self._make_seasonal_cfg()
+        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 5, 15, 12))
+        assert bd["base_input_rp_kwh"] == pytest.approx(6.20)
+        assert bd["effective_rp_kwh"] == pytest.approx(6.20)
+        assert bd["effective_chf_kwh"] == pytest.approx(0.062)
+        assert bd["season_now"] == "summer"
+        assert bd["base_source"] == "fixed_flat_summer"
+        assert bd["ht_nt_now"] is None  # not fixed_ht_nt
+
+    def test_winter_picks_winter_rate(self):
+        cfg = self._make_seasonal_cfg()
+        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 1, 15, 12))
+        assert bd["base_input_rp_kwh"] == pytest.approx(9.00)
+        assert bd["effective_rp_kwh"] == pytest.approx(9.00)
+        assert bd["season_now"] == "winter"
+        assert bd["base_source"] == "fixed_flat_winter"
+
+    def test_bonuses_applied_vs_advertised(self):
+        """Opt-in bonuses without a when-clause are advertised but not applied
+        (no toggle to gate them on). Always-on bonuses are both."""
+        bonuses = [
+            {
+                "name": "TOP-40",
+                "kind": "multiplier_pct",
+                "multiplier_pct": 108.0,
+                "applies_when": "opt_in",
+                # No when clause — should be advertised but not applied.
+            },
+            {
+                "name": "Eco surcharge",
+                "kind": "additive_rp_kwh",
+                "rate_rp_kwh": 0.5,
+                "applies_when": "always",
+            },
+        ]
+        cfg = TariffConfig(
+            eigenverbrauch_aktiviert=True,
+            installierte_leistung_kwp=8.0,
+            hkn_aktiviert=False,
+            hkn_rp_kwh_resolved=0.0,
+            resolved=_make_resolved(
+                base_model="fixed_flat",
+                fixed_rp_kwh=7.60,
+                federal_floor_rp_kwh=6.00,
+            ),
+        )
+        # Inject bonuses via dataclasses.replace
+        from dataclasses import replace as _replace
+        cfg = _replace(
+            cfg, resolved=_replace(cfg.resolved, bonuses=tuple(bonuses))
+        )
+        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 5, 15, 12))
+
+        # Advertised: both bonuses present
+        names_advertised = [b["name"] for b in bd["bonuses_advertised"]]
+        assert names_advertised == ["TOP-40", "Eco surcharge"]
+
+        # Applied: only the always-on Eco surcharge
+        names_applied = [b["name"] for b in bd["bonuses_applied"]]
+        assert names_applied == ["Eco surcharge"]
+        assert bd["applied_bonus_rp_kwh"] == pytest.approx(0.5)
+        assert bd["effective_rp_kwh"] == pytest.approx(7.60 + 0.5)
 
 
 class TestSeasonalFixedHtNt:
