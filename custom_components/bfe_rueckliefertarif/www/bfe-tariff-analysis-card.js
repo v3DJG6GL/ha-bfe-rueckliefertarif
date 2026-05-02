@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.5";
+const CARD_VERSION = "0.21.6";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -797,25 +797,23 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 }
 
-// v0.21.5 — poll-and-re-register loop.
+// v0.21.6 — continuous registration monitor.
 //
-// Background: in v0.21.4 the register block did one customElements.define
-// then logged "registered OK" using BfeTariffAnalysisCard.name (the class
-// .name property, NOT a customElements.get probe). On dev HA we observed
-// our log firing yet `customElements.get(tag)` returned undefined seconds
-// later in DevTools — strong evidence that something between our script
-// and the picker is wiping our registration. Most likely cause: HA's
-// @webcomponents/scoped-custom-element-registry polyfill replaces
-// window.customElements at app.ts:1; in some cache/load orderings our
-// register lands on a registry that's then thrown away.
+// Diagnostics from v0.21.5 confirmed (DevTools after picker error):
+//   customElements.get("bfe-tariff-analysis-card")          → undefined
+//   customElements.whenDefined("bfe-tariff-analysis-card")  → pending forever
+// even though our v0.21.5 verified-sync log fired immediately after define.
+// Conclusion: something wipes/replaces the customElements registry AFTER
+// our script registers but BEFORE the picker queries it. v0.21.5's
+// one-shot polling loop stopped after first success and missed the wipe.
 //
-// The loop below re-asserts the registration every 100 ms (capped at 30 s)
-// until customElements.get(tag) actually returns OUR class object. The
-// log only fires after that strict-equality check holds — so when you see
-// it, registration has truly stuck.
+// Fix: monitor every 200ms FOREVER. If our class is missing from the
+// registry, re-define. Cost is ~5 calls/sec and a registry lookup —
+// negligible. The first-success log fires once; subsequent wipes log a
+// warning so we can quantify the problem.
 function _bfeDefine() {
   if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
-    return true;
+    return false; // already present, no-op
   }
   try {
     customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
@@ -825,47 +823,40 @@ function _bfeDefine() {
   }
 }
 
-_bfeDefine();
+let _bfeRegisterCount = 0;
+let _bfeWipeCount = 0;
+let _bfePreviouslyRegistered = false;
 
-let _bfeRegisterAttempts = 1;
-const _bfeRegisterStart = performance.now();
-let _bfeRegistered = false;
-const _bfeRegisterInterval = setInterval(() => {
-  if (_bfeRegistered) {
-    clearInterval(_bfeRegisterInterval);
+function _bfeMonitorTick() {
+  const present =
+    customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard;
+  if (present) {
+    _bfePreviouslyRegistered = true;
     return;
   }
-  if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
-    _bfeRegistered = true;
-    clearInterval(_bfeRegisterInterval);
-    const elapsed = (performance.now() - _bfeRegisterStart).toFixed(0);
-    const tries = _bfeRegisterAttempts;
-    console.info(
-      `[BFE] customElements registered OK (verified). ` +
-      `attempts=${tries}, elapsed=${elapsed}ms`
-    );
-    _bfeRecover();
-    return;
-  }
-  if (performance.now() - _bfeRegisterStart > 30000) {
-    clearInterval(_bfeRegisterInterval);
+  if (_bfePreviouslyRegistered) {
+    _bfeWipeCount += 1;
     console.warn(
-      `[BFE] customElements.define never persisted after ${_bfeRegisterAttempts} ` +
-      `attempts over 30s — picker / dashboard rendering will likely fail. ` +
-      `Hard-refresh (Ctrl+Shift+R) or check service-worker cache.`
+      `[BFE] registration was wiped (wipe #${_bfeWipeCount}) — re-defining`
     );
-    return;
   }
-  _bfeRegisterAttempts += 1;
-  _bfeDefine();
-}, 100);
-
-// First-pass check in case the synchronous _bfeDefine already stuck.
-if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
-  _bfeRegistered = true;
-  clearInterval(_bfeRegisterInterval);
-  console.info(`[BFE] customElements registered OK (verified, sync).`);
+  const ok = _bfeDefine();
+  if (ok) {
+    _bfeRegisterCount += 1;
+    if (_bfeRegisterCount === 1) {
+      console.info("[BFE] customElements registered OK (verified, sync).");
+    } else {
+      console.info(
+        `[BFE] re-registered after wipe (total registers: ${_bfeRegisterCount})`
+      );
+    }
+    _bfePreviouslyRegistered = true;
+    _bfeRecover();
+  }
 }
+
+_bfeMonitorTick();
+setInterval(_bfeMonitorTick, 200);
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "bfe-tariff-analysis-card")) {
