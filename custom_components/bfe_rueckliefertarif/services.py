@@ -465,11 +465,19 @@ def _aggregate_by_period(
 ) -> list[dict]:
     """Bucket per-hour records by Zurich-local period. Pure function.
 
-    ``rhythm == "quartal"`` → bucket key ``YYYYQN`` (e.g. ``2026Q1``).
-    Anything else (including ``"monat"`` and ``None``) → bucket key
-    ``YYYY-MM``. Avg rates are kWh-weighted; ``None`` for zero-export
-    periods. The Base/HKN columns decompose the total (``base + hkn = total``
-    within rounding).
+    Bucket key by ``rhythm``:
+    - ``"quartal"``        → ``YYYYQN`` (e.g. ``2026Q1``)
+    - ``"jahr"`` (v0.21.0) → ``YYYY``
+    - ``"tag"``  (v0.21.0) → ``YYYY-MM-DD``
+    - ``"stunde"`` (v0.21) → ``YYYY-MM-DD HH:00``
+    - anything else (incl. ``"monat"``, ``None``) → ``YYYY-MM``
+
+    The new (v0.21.0) granularities serve the chart-history view via
+    ``get_breakdown`` and reuse the same kWh-weighted averaging math as
+    the quarterly/monthly cases.
+
+    Avg rates are kWh-weighted; ``None`` for zero-export periods. Base
+    + HKN + Bonus decompose the total within rounding.
 
     ``intended_hkn_rp_kwh`` (when given) is stored per-period so the renderer
     can detect cap-forfeiture by comparing applied (kWh-weighted avg) against
@@ -485,6 +493,9 @@ def _aggregate_by_period(
 
     z = ZoneInfo("Europe/Zurich")
     quarterly = rhythm == ABRECHNUNGS_RHYTHMUS_QUARTAL
+    yearly = rhythm == "jahr"
+    daily = rhythm == "tag"
+    hourly = rhythm == "stunde"
     buckets: dict[str, dict[str, float]] = defaultdict(
         lambda: {
             "kwh": 0.0,
@@ -500,7 +511,13 @@ def _aggregate_by_period(
     sub_buckets: dict[str, dict[str, dict[str, float]]] = defaultdict(dict)
     for r in records:
         local = r.start.astimezone(z)
-        if quarterly:
+        if hourly:
+            key = local.strftime("%Y-%m-%d %H:00")
+        elif daily:
+            key = local.strftime("%Y-%m-%d")
+        elif yearly:
+            key = str(local.year)
+        elif quarterly:
             key = f"{local.year}Q{(local.month - 1) // 3 + 1}"
         else:
             key = local.strftime("%Y-%m")
@@ -1408,16 +1425,22 @@ def _resolve_quarters(data: dict | None) -> list[Quarter]:
     """Map call args to a list of Quarters.
 
     Precedence (first match wins):
-    - ``last_n_quarters: N``  → most recent N quarters (oldest first)
-    - both year + quarter     → ``[Quarter(year, quarter)]``
-    - year only               → all 4 quarters of that year
-    - quarter only            → that quarter of the current year
-    - neither                 → ``[current_quarter]``
+    - ``last_n_quarters: N``                      → most recent N quarters (oldest first)
+    - ``from_year`` + ``from_quarter``/``to_year``/``to_quarter``  → explicit range (v0.21.0)
+    - ``from_year`` only                          → from that year through current
+    - both year + quarter                          → ``[Quarter(year, quarter)]``
+    - year only                                    → all 4 quarters of that year
+    - quarter only                                 → that quarter of the current year
+    - neither                                      → ``[current_quarter]``
     """
     from datetime import datetime as _dt
 
     data = data or {}
     last_n = data.get("last_n_quarters")
+    from_year = data.get("from_year")
+    from_quarter = data.get("from_quarter")
+    to_year = data.get("to_year")
+    to_quarter = data.get("to_quarter")
     year = data.get("year")
     quarter = data.get("quarter")
     today = date.today()
@@ -1435,6 +1458,20 @@ def _resolve_quarters(data: dict | None) -> list[Quarter]:
         out.reverse()  # oldest first — natural for time-series charts
         return out
 
+    if from_year is not None:
+        start_y = int(from_year)
+        start_q = int(from_quarter) if from_quarter else 1
+        end_y = int(to_year) if to_year is not None else today.year
+        end_q = int(to_quarter) if to_quarter is not None else 4
+        out = []
+        cur = Quarter(start_y, start_q)
+        end = Quarter(end_y, end_q)
+        # Inclusive range
+        while cur <= end:
+            out.append(cur)
+            cur = cur.next()
+        return out
+
     if year is not None and quarter is not None:
         return [Quarter(int(year), int(quarter))]
     if year is not None:
@@ -1442,6 +1479,242 @@ def _resolve_quarters(data: dict | None) -> list[Quarter]:
     if quarter is not None:
         return [Quarter(today.year, int(quarter))]
     return [quarter_of(_dt.now(UTC))]
+
+
+# v0.21.0 — chart granularity caps. Limits the number of quarters fetched
+# from the recorder per service call to keep response payloads bounded.
+# When user requests more, we truncate to the most-recent N quarters and
+# set ``truncated_to_quarters`` in the response so the card can show a hint.
+GRANULARITY_QUARTER_CAPS = {
+    "stunde":  1,    # 90 days × 24h = 2160 rows
+    "tag":     4,    # ~360 daily rows
+    "monat":  20,    # ~60 monthly rows (only when recompute path triggered)
+    "quartal": 40,   # 40 quarterly rows
+    "jahr":   80,    # 20 yearly rows (rolled up from quarterly)
+}
+
+
+def _cap_quarters(
+    quarters: list[Quarter], granularity: str | None
+) -> tuple[list[Quarter], int]:
+    """Truncate a quarter list to the per-granularity cap, most-recent first.
+
+    Returns ``(capped_list, original_count)``. When the input fits within
+    the cap, original_count == len(capped_list).
+    """
+    if not granularity or granularity not in GRANULARITY_QUARTER_CAPS:
+        return list(quarters), len(quarters)
+    cap = GRANULARITY_QUARTER_CAPS[granularity]
+    if len(quarters) <= cap:
+        return list(quarters), len(quarters)
+    # Keep the LAST `cap` quarters (most recent — what the user wants for
+    # a time-series chart).
+    return quarters[-cap:], len(quarters)
+
+
+async def _compute_hour_records_for_quarters(
+    hass: HomeAssistant, quarters: list[Quarter]
+) -> list:
+    """Re-run the importer's per-hour computation for each quarter and
+    return the flat HourRecord list across all quarters.
+
+    Used by the chart-history view (granularity ∈ {stunde, tag, and monat
+    for quartal-billed users}) when the snapshot's pre-aggregated periods
+    are too coarse. Reuses the existing importer pipeline:
+    - ``_cfg_for_entry(for_quarter=q)`` for the active config at each Q
+    - ``read_hourly_export`` for the user's grid-export kWh
+    - ``coordinator.quarterly`` for BFE prices (already cached)
+    - ``compute_quarter_plan_segmented`` with anchor=0 (we don't need
+      cumulative sums — just per-hour rate × kWh contributions)
+
+    Quarters where BFE hasn't published the price yet, or that have no
+    recorder data, are silently skipped (zero contribution).
+    """
+    import aiohttp
+
+    from .bfe import fetch_quarterly
+    from .importer import compute_quarter_plan_segmented
+
+    coordinator = _first_entry_data(hass).get("coordinator")
+    quarterly_prices = coordinator.quarterly if coordinator else {}
+
+    # Fetch BFE prices once if we don't have them cached.
+    if not quarterly_prices:
+        async with aiohttp.ClientSession() as session:
+            quarterly_prices = await fetch_quarterly(session)
+
+    out: list = []
+    for q in quarters:
+        if q not in quarterly_prices:
+            continue
+        try:
+            cfg, _tariff_cfg = _cfg_for_entry(hass, for_quarter=q)
+        except (RuntimeError, KeyError, LookupError):
+            continue
+
+        export_id = cfg.get(CONF_STROMNETZEINSPEISUNG_KWH)
+        if not export_id:
+            continue
+
+        q_start, q_end = quarter_bounds_utc(q)
+
+        try:
+            hourly_kwh = await read_hourly_export(hass, export_id, q_start, q_end)
+        except Exception as exc:
+            _LOGGER.debug("Hour record fetch failed for %s: %s", q, exc)
+            continue
+
+        billing = cfg.get(CONF_ABRECHNUNGS_RHYTHMUS) or ABRECHNUNGS_RHYTHMUS_QUARTAL
+        monthly_prices = coordinator.monthly if (coordinator and billing == ABRECHNUNGS_RHYTHMUS_MONAT) else None
+
+        try:
+            segments = _resolve_quarter_segments(hass, q)
+            plan = compute_quarter_plan_segmented(
+                q=q,
+                hourly_kwh=hourly_kwh,
+                quarterly_price=quarterly_prices[q],
+                monthly_prices=monthly_prices,
+                segments=segments,
+                billing_mode=billing,
+                anchor_sum_chf=0.0,  # we don't need cumulative — just rates × kwh
+                old_post_quarter_first_sum_chf=None,
+            )
+        except Exception as exc:
+            _LOGGER.debug("compute_quarter_plan failed for %s: %s", q, exc)
+            continue
+
+        out.extend(plan.records)
+
+    return out
+
+
+def _aggregate_to_yearly(report) -> _RecomputeReport:
+    """Roll up a quarterly-row ``_RecomputeReport`` into yearly buckets.
+
+    kWh-weighted averaging, totals summed. Returns a fresh report with
+    one row per year. Most ``*_at_period`` metadata fields are taken
+    from the LATEST quarter of the year (best-effort representativeness
+    when configs change mid-year).
+    """
+    by_year: dict[str, list] = defaultdict(list)
+    for row in report.rows:
+        year = row.period.split("Q")[0] if "Q" in row.period else row.period[:4]
+        by_year[year].append(row)
+
+    yearly_rows: list[_RecomputeReportRow] = []
+    for year in sorted(by_year):
+        rows_in_year = by_year[year]
+        total_kwh = sum((r.total_kwh or 0.0) for r in rows_in_year)
+        total_chf = sum((r.total_chf or 0.0) for r in rows_in_year)
+        # kWh-weighted averages
+        if total_kwh > 0:
+            rate_avg = sum(
+                ((r.rate_rp_kwh_avg or 0.0) * (r.total_kwh or 0.0)) for r in rows_in_year
+            ) / total_kwh
+            base_avg = sum(
+                ((r.base_rp_kwh_avg or 0.0) * (r.total_kwh or 0.0)) for r in rows_in_year
+            ) / total_kwh
+            hkn_avg = sum(
+                ((r.hkn_rp_kwh_avg or 0.0) * (r.total_kwh or 0.0)) for r in rows_in_year
+            ) / total_kwh
+            bonus_avg = sum(
+                ((r.bonus_rp_kwh_avg or 0.0) * (r.total_kwh or 0.0)) for r in rows_in_year
+            ) / total_kwh
+        else:
+            rate_avg = base_avg = hkn_avg = bonus_avg = None
+        latest = rows_in_year[-1]
+        yearly_rows.append(
+            _RecomputeReportRow(
+                period=year,
+                rate_rp_kwh_avg=round(rate_avg, 4) if rate_avg is not None else None,
+                base_rp_kwh_avg=round(base_avg, 4) if base_avg is not None else None,
+                hkn_rp_kwh_avg=round(hkn_avg, 4) if hkn_avg is not None else None,
+                bonus_rp_kwh_avg=round(bonus_avg, 4) if bonus_avg is not None else None,
+                intended_hkn_rp_kwh=latest.intended_hkn_rp_kwh,
+                total_kwh=round(total_kwh, 3),
+                total_chf=round(total_chf, 4),
+                # Best-effort metadata from the latest quarter of the year
+                utility_key_at_period=latest.utility_key_at_period,
+                utility_name_at_period=latest.utility_name_at_period,
+                kw_at_period=latest.kw_at_period,
+                eigenverbrauch_at_period=latest.eigenverbrauch_at_period,
+                hkn_optin_at_period=latest.hkn_optin_at_period,
+                billing_at_period=latest.billing_at_period,
+                base_model_at_period=latest.base_model_at_period,
+                is_current_estimate=any(r.is_current_estimate for r in rows_in_year),
+            )
+        )
+    yearly_rows.sort(key=lambda r: r.period, reverse=True)
+    return _RecomputeReport(
+        rows=yearly_rows,
+        quarters_recomputed=report.quarters_recomputed,
+        config=report.config,
+        before_active_count=report.before_active_count,
+        before_active_earliest=report.before_active_earliest,
+    )
+
+
+async def _build_history_response(
+    hass: HomeAssistant, quarters: list[Quarter], granularity: str
+) -> _RecomputeReport:
+    """v0.21.0 — chart-history report builder. Dispatches by granularity:
+
+    - ``jahr``    → roll up snapshot's quarterly rows to yearly
+    - ``quartal`` → snapshot's quarterly rows as-is
+    - ``monat``   → snapshot rows if ALL periods are monatlich-billed;
+                    else recompute from HourRecord
+    - ``tag`` / ``stunde`` → recompute from HourRecord, aggregate to bucket
+    """
+    if granularity in ("jahr", "quartal"):
+        report = _build_recompute_report(hass, quarters)
+        if granularity == "jahr":
+            report = _aggregate_to_yearly(report)
+        return report
+
+    # Try the snapshot path for monat first — works for monatlich-billed users.
+    if granularity == "monat":
+        report = _build_recompute_report(hass, quarters)
+        if report.rows and all(
+            r.billing_at_period == ABRECHNUNGS_RHYTHMUS_MONAT for r in report.rows
+        ):
+            return report
+        # Fall through to recompute path for quartal-billed users.
+
+    # On-demand HourRecord recompute path: monat-recompute / tag / stunde
+    rhythm_for_aggregator = "stunde" if granularity == "stunde" else (
+        "tag" if granularity == "tag" else ABRECHNUNGS_RHYTHMUS_MONAT
+    )
+    records = await _compute_hour_records_for_quarters(hass, quarters)
+    period_dicts = _aggregate_by_period(records, rhythm_for_aggregator)
+
+    rows: list[_RecomputeReportRow] = []
+    for p in period_dicts:
+        rows.append(
+            _RecomputeReportRow(
+                period=p["period"],
+                rate_rp_kwh_avg=p["rate_rp_kwh_avg"],
+                base_rp_kwh_avg=p["base_rp_kwh_avg"],
+                hkn_rp_kwh_avg=p["hkn_rp_kwh_avg"],
+                bonus_rp_kwh_avg=p["bonus_rp_kwh_avg"],
+                intended_hkn_rp_kwh=p["intended_hkn_rp_kwh"],
+                total_kwh=p["kwh"],
+                total_chf=p["chf"],
+                # No per-period config metadata for recompute path —
+                # would require expensive per-bucket cfg resolution.
+                # The card uses only the period + rate/total fields for charts.
+            )
+        )
+    rows.sort(key=lambda r: r.period, reverse=True)
+
+    # Assemble a minimal report. Config block is None — card uses the
+    # detail-call response for active-config; this report is chart-only.
+    return _RecomputeReport(
+        rows=rows,
+        quarters_recomputed=len(quarters),
+        config={},
+        before_active_count=0,
+        before_active_earliest=None,
+    )
 
 
 def _report_to_dict(report) -> dict:
@@ -1464,10 +1737,36 @@ async def _handle_get_breakdown(call: ServiceCall):
     Read-only: no LTS rewrites, no auto-import. Missing quarters surface
     as empty rows in the response — the card displays a "Run Recompute
     history first" hint to the user.
+
+    v0.21.0 — accepts an optional ``granularity`` parameter for the chart
+    history view (jahr/quartal/monat/tag/stunde). When set, dispatches
+    to ``_build_history_response`` which may re-aggregate from
+    HourRecord on-demand for granularities finer than the snapshot
+    provides. Per-granularity quarter caps prevent oversized responses;
+    truncation surfaces via ``truncated_to_quarters`` in the response.
     """
-    quarters = _resolve_quarters(dict(call.data) if call.data else None)
-    report = _build_recompute_report(call.hass, quarters)
-    return _report_to_dict(report)
+    data = dict(call.data) if call.data else {}
+    granularity = data.get("granularity")
+    quarters = _resolve_quarters(data)
+
+    truncated_to: int | None = None
+    capped_quarters, original_count = _cap_quarters(quarters, granularity)
+    if len(capped_quarters) < original_count:
+        truncated_to = len(capped_quarters)
+    quarters = capped_quarters
+
+    if granularity:
+        report = await _build_history_response(call.hass, quarters, granularity)
+    else:
+        report = _build_recompute_report(call.hass, quarters)
+
+    response = _report_to_dict(report)
+    if truncated_to is not None:
+        response["truncated_to_quarters"] = truncated_to
+        response["original_quarters_requested"] = original_count
+    if granularity:
+        response["granularity"] = granularity
+    return response
 
 
 async def _handle_show_report(call: ServiceCall) -> None:

@@ -1,32 +1,34 @@
 /**
  * BFE Rückliefertarif — Tarif-Analyse Lovelace card
  *
- * v0.20.0: adds rate sparkline + stacked breakdown bar via ApexCharts
- * (loaded from `/api/bfe_rueckliefertarif/static/apexcharts.min.js`).
+ * v0.21.0 — variable-granularity charts + dual time controls.
  *
- * Calls service `bfe_rueckliefertarif.get_breakdown` twice per refresh:
- *   1. Current-period detail: { year, quarter }
- *   2. Last-N-quarters history: { last_n_quarters: 8 }
+ * TOP ROW: Year + Quarter dropdowns drive the breakdown table + active
+ * config (single-period detail view).
  *
- * Auto-registered by the integration via `frontend.add_extra_js_url` —
- * no manual Lovelace resource setup. Vanilla JS, no build step.
+ * CHART ROW: Granularity dropdown (Jahr/Quartal/Monat/Tag/Stunde) +
+ * time-range chip selector + custom range inputs drive the rate
+ * sparkline + stacked-breakdown bar.
  *
- * Usage in Lovelace YAML:
+ * Service: bfe_rueckliefertarif.get_breakdown — called twice per refresh
+ * (one detail call with year+quarter, one history call with granularity
+ * + range params). Both Promise.all-parallel.
+ *
+ * Auto-registered by the integration via frontend.add_extra_js_url.
+ *
+ * Usage:
  *   type: custom:bfe-tariff-analysis-card
- *   history_quarters: 8   # optional, default 8
+ *   history_quarters: 8   # optional, default 8 (used when chart range = preset)
  */
 
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.20.2";
+const CARD_VERSION = "0.21.0";
+const HISTORY_QUARTERS_DEFAULT = 8;
 
-// v0.20.2 — scope-isolated ApexCharts loader. Prevents global pollution
-// that broke RomRider/apexcharts-card in v0.20.0/v0.20.1 (their internally
-// bundled ApexCharts conflicted with our v3.54.0 sitting on window.ApexCharts).
-// We fetch the UMD bundle, wrap it in a CommonJS-style factory, and
-// capture the export into a module-private reference. window.ApexCharts
-// is never touched.
+// v0.20.2 scope-isolated ApexCharts loader (avoid window.ApexCharts pollution
+// that conflicts with RomRider/apexcharts-card).
 const APEX_URL = "/api/bfe_rueckliefertarif/static/apexcharts.min.js";
 let _apexPromise = null;
 function _loadApexScoped() {
@@ -36,9 +38,6 @@ function _loadApexScoped() {
       if (!r.ok) throw new Error(`Failed to fetch ApexCharts: ${r.status}`);
       return r.text();
     });
-    // Wrap UMD bundle so it sees a CommonJS environment and assigns to
-    // module.exports instead of window.ApexCharts. Safe even if some inner
-    // code path also tries to set globals — we capture before they leak.
     const factory = new Function(
       "module", "exports",
       code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
@@ -50,7 +49,25 @@ function _loadApexScoped() {
   })();
   return _apexPromise;
 }
-const HISTORY_QUARTERS_DEFAULT = 8;
+
+// Time range presets — map to service-call params.
+const RANGE_PRESETS = [
+  { id: "last_4q",      label: "Letzte 4Q",       params: { last_n_quarters: 4  } },
+  { id: "last_8q",      label: "Letzte 8Q",       params: { last_n_quarters: 8  } },
+  { id: "last_12q",     label: "Letzte 12Q",      params: { last_n_quarters: 12 } },
+  { id: "last_year",    label: "Letztes Jahr",    params: "last_year" },
+  { id: "current_year", label: "Aktuelles Jahr",  params: "current_year" },
+  { id: "last_3y",      label: "Letzte 3J",       params: "last_3y" },
+  { id: "custom",       label: "Custom…",         params: "custom" },
+];
+
+const GRANULARITY_OPTIONS = [
+  { value: "jahr",    label: "Jahr"    },
+  { value: "quartal", label: "Quartal" },
+  { value: "monat",   label: "Monat"   },
+  { value: "tag",     label: "Tag"     },
+  { value: "stunde",  label: "Stunde"  },
+];
 
 class BfeTariffAnalysisCard extends HTMLElement {
   constructor() {
@@ -61,13 +78,22 @@ class BfeTariffAnalysisCard extends HTMLElement {
     this._rendered = false;
     this._loading = false;
     this._error = null;
-    this._response = null;     // current-period detail
-    this._history = null;      // multi-quarter history for charts
+    this._response = null;     // detail call
+    this._history = null;      // history call
     this._chartRate = null;
     this._chartStack = null;
+
     const now = new Date();
     this._year = now.getFullYear();
     this._quarter = Math.floor(now.getMonth() / 3) + 1;
+
+    // Chart-side state — independent of detail-view selectors.
+    this._chartState = {
+      granularity: "quartal",
+      range_preset: "last_8q",
+      range_from: { year: now.getFullYear() - 1, quarter: 1 },
+      range_to:   { year: this._year,            quarter: this._quarter },
+    };
   }
 
   setConfig(config) {
@@ -86,9 +112,48 @@ class BfeTariffAnalysisCard extends HTMLElement {
     }
   }
 
-  _historyQuarters() {
-    const n = Number(this._config.history_quarters);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : HISTORY_QUARTERS_DEFAULT;
+  _historyParams() {
+    const cs = this._chartState;
+    const out = { granularity: cs.granularity };
+    if (cs.range_preset === "custom") {
+      out.from_year = cs.range_from.year;
+      out.from_quarter = cs.range_from.quarter;
+      out.to_year = cs.range_to.year;
+      out.to_quarter = cs.range_to.quarter;
+      return out;
+    }
+    const preset = RANGE_PRESETS.find((p) => p.id === cs.range_preset);
+    if (!preset) {
+      out.last_n_quarters = HISTORY_QUARTERS_DEFAULT;
+      return out;
+    }
+    if (typeof preset.params === "object" && preset.params !== null) {
+      Object.assign(out, preset.params);
+      return out;
+    }
+    // Computed presets — derived from current calendar
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curQ = Math.floor(now.getMonth() / 3) + 1;
+    if (preset.params === "current_year") {
+      out.from_year = curYear;
+      out.from_quarter = 1;
+      out.to_year = curYear;
+      out.to_quarter = 4;
+    } else if (preset.params === "last_year") {
+      out.from_year = curYear - 1;
+      out.from_quarter = 1;
+      out.to_year = curYear - 1;
+      out.to_quarter = 4;
+    } else if (preset.params === "last_3y") {
+      out.from_year = curYear - 2;
+      out.from_quarter = 1;
+      out.to_year = curYear;
+      out.to_quarter = curQ;
+    } else {
+      out.last_n_quarters = HISTORY_QUARTERS_DEFAULT;
+    }
+    return out;
   }
 
   async _fetch() {
@@ -104,7 +169,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
       );
       const historyPromise = this._hass.callService(
         DOMAIN, SERVICE,
-        { last_n_quarters: this._historyQuarters() },
+        this._historyParams(),
         undefined, false, true,
       );
       const [detail, history] = await Promise.all([detailPromise, historyPromise]);
@@ -115,9 +180,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
       this._response = null;
       this._history = null;
     } finally {
-      // v0.20.2 — guarantee the loading state clears even if rendering
-      // threw mid-flight. Without this, "Aktualisieren" stayed disabled
-      // forever after a chart-mount exception.
+      // v0.20.2 — guarantee loading clears even if rendering throws mid-flight
       this._loading = false;
       try {
         this._renderBody();
@@ -143,32 +206,64 @@ class BfeTariffAnalysisCard extends HTMLElement {
         .header h2 {
           margin: 0; font-size: 1.2em; font-weight: 500;
         }
-        .controls {
+        .controls, .chart-controls {
           display: flex; gap: 8px; align-items: end;
           padding: 12px 16px; flex-wrap: wrap;
         }
-        .controls label {
+        .controls label, .chart-controls label {
           display: flex; flex-direction: column; gap: 4px;
           font-size: 0.85em; color: var(--secondary-text-color);
         }
-        .controls select, .controls button {
+        .controls select, .controls button,
+        .chart-controls select, .chart-controls input, .chart-controls button {
           font: inherit;
           padding: 6px 10px;
           border: 1px solid var(--divider-color, #ccc);
           border-radius: 4px;
           background: var(--card-background-color, #fff);
           color: var(--primary-text-color);
-          min-width: 80px;
+          min-width: 70px;
         }
-        .controls button {
+        .controls button, .chart-controls button.refresh {
           background: var(--primary-color);
           color: var(--text-primary-color, #fff);
           border: none;
           cursor: pointer;
           font-weight: 500;
+          min-width: 110px;
         }
-        .controls button:hover { opacity: 0.9; }
-        .controls button:disabled { opacity: 0.5; cursor: wait; }
+        .controls button:hover, .chart-controls button.refresh:hover { opacity: 0.9; }
+        .controls button:disabled, .chart-controls button.refresh:disabled { opacity: 0.5; cursor: wait; }
+        .chips {
+          display: flex; gap: 4px; flex-wrap: wrap;
+          padding: 0 16px 8px;
+        }
+        .chips .chip {
+          padding: 4px 10px;
+          border: 1px solid var(--divider-color, #ccc);
+          border-radius: 14px;
+          background: transparent;
+          color: var(--primary-text-color);
+          cursor: pointer;
+          font-size: 0.85em;
+          transition: all 0.15s;
+        }
+        .chips .chip:hover { background: var(--secondary-background-color, #f5f5f5); }
+        .chips .chip.active {
+          background: var(--primary-color);
+          color: var(--text-primary-color, #fff);
+          border-color: var(--primary-color);
+        }
+        .custom-range {
+          display: flex; gap: 8px; align-items: end; flex-wrap: wrap;
+          padding: 0 16px 12px;
+        }
+        .custom-range.hidden { display: none; }
+        .custom-range label {
+          display: flex; flex-direction: column; gap: 4px;
+          font-size: 0.85em; color: var(--secondary-text-color);
+        }
+        .custom-range input { min-width: 80px; max-width: 100px; }
         .body { padding: 0 16px 16px; }
         .loading, .error, .empty {
           padding: 24px 16px;
@@ -185,6 +280,13 @@ class BfeTariffAnalysisCard extends HTMLElement {
           text-transform: uppercase;
           letter-spacing: 0.04em;
         }
+        section h4 {
+          margin: 4px 0 6px;
+          font-size: 0.85em;
+          font-weight: 500;
+          color: var(--secondary-text-color);
+          font-style: italic;
+        }
         .config-grid {
           display: grid;
           grid-template-columns: max-content 1fr;
@@ -197,6 +299,12 @@ class BfeTariffAnalysisCard extends HTMLElement {
         .config-grid dd {
           margin: 0;
           color: var(--primary-text-color);
+        }
+        .config-warning {
+          font-size: 0.85em;
+          color: var(--warning-color, #ff9800);
+          margin-top: 4px;
+          font-style: italic;
         }
         table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
         th, td {
@@ -211,6 +319,11 @@ class BfeTariffAnalysisCard extends HTMLElement {
           font-size: 0.8em;
           color: var(--secondary-text-color);
           margin-top: 8px;
+        }
+        .truncation-hint {
+          font-size: 0.85em;
+          color: var(--warning-color, #ff9800);
+          padding: 8px 0;
         }
         ul.bonuses { padding-left: 20px; margin: 0; font-size: 0.9em; }
         ul.bonuses li { margin: 2px 0; }
@@ -240,7 +353,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
     const yearSelect = this.shadowRoot.querySelector(".year");
     const quarterSelect = this.shadowRoot.querySelector(".quarter");
-    const refreshBtn = this.shadowRoot.querySelector(".refresh");
+    const refreshBtn = this.shadowRoot.querySelector(".controls .refresh");
 
     const currentYear = new Date().getFullYear();
     for (let y = currentYear - 5; y <= currentYear + 1; y++) {
@@ -276,7 +389,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
   _renderBody() {
     const body = this.shadowRoot.querySelector(".body");
-    const refreshBtn = this.shadowRoot.querySelector(".refresh");
+    const refreshBtn = this.shadowRoot.querySelector(".controls .refresh");
     refreshBtn.disabled = this._loading;
     refreshBtn.textContent = this._loading ? "Lädt…" : "Aktualisieren";
 
@@ -295,13 +408,23 @@ class BfeTariffAnalysisCard extends HTMLElement {
       return;
     }
 
-    const cfg = this._response.config || {};
+    const cfgToday = this._response.config || {};
     const rows = this._response.rows || [];
+    // v0.21.0 — active config follows the SELECTED period (not always today's).
+    // Look for a row matching the chosen year+quarter; fall back to today's
+    // config block if no row found (e.g., quarter not yet imported).
+    const detailPeriod = `${this._year}Q${this._quarter}`;
+    const detailRow = rows.find((r) => r.period === detailPeriod);
+    const cfg = this._buildEffectiveConfig(detailRow, cfgToday);
+    const periodConfigDiffersFromToday =
+      detailRow !== undefined && this._configDiffersFromToday(detailRow, cfgToday);
 
     let html = "";
 
-    // Active configuration block
-    html += `<section><h3>Aktive Konfiguration (heute)</h3><dl class="config-grid">`;
+    // Active configuration block — for the selected period
+    html += `<section>`;
+    html += `<h3>Aktive Konfiguration${detailRow ? ` (${this._escape(detailPeriod)})` : " (heute)"}</h3>`;
+    html += `<dl class="config-grid">`;
     html += this._configRow("Versorger", cfg.utility_name || cfg.utility_key || "—");
     html += this._configRow("Anlage", `${this._fmt(cfg.kwp, 1)} kWp${cfg.eigenverbrauch ? " · EV" : " · keine EV"}${cfg.hkn_optin ? " · HKN" : " · keine HKN"}`);
     html += this._configRow("Abrechnung", cfg.billing || "—");
@@ -316,7 +439,11 @@ class BfeTariffAnalysisCard extends HTMLElement {
     if (cfg.fixed_ht_rp_kwh != null) {
       html += this._configRow("HT/NT", `HT ${this._fmt(cfg.fixed_ht_rp_kwh, 2)} · NT ${this._fmt(cfg.fixed_nt_rp_kwh, 2)} Rp/kWh`);
     }
-    html += `</dl></section>`;
+    html += `</dl>`;
+    if (periodConfigDiffersFromToday) {
+      html += `<div class="config-warning">⚠ Konfiguration für ${this._escape(detailPeriod)} — heute aktive Konfiguration weicht ab.</div>`;
+    }
+    html += `</section>`;
 
     // Bonuses block
     const advertised = cfg.bonuses_active || [];
@@ -332,13 +459,13 @@ class BfeTariffAnalysisCard extends HTMLElement {
       html += `</ul></section>`;
     }
 
-    // Per-period breakdown table
-    if (rows.length === 0) {
-      html += `<section><h3>Quartal ${this._year}Q${this._quarter}</h3>`;
+    // Per-period breakdown table (single quarter detail)
+    if (!detailRow) {
+      html += `<section><h3>Quartal ${this._escape(detailPeriod)}</h3>`;
       html += `<div class="empty">Noch keine Daten — führe zuerst <strong>Service: ${DOMAIN}.reimport_all_history</strong> aus, damit der Importer historische Quartale schreibt.</div>`;
       html += `</section>`;
     } else {
-      html += `<section><h3>Aufschlüsselung pro Periode</h3>`;
+      html += `<section><h3>Aufschlüsselung — ${this._escape(detailPeriod)}</h3>`;
       html += `<table><thead><tr>
         <th>Periode</th>
         <th>Basis</th>
@@ -348,29 +475,57 @@ class BfeTariffAnalysisCard extends HTMLElement {
         <th>kWh</th>
         <th>CHF</th>
       </tr></thead><tbody>`;
-      let hasEstimate = false;
-      for (const r of rows) {
-        const isEst = r.is_current_estimate;
-        if (isEst) hasEstimate = true;
-        html += `<tr>
-          <td class="${isEst ? "estimate" : ""}">${this._escape(r.period)}</td>
-          <td>${this._fmt(r.base_rp_kwh_avg, 3)}</td>
-          <td>${this._fmt(r.hkn_rp_kwh_avg, 3)}</td>
-          <td>${this._fmt(r.bonus_rp_kwh_avg, 3)}</td>
-          <td><strong>${this._fmt(r.rate_rp_kwh_avg, 3)}</strong></td>
-          <td>${this._fmt(r.total_kwh, 2)}</td>
-          <td>${this._fmt(r.total_chf, 2)}</td>
-        </tr>`;
-      }
+      const r = detailRow;
+      const isEst = r.is_current_estimate;
+      html += `<tr>
+        <td class="${isEst ? "estimate" : ""}">${this._escape(r.period)}</td>
+        <td>${this._fmt(r.base_rp_kwh_avg, 3)}</td>
+        <td>${this._fmt(r.hkn_rp_kwh_avg, 3)}</td>
+        <td>${this._fmt(r.bonus_rp_kwh_avg, 3)}</td>
+        <td><strong>${this._fmt(r.rate_rp_kwh_avg, 3)}</strong></td>
+        <td>${this._fmt(r.total_kwh, 2)}</td>
+        <td>${this._fmt(r.total_chf, 2)}</td>
+      </tr>`;
       html += `</tbody></table>`;
-      if (hasEstimate) {
+      if (isEst) {
         html += `<div class="footnote">* Geschätzt — laufendes Quartal, BFE hat noch nicht publiziert.</div>`;
       }
       html += `</section>`;
     }
 
+    // CHART CONTROLS — granularity + time range chips + custom range
+    html += `<section><h3>Verlauf — Steuerung</h3>`;
+    html += `<div class="chart-controls">`;
+    html += `<label>Granularität <select class="granularity">`;
+    for (const g of GRANULARITY_OPTIONS) {
+      const sel = g.value === this._chartState.granularity ? " selected" : "";
+      html += `<option value="${g.value}"${sel}>${this._escape(g.label)}</option>`;
+    }
+    html += `</select></label>`;
+    html += `<button class="refresh chart-refresh">Aktualisieren</button>`;
+    html += `</div>`;
+    html += `<div class="chips">`;
+    for (const p of RANGE_PRESETS) {
+      const active = p.id === this._chartState.range_preset ? " active" : "";
+      html += `<button class="chip${active}" data-preset="${p.id}">${this._escape(p.label)}</button>`;
+    }
+    html += `</div>`;
+    const customHidden = this._chartState.range_preset === "custom" ? "" : " hidden";
+    html += `<div class="custom-range${customHidden}">`;
+    html += `<label>Von Jahr <input type="number" class="from-year" value="${this._chartState.range_from.year}" min="2020" max="2099"></label>`;
+    html += `<label>Von Q <input type="number" class="from-quarter" value="${this._chartState.range_from.quarter}" min="1" max="4"></label>`;
+    html += `<label>Bis Jahr <input type="number" class="to-year" value="${this._chartState.range_to.year}" min="2020" max="2099"></label>`;
+    html += `<label>Bis Q <input type="number" class="to-quarter" value="${this._chartState.range_to.quarter}" min="1" max="4"></label>`;
+    html += `</div>`;
+    html += `</section>`;
+
     // History charts (v0.20.0)
-    const historyRows = (this._history?.rows || []);
+    const historyRows = this._history?.rows || [];
+    const truncatedTo = this._history?.truncated_to_quarters;
+    const originalReq = this._history?.original_quarters_requested;
+    if (truncatedTo != null && originalReq != null && truncatedTo < originalReq) {
+      html += `<div class="truncation-hint">⚠ Zeitraum gekürzt: ${truncatedTo} von ${originalReq} Quartalen (Granularität-Limit für ${this._escape(this._chartState.granularity)}).</div>`;
+    }
     if (historyRows.length > 0) {
       html += `<section><h3>Verlauf — Effektiver Tarif</h3>`;
       html += `<div class="chart-host" id="chart-rate"></div>`;
@@ -378,20 +533,98 @@ class BfeTariffAnalysisCard extends HTMLElement {
       html += `<section><h3>Verlauf — Aufschlüsselung pro Periode</h3>`;
       html += `<div class="chart-host tall" id="chart-stack"></div>`;
       html += `</section>`;
+    } else if (this._history) {
+      html += `<section><h3>Verlauf</h3><div class="empty">Keine Daten für gewählten Zeitraum.</div></section>`;
     }
 
     // Data source footer
     html += `<section><h3>Datenquelle</h3><dl class="config-grid">`;
-    html += this._configRow("Tariffs DB", `v${cfg.tariffs_version || "—"} (${cfg.tariffs_source || "—"})`);
+    html += this._configRow("Tariffs DB", `v${cfgToday.tariffs_version || "—"} (${cfgToday.tariffs_source || "—"})`);
     html += this._configRow("Karte", `v${CARD_VERSION}`);
     html += `</dl></section>`;
 
     body.innerHTML = html;
 
+    // Wire chart-controls events
+    this._wireChartControls();
+
     // Mount charts after innerHTML is set
     if (historyRows.length > 0) {
       this._renderCharts(historyRows);
     }
+  }
+
+  _wireChartControls() {
+    const root = this.shadowRoot;
+    const granularitySelect = root.querySelector(".granularity");
+    const chartRefresh = root.querySelector(".chart-refresh");
+    const chips = root.querySelectorAll(".chip");
+    const fromYear = root.querySelector(".from-year");
+    const fromQuarter = root.querySelector(".from-quarter");
+    const toYear = root.querySelector(".to-year");
+    const toQuarter = root.querySelector(".to-quarter");
+
+    granularitySelect?.addEventListener("change", (e) => {
+      this._chartState.granularity = e.target.value;
+    });
+    chartRefresh?.addEventListener("click", () => this._fetch());
+    chips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        this._chartState.range_preset = chip.dataset.preset;
+        // Re-render to update chip-active state + show/hide custom inputs
+        this._renderBody();
+      });
+    });
+    fromYear?.addEventListener("change", (e) => {
+      this._chartState.range_from.year = parseInt(e.target.value, 10) || 2020;
+    });
+    fromQuarter?.addEventListener("change", (e) => {
+      const v = parseInt(e.target.value, 10);
+      this._chartState.range_from.quarter = (v >= 1 && v <= 4) ? v : 1;
+    });
+    toYear?.addEventListener("change", (e) => {
+      this._chartState.range_to.year = parseInt(e.target.value, 10) || 2099;
+    });
+    toQuarter?.addEventListener("change", (e) => {
+      const v = parseInt(e.target.value, 10);
+      this._chartState.range_to.quarter = (v >= 1 && v <= 4) ? v : 4;
+    });
+  }
+
+  _buildEffectiveConfig(row, fallback) {
+    if (!row) return fallback;
+    return {
+      utility_key: row.utility_key_at_period ?? fallback.utility_key,
+      utility_name: row.utility_name_at_period ?? fallback.utility_name,
+      kwp: row.kw_at_period ?? fallback.kwp,
+      eigenverbrauch: row.eigenverbrauch_at_period ?? fallback.eigenverbrauch,
+      hkn_optin: row.hkn_optin_at_period ?? fallback.hkn_optin,
+      hkn_rp_kwh: fallback.hkn_rp_kwh,                // not on row
+      billing: row.billing_at_period ?? fallback.billing,
+      floor_label: row.floor_label_at_period ?? fallback.floor_label,
+      floor_rp_kwh: row.floor_rp_kwh_at_period ?? fallback.floor_rp_kwh,
+      base_model: row.base_model_at_period ?? fallback.base_model,
+      cap_mode: row.cap_mode_at_period ?? fallback.cap_mode,
+      cap_rp_kwh: row.cap_rp_kwh_at_period ?? fallback.cap_rp_kwh,
+      tariffs_version: row.tariffs_version_at_period ?? fallback.tariffs_version,
+      tariffs_source: row.tariffs_source_at_period ?? fallback.tariffs_source,
+      seasonal: row.seasonal_at_period ?? fallback.seasonal,
+      fixed_rp_kwh: row.fixed_rp_kwh_at_period ?? fallback.fixed_rp_kwh,
+      fixed_ht_rp_kwh: row.fixed_ht_rp_kwh_at_period ?? fallback.fixed_ht_rp_kwh,
+      fixed_nt_rp_kwh: row.fixed_nt_rp_kwh_at_period ?? fallback.fixed_nt_rp_kwh,
+      bonuses_active: row.bonuses_active_at_period ?? fallback.bonuses_active,
+      user_inputs: row.user_inputs_at_period ?? fallback.user_inputs,
+    };
+  }
+
+  _configDiffersFromToday(row, today) {
+    return (
+      row.utility_key_at_period !== today.utility_key ||
+      row.kw_at_period !== today.kwp ||
+      row.eigenverbrauch_at_period !== today.eigenverbrauch ||
+      row.hkn_optin_at_period !== today.hkn_optin ||
+      row.billing_at_period !== today.billing
+    );
   }
 
   async _renderCharts(historyRows) {
@@ -408,8 +641,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
       return;
     }
 
-    // Sort rows OLDEST first (service returns oldest-first for last_n_quarters,
-    // but defend against future changes)
+    // Sort rows OLDEST first
     const sorted = [...historyRows].sort((a, b) => {
       return String(a.period).localeCompare(String(b.period));
     });
@@ -420,6 +652,8 @@ class BfeTariffAnalysisCard extends HTMLElement {
     const bonusRpKwh = sorted.map((r) => this._numOrNull(r.bonus_rp_kwh_avg));
 
     const themeMode = this._isDarkTheme() ? "dark" : "light";
+    const granularity = this._chartState.granularity;
+    const xaxisLabels = this._xaxisLabelsForGranularity(granularity, sorted.length);
 
     // Sparkline — effective rate over time
     const rateEl = this.shadowRoot.querySelector("#chart-rate");
@@ -435,20 +669,16 @@ class BfeTariffAnalysisCard extends HTMLElement {
         },
         theme: { mode: themeMode },
         series: [{ name: "Effektiv (Rp/kWh)", data: ratesRpKwh }],
-        xaxis: { categories, labels: { rotate: -45, style: { fontSize: "11px" } } },
+        xaxis: { categories, labels: xaxisLabels },
         yaxis: {
           title: { text: "Rp/kWh", style: { fontSize: "11px" } },
           labels: { formatter: (v) => v == null ? "—" : Number(v).toFixed(2) },
           decimalsInFloat: 2,
         },
         stroke: { curve: "straight", width: 2 },
-        markers: { size: 4 },
+        markers: { size: granularity === "stunde" ? 0 : 4 },
         dataLabels: { enabled: false },
         tooltip: {
-          // v0.20.2 — explicit shared+intersect (ApexCharts requires both
-          // when shared=true; default intersect=true causes a runtime
-          // throw "tooltip.shared cannot be enabled when tooltip.intersect
-          // is true").
           shared: false,
           intersect: false,
           y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
@@ -460,56 +690,79 @@ class BfeTariffAnalysisCard extends HTMLElement {
       try { await this._chartRate.render(); } catch (e) { console.error("BFE rate chart render:", e); }
     }
 
-    // Stacked bar — base / HKN / bonus per period
+    // Stacked bar — base / HKN / bonus per period.
+    // Hidden at hourly granularity (illegible with 2160 bars).
     const stackEl = this.shadowRoot.querySelector("#chart-stack");
     if (stackEl) {
-      const opts = {
-        chart: {
-          type: "bar",
-          stacked: true,
-          height: 260,
-          background: "transparent",
-          toolbar: { show: false },
-          animations: { enabled: false },
-          parentHeightOffset: 0,
-        },
-        theme: { mode: themeMode },
-        series: [
-          { name: "Basis",   data: baseRpKwh },
-          { name: "HKN",     data: hknRpKwh },
-          { name: "Boni",    data: bonusRpKwh },
-        ],
-        xaxis: { categories, labels: { rotate: -45, style: { fontSize: "11px" } } },
-        yaxis: {
-          title: { text: "Rp/kWh", style: { fontSize: "11px" } },
-          labels: { formatter: (v) => v == null ? "—" : Number(v).toFixed(2) },
-          decimalsInFloat: 2,
-        },
-        plotOptions: {
-          bar: { columnWidth: "55%", borderRadius: 2 },
-        },
-        dataLabels: { enabled: false },
-        tooltip: {
-          // v0.20.2 — see note in sparkline opts above. shared+intersect
-          // both false works for stacked bars too; users see a tooltip per
-          // bar segment (Basis / HKN / Boni separately).
-          shared: false,
-          intersect: false,
-          y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
-        },
-        legend: { position: "top", horizontalAlign: "right", fontSize: "12px" },
-        grid: { borderColor: "var(--divider-color, #eee)" },
-        colors: ["#03a9f4", "#4caf50", "#ff9800"],
-      };
-      this._chartStack = new Apex(stackEl, opts);
-      try { await this._chartStack.render(); } catch (e) { console.error("BFE stack chart render:", e); }
+      if (granularity === "stunde") {
+        stackEl.innerHTML = `<div class="chart-fallback">Aufschlüsselung nicht angezeigt bei stündlicher Granularität (zu viele Datenpunkte).</div>`;
+      } else {
+        const opts = {
+          chart: {
+            type: "bar",
+            stacked: true,
+            height: 260,
+            background: "transparent",
+            toolbar: { show: false },
+            animations: { enabled: false },
+            parentHeightOffset: 0,
+          },
+          theme: { mode: themeMode },
+          series: [
+            { name: "Basis",   data: baseRpKwh },
+            { name: "HKN",     data: hknRpKwh },
+            { name: "Boni",    data: bonusRpKwh },
+          ],
+          xaxis: { categories, labels: xaxisLabels },
+          yaxis: {
+            title: { text: "Rp/kWh", style: { fontSize: "11px" } },
+            labels: { formatter: (v) => v == null ? "—" : Number(v).toFixed(2) },
+            decimalsInFloat: 2,
+          },
+          plotOptions: {
+            bar: { columnWidth: "55%", borderRadius: 2 },
+          },
+          dataLabels: { enabled: false },
+          tooltip: {
+            // v0.21.0 — shared:true now works because intersect:false is set
+            // (was the missing piece in v0.20.2 that caused the API throw).
+            shared: true,
+            intersect: false,
+            y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
+          },
+          legend: { position: "top", horizontalAlign: "right", fontSize: "12px" },
+          grid: { borderColor: "var(--divider-color, #eee)" },
+          colors: ["#03a9f4", "#4caf50", "#ff9800"],
+        };
+        this._chartStack = new Apex(stackEl, opts);
+        try { await this._chartStack.render(); } catch (e) { console.error("BFE stack chart render:", e); }
+      }
     }
+  }
+
+  _xaxisLabelsForGranularity(granularity, count) {
+    // Hide most labels for high-density granularities so the axis stays readable.
+    const base = { style: { fontSize: "11px" } };
+    if (granularity === "stunde") {
+      return { ...base, rotate: -90, hideOverlappingLabels: true,
+               formatter: (v, _, opts) => (opts?.i % 24 === 12) ? String(v).slice(11, 13) + ":00" : "" };
+    }
+    if (granularity === "tag") {
+      return { ...base, rotate: -90, hideOverlappingLabels: true,
+               formatter: (v, _, opts) => (opts?.i % 7 === 0) ? String(v).slice(5) : "" };
+    }
+    if (granularity === "monat") {
+      return { ...base, rotate: -45 };
+    }
+    if (granularity === "jahr") {
+      return { ...base, rotate: 0 };
+    }
+    return { ...base, rotate: -45 };  // quartal default
   }
 
   _isDarkTheme() {
     try {
       const bg = getComputedStyle(this).getPropertyValue("--card-background-color") || "";
-      // Simple heuristic — HA dark themes have dark bg
       return /^\s*#[0-3]/.test(bg) || /^\s*rgb\(\s*[0-9]{1,2}\s*,/.test(bg);
     } catch (e) {
       return false;
@@ -542,22 +795,16 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 
   getCardSize() {
-    // Masonry layout estimate: each unit ≈ 50px. Card has header +
-    // controls + active config + bonuses + breakdown table + 2 charts +
-    // data-source footer ≈ 1000-1200px → ~22 units. HA caps at reasonable
-    // values so this just hints at "this is a tall card."
-    return 22;
+    // v0.21.0 — card grew with the new chart-controls section.
+    return 26;
   }
 
   static getLayoutOptions() {
-    // v0.20.1 — declare Sections-layout defaults so the card auto-spans
-    // full width on new placements. Without this method, HA shows
-    // "This card does not fully support resizing yet" and uses a small
-    // 4×4 default. Charts at 4-column width are unreadable.
+    // v0.20.1 — Sections-layout defaults so new placements span full width.
     return {
-      grid_columns: 12,        // full width (12 = max in Sections)
-      grid_rows: "auto",       // size to content (auto-height)
-      grid_min_columns: 6,     // narrower than 6 cols and the table breaks
+      grid_columns: 12,
+      grid_rows: "auto",
+      grid_min_columns: 6,
       grid_min_rows: 8,
     };
   }

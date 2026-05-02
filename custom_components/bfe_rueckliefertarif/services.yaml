@@ -25,22 +25,76 @@ get_breakdown:
   description: >
     Returns the structured tariff breakdown as a JSON object. Used by the
     BFE tariff analysis Lovelace card. Read-only — does NOT trigger LTS
-    rewrites. Precedence: last_n_quarters > year+quarter > year only > quarter
-    only > current quarter.
+    rewrites. Quarter precedence: last_n_quarters > from_year/from_quarter
+    range > year+quarter > year only > quarter only > current quarter.
   fields:
+    granularity:
+      name: Granularity (chart history view)
+      description: >
+        Optional. When set, returns rows aggregated at the requested
+        granularity. Falls back to recompute-from-hour-record for
+        finer-than-snapshot grains (tag, stunde, and monat for
+        quartal-billed utilities). Per-granularity quarter caps apply;
+        truncation surfaces as `truncated_to_quarters` in the response.
+      example: quartal
+      selector:
+        select:
+          options:
+            - value: jahr
+              label: Jahr
+            - value: quartal
+              label: Quartal
+            - value: monat
+              label: Monat
+            - value: tag
+              label: Tag
+            - value: stunde
+              label: Stunde
     last_n_quarters:
       name: Last N quarters (history)
       description: >
         If set, returns the most recent N quarters (oldest first). Used by
-        the chart history view. Overrides year + quarter.
+        the chart history view. Overrides year + quarter and from/to range.
       example: 8
       selector:
         number:
           min: 1
           max: 40
           mode: box
+    from_year:
+      name: From year (range start)
+      example: 2024
+      selector:
+        number:
+          min: 2020
+          max: 2099
+          mode: box
+    from_quarter:
+      name: From quarter (1-4)
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
+    to_year:
+      name: To year (range end)
+      example: 2026
+      selector:
+        number:
+          min: 2020
+          max: 2099
+          mode: box
+    to_quarter:
+      name: To quarter (1-4)
+      example: 4
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
     year:
-      name: Year
+      name: Year (single quarter)
       example: 2026
       selector:
         number:
@@ -48,7 +102,7 @@ get_breakdown:
           max: 2099
           mode: box
     quarter:
-      name: Quarter (1-4)
+      name: Quarter (1-4, single)
       example: 2
       selector:
         number:
