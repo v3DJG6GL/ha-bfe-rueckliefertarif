@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.6";
+const CARD_VERSION = "0.21.7";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -136,12 +136,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
   async _fetch() {
     if (!this._hass || this._loading) return;
-    const t0 = _bfeT("_fetch start");
     this._loading = true;
     this._error = null;
     try {
       try { this._renderBody(); } catch (e) { console.error("BFE card pre-render failed:", e); }
-      _bfeT("calling get_breakdown × 2");
       const detailPromise = this._hass.callService(
         DOMAIN, SERVICE,
         { year: this._year, quarter: this._quarter },
@@ -153,12 +151,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
         undefined, false, true,
       );
       const [detail, history] = await Promise.all([detailPromise, historyPromise]);
-      _bfeT(`services returned (Δ ${(performance.now() - t0).toFixed(0)}ms)`);
       this._response = detail?.response ?? detail;
       this._history = history?.response ?? history;
-      console.log("[BFE] detail rows:", this._response?.rows?.length, "history rows:", this._history?.rows?.length);
     } catch (err) {
-      console.error("[BFE] fetch failed after", (performance.now() - t0).toFixed(0), "ms:", err);
+      console.error("[BFE] fetch failed:", err);
       this._error = err?.message || String(err);
       this._response = null;
       this._history = null;
@@ -166,7 +162,6 @@ class BfeTariffAnalysisCard extends HTMLElement {
       this._loading = false;
       try {
         this._renderBody();
-        _bfeT(`render done (Δ ${(performance.now() - t0).toFixed(0)}ms total)`);
       } catch (e) {
         console.error("BFE card post-render failed:", e);
         const body = this.shadowRoot?.querySelector(".body");
@@ -797,20 +792,29 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 }
 
-// v0.21.6 — continuous registration monitor.
+// v0.21.6 — continuous registration monitor (workaround for HA frontend bug).
 //
-// Diagnostics from v0.21.5 confirmed (DevTools after picker error):
+// TODO(remove-when-ha-fixes-registry-wipe): when a future HA frontend
+// release stops wiping the customElements registry between our script's
+// register and the picker's query, drop this entire monitor + setInterval
+// + _bfeRecover and use a single customElements.define() at module top
+// (matching the standard HACS-card pattern). Test by removing the
+// setInterval call below; if the picker works on hard-refresh across
+// 5+ reloads with no "[BFE] registration was wiped" warnings, the HA
+// race is gone and this workaround can be retired. Confirmed against HA
+// 2026.4.4 — re-test on each major HA release.
+//
+// Diagnostics from v0.21.5 (DevTools after the picker's spinner-stuck error):
 //   customElements.get("bfe-tariff-analysis-card")          → undefined
 //   customElements.whenDefined("bfe-tariff-analysis-card")  → pending forever
 // even though our v0.21.5 verified-sync log fired immediately after define.
 // Conclusion: something wipes/replaces the customElements registry AFTER
-// our script registers but BEFORE the picker queries it. v0.21.5's
-// one-shot polling loop stopped after first success and missed the wipe.
+// our script registers but BEFORE the picker queries. v0.21.5's one-shot
+// polling stopped after first success and missed the wipe.
 //
-// Fix: monitor every 200ms FOREVER. If our class is missing from the
-// registry, re-define. Cost is ~5 calls/sec and a registry lookup —
-// negligible. The first-success log fires once; subsequent wipes log a
-// warning so we can quantify the problem.
+// Fix: monitor every 200ms forever. If our class is missing from the
+// registry, re-define. Cost is ~5 lookups/sec — negligible. First-success
+// fires once; subsequent wipes log so we can quantify the problem.
 function _bfeDefine() {
   if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
     return false; // already present, no-op
@@ -922,31 +926,21 @@ let _apexPromise = null;
 function _loadApexScoped() {
   if (_apexPromise) return _apexPromise;
   _apexPromise = (async () => {
-    const tFetchStart = performance.now();
     const code = await fetch(APEX_URL).then((r) => {
       if (!r.ok) throw new Error(`Failed to fetch ApexCharts: ${r.status}`);
       return r.text();
     });
-    const tFetchEnd = performance.now();
-    console.log(`[BFE] ApexCharts bundle fetched (${(tFetchEnd - tFetchStart).toFixed(0)}ms, ${(code.length / 1024).toFixed(0)}KB)`);
+    // Wrap the UMD bundle in a Function() factory so its top-level scope
+    // doesn't leak window.ApexCharts (which would conflict with
+    // RomRider/apexcharts-card's bundled copy — see v0.20.2 commit).
     const factory = new Function(
       "module", "exports",
       code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
     );
-    const tCompiled = performance.now();
-    console.log(`[BFE] ApexCharts compiled via Function() (${(tCompiled - tFetchEnd).toFixed(0)}ms)`);
     const moduleObj = { exports: {} };
     const Apex = factory(moduleObj, moduleObj.exports);
-    const tFactoryDone = performance.now();
-    console.log(`[BFE] ApexCharts factory ran (${(tFactoryDone - tCompiled).toFixed(0)}ms)`);
     if (!Apex) throw new Error("ApexCharts UMD bundle did not export anything");
     return Apex;
   })();
   return _apexPromise;
-}
-
-function _bfeT(label) {
-  const t = performance.now();
-  console.log(`[BFE] ${label} @ ${t.toFixed(1)}ms`);
-  return t;
 }
