@@ -809,12 +809,12 @@ def _normalize_history(records: list[dict]) -> list[dict]:
 def _format_config_summary(config: dict) -> str:
     """Compact one-line summary used for menu labels."""
     utility = config.get(CONF_ENERGIEVERSORGER) or "—"
-    kw = config.get(CONF_INSTALLIERTE_LEISTUNG_KWP)
-    kw_s = f"{float(kw):.1f} kW" if kw is not None else "—"
+    kwp = config.get(CONF_INSTALLIERTE_LEISTUNG_KWP)
+    kwp_s = f"{float(kwp):.1f} kWp" if kwp is not None else "—"
     ev = "EV" if config.get(CONF_EIGENVERBRAUCH_AKTIVIERT) else "no-EV"
     hkn = "HKN" if config.get(CONF_HKN_AKTIVIERT) else "no-HKN"
     billing = config.get(CONF_ABRECHNUNGS_RHYTHMUS) or "—"
-    return f"{utility} · {kw_s} · {ev} · {hkn} · {billing}"
+    return f"{utility} · {kwp_s} · {ev} · {hkn} · {billing}"
 
 
 # v0.11.0 (Batch D) — declared user_inputs helpers ----------------------------

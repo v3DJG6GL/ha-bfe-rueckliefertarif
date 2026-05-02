@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Configuration tarifaire — choisir fournisseur, date & puissance",
-        "description": "Choisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url}) · [Aperçu rémunération de la reprise OFEN]({agency_url})",
+        "description": "Choisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences:\n- [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url})\n- [Aperçu rémunération de la reprise OFEN]({agency_url})",
         "data": {
           "energieversorger": "Fournisseur",
           "valid_from": "Valide dès",
@@ -24,7 +24,7 @@
       },
       "tariff_details": {
         "title": "Configuration tarifaire — options spécifiques au fournisseur",
-        "description": "Indiquez les paramètres de votre installation pour **{utility_name}** dès **{valid_from}**. Les valeurs publiées par le fournisseur (taux GO, plafonnement, tarifs fixes) viennent de la base de tarifs intégrée et ne sont pas modifiables ici.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
+        "description": "Renseignez les détails tarifaires pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "eigenverbrauch_aktiviert": "Autoconsommation",
           "hkn_aktiviert": "GO (garantie d'origine) (DE: HKN)",
@@ -35,7 +35,7 @@
         },
         "data_description": {
           "eigenverbrauch_aktiviert": "## Autoconsommation\n**Oui** si une partie de la production est consommée sur place. **Non** pour une installation en injection totale (Volleinspeisung).",
-          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur. La plupart des fournisseurs l'offrent en option — inscris-toi via le portail client. Le tarif est fixé par le fournisseur ; aucune saisie manuelle nécessaire. Choisis **Non** si tu ne vends pas de GO, ou si l'installation est certifiée ailleurs (p.ex. *naturemade star*) et que tu vends la GO sur le marché libre."
+          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur."
         }
       },
       "entities": {
@@ -45,13 +45,13 @@
           "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
           "rueckliefervergutung_chf": "Rétribution (CHF)",
           "plant_name": "Nom de l'installation",
-          "namenspraefix": "Préfixe de nom (optionnel)"
+          "namenspraefix": "Préfixe de nom du capteur (optionnel)"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe **compteur kWh** qui mesure l'énergie injectée dans le réseau. Doit déjà être configuré dans le **tableau de bord Énergie** sous *« Retour au réseau »*.",
           "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe **capteur CHF** que le tableau de bord Énergie crée automatiquement quand vous configurez *« Retour au réseau avec un prix »*.\n\nHA y appose le suffixe `_compensation` (généralement `sensor.VOTRE_INJECTION_compensation`). Cette intégration écrit dans ses **statistiques à long terme**.",
           "plant_name": "Nom d'affichage pour cette installation PV — p.ex. `Installation PV`. Utilisé comme titre de l'intégration sous Réglages → Appareils & services et comme préfixe par défaut.",
-          "namenspraefix": "Préfixe pour les *capteurs* de cette intégration (p.ex. `sensor.PREFIX_basisverguetung`). Laisser vide pour dériver du nom de l'installation (p.ex. `sensor.installation_pv_basisverguetung`)."
+          "namenspraefix": "Préfixe pour les *capteurs* de cette intégration (p.ex. `sensor.PREFIX_basisverguetung`).\n\nLaisser vide pour dériver du nom de l'installation (p.ex. `sensor.installation_pv_basisverguetung`)."
         }
       },
       "apply_change_details": {
@@ -113,7 +113,7 @@
       },
       "add_pick_row": {
         "title": "Ajouter un tarif — choisir fournisseur, date & puissance",
-        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url}) · [Aperçu rémunération de la reprise OFEN]({agency_url})",
+        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences:\n- [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url})\n- [Aperçu rémunération de la reprise OFEN]({agency_url})",
         "data": {
           "valid_from": "Valide dès",
           "energieversorger": "Fournisseur",
@@ -122,7 +122,7 @@
       },
       "edit_pick_row": {
         "title": "Modifier le tarif — choisir fournisseur, date & puissance",
-        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences: [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url}) · [Aperçu rémunération de la reprise OFEN]({agency_url})",
+        "description": "**Actuellement actif:** {current_summary}\n\nChoisis le fournisseur, la puissance maximale (kWp) de l'installation PV et la date de prise d'effet de la configuration tarifaire.\n\nRéférences:\n- [Tableau rémunération minimale (OEne art. 12 al. 1bis)]({env_url})\n- [Aperçu rémunération de la reprise OFEN]({agency_url})",
         "data": {
           "valid_from": "Valide dès",
           "energieversorger": "Fournisseur",
@@ -131,7 +131,7 @@
       },
       "add_new_row": {
         "title": "Ajouter un tarif — options spécifiques au fournisseur",
-        "description": "Paramètres pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
+        "description": "Renseignez les détails tarifaires pour **{utility_name}** dès **{valid_from}**.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kwp": "Puissance installée (kWp)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -142,12 +142,12 @@
           "supply_product": "Eco-electricity product subscribed"
         },
         "data_description": {
-          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur. La plupart des fournisseurs l'offrent en option — inscris-toi via le portail client. Le tarif est fixé par le fournisseur ; aucune saisie manuelle nécessaire. Choisis **Non** si tu ne vends pas de GO, ou si l'installation est certifiée ailleurs (p.ex. *naturemade star*) et que tu vends la GO sur le marché libre."
+          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur."
         }
       },
       "edit_row": {
         "title": "Modifier le tarif — options spécifiques au fournisseur",
-        "description": "Mettez à jour les paramètres pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
+        "description": "Mettez à jour les détails tarifaires pour **{utility_name}** dès **{valid_from}**, ou cochez **Supprimer cet enregistrement** pour retirer la ligne.\n\n{hkn_gate_note}\n\n{notes_block}\n\n{tarif_urls_block}\n\n{user_inputs_help}\n\n{periods_block}",
         "data": {
           "installierte_leistung_kwp": "Puissance installée (kWp)",
           "eigenverbrauch_aktiviert": "Autoconsommation",
@@ -159,7 +159,7 @@
           "supply_product": "Eco-electricity product subscribed"
         },
         "data_description": {
-          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur. La plupart des fournisseurs l'offrent en option — inscris-toi via le portail client. Le tarif est fixé par le fournisseur ; aucune saisie manuelle nécessaire. Choisis **Non** si tu ne vends pas de GO, ou si l'installation est certifiée ailleurs (p.ex. *naturemade star*) et que tu vends la GO sur le marché libre."
+          "hkn_aktiviert": "Tu obtiens davantage pour l'électricité solaire injectée si tu vends la **garantie d'origine (GO)** à ton fournisseur."
         }
       },
       "recompute_history": {
@@ -183,13 +183,13 @@
           "stromnetzeinspeisung_kwh": "Injection réseau (kWh)",
           "rueckliefervergutung_chf": "Rétribution (CHF)",
           "plant_name": "Nom de l'installation",
-          "namenspraefix": "Préfixe de nom"
+          "namenspraefix": "Préfixe de nom du capteur"
         },
         "data_description": {
           "stromnetzeinspeisung_kwh": "## Compteur kWh\nLe compteur kWh d'injection.",
           "rueckliefervergutung_chf": "## Capteur CHF auto-créé\nLe capteur CHF du tableau de bord Énergie.",
           "plant_name": "Nom d'affichage pour cette installation PV — p.ex. `Installation PV`. Utilisé comme titre de l'intégration sous Réglages → Appareils & services.",
-          "namenspraefix": "Préfixe pour les *capteurs* de cette intégration (p.ex. `sensor.PREFIX_basisverguetung`). ⚠️ Le modifier orpheline les statistiques long terme liées à l'ancien préfixe — ne changer qu'en connaissance de cause !"
+          "namenspraefix": "Préfixe pour les *capteurs* de cette intégration (p.ex. `sensor.PREFIX_basisverguetung`).\n\n⚠️ Le modifier orpheline les statistiques long terme liées à l'ancien préfixe — ne changer qu'en connaissance de cause !"
         }
       }
     },
