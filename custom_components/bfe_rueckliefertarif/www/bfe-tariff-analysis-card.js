@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.4";
+const CARD_VERSION = "0.21.5";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -797,18 +797,75 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 }
 
-// v0.21.4 — registration runs IMMEDIATELY after the class declaration so
-// customElements.define wins HA's tryCreateCardElement race on cold reloads.
-// HA's create-element-base.ts gives us a 2-second whenDefined window before
-// the error placeholder un-hides; v0.20.2 won this race, v0.21.0-v0.21.3
-// lost it because the file grew + a defensive try/guard added microtask
-// latency. Minimal form (matches HACS card pattern):
-if (!customElements.get("bfe-tariff-analysis-card")) {
-  customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
+// v0.21.5 — poll-and-re-register loop.
+//
+// Background: in v0.21.4 the register block did one customElements.define
+// then logged "registered OK" using BfeTariffAnalysisCard.name (the class
+// .name property, NOT a customElements.get probe). On dev HA we observed
+// our log firing yet `customElements.get(tag)` returned undefined seconds
+// later in DevTools — strong evidence that something between our script
+// and the picker is wiping our registration. Most likely cause: HA's
+// @webcomponents/scoped-custom-element-registry polyfill replaces
+// window.customElements at app.ts:1; in some cache/load orderings our
+// register lands on a registry that's then thrown away.
+//
+// The loop below re-asserts the registration every 100 ms (capped at 30 s)
+// until customElements.get(tag) actually returns OUR class object. The
+// log only fires after that strict-equality check holds — so when you see
+// it, registration has truly stuck.
+function _bfeDefine() {
+  if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
+    return true;
+  }
+  try {
+    customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
+    return customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard;
+  } catch (_err) {
+    return false;
+  }
 }
-console.info(
-  `[BFE] customElements registered OK. ctor: ${BfeTariffAnalysisCard.name}`
-);
+
+_bfeDefine();
+
+let _bfeRegisterAttempts = 1;
+const _bfeRegisterStart = performance.now();
+let _bfeRegistered = false;
+const _bfeRegisterInterval = setInterval(() => {
+  if (_bfeRegistered) {
+    clearInterval(_bfeRegisterInterval);
+    return;
+  }
+  if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
+    _bfeRegistered = true;
+    clearInterval(_bfeRegisterInterval);
+    const elapsed = (performance.now() - _bfeRegisterStart).toFixed(0);
+    const tries = _bfeRegisterAttempts;
+    console.info(
+      `[BFE] customElements registered OK (verified). ` +
+      `attempts=${tries}, elapsed=${elapsed}ms`
+    );
+    _bfeRecover();
+    return;
+  }
+  if (performance.now() - _bfeRegisterStart > 30000) {
+    clearInterval(_bfeRegisterInterval);
+    console.warn(
+      `[BFE] customElements.define never persisted after ${_bfeRegisterAttempts} ` +
+      `attempts over 30s — picker / dashboard rendering will likely fail. ` +
+      `Hard-refresh (Ctrl+Shift+R) or check service-worker cache.`
+    );
+    return;
+  }
+  _bfeRegisterAttempts += 1;
+  _bfeDefine();
+}, 100);
+
+// First-pass check in case the synchronous _bfeDefine already stuck.
+if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
+  _bfeRegistered = true;
+  clearInterval(_bfeRegisterInterval);
+  console.info(`[BFE] customElements registered OK (verified, sync).`);
+}
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "bfe-tariff-analysis-card")) {
@@ -826,37 +883,45 @@ console.info(
   "color: #4caf50; background: white; font-weight: 500;",
 );
 
-// v0.21.4 — belt-and-suspenders recovery. If our script loaded after HA's
-// 2s whenDefined window, the user sees "Custom element doesn't exist".
-// Walk the DOM (incl. shadow roots) for any error placeholders whose
-// config references our card and dispatch ll-rebuild on them — this is
-// the same event HA's create-element-base.ts fires on whenDefined, so
-// the parent hui-card knows to rebuild its child.
-function _bfeRebuildErrorCards() {
-  const targetType = "bfe-tariff-analysis-card";
+// v0.21.5 — recovery walk. Once registration actually sticks, walk the
+// DOM (incl. shadow roots) for:
+//   1. Dashboard error placeholders whose config references our card —
+//      dispatch ll-rebuild (HA's hui-card listens for this and rebuilds
+//      its slot, replacing the error with our newly-registered class).
+//   2. hui-card-picker instances — call _loadCards() / requestUpdate() to
+//      force re-render so the spinner-stuck preview retries our card.
+function _bfeRecover() {
+  const tag = "bfe-tariff-analysis-card";
   const matches = (cfg) =>
-    cfg && (cfg.type === targetType || cfg.type === `custom:${targetType}`);
-  const visit = (root) => {
-    if (!root || !root.querySelectorAll) return 0;
-    let rebuilt = 0;
+    cfg && (cfg.type === tag || cfg.type === `custom:${tag}`);
+  const visit = (root, depth) => {
+    if (!root || !root.querySelectorAll || depth > 20) return 0;
+    let n = 0;
     for (const el of root.querySelectorAll("*")) {
-      if (el.shadowRoot) rebuilt += visit(el.shadowRoot);
+      if (el.shadowRoot) n += visit(el.shadowRoot, depth + 1);
       const cfg = el._config || el.config;
       if (matches(cfg)) {
         el.dispatchEvent(
           new CustomEvent("ll-rebuild", { bubbles: true, composed: true })
         );
-        rebuilt += 1;
+        n += 1;
+      }
+      const tagName = el.tagName?.toLowerCase();
+      if (tagName === "hui-card-picker") {
+        try {
+          if (typeof el._loadCards === "function") el._loadCards();
+          if (typeof el.requestUpdate === "function") el.requestUpdate();
+          n += 1;
+        } catch (_) { /* picker not yet hydrated, ignore */ }
       }
     }
-    return rebuilt;
+    return n;
   };
   setTimeout(() => {
-    const n = visit(document);
-    if (n > 0) console.info(`[BFE] ll-rebuild dispatched on ${n} placeholder(s)`);
+    const n = visit(document, 0);
+    if (n > 0) console.info(`[BFE] recovery: dispatched on ${n} target(s)`);
   }, 100);
 }
-_bfeRebuildErrorCards();
 
 // Helpers — declared after registration so they don't delay define().
 // Function declarations are hoisted, so class methods can still reference

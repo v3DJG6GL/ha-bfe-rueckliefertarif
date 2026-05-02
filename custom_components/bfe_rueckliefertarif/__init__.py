@@ -97,11 +97,17 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     card_url = "/api/bfe_rueckliefertarif/static/bfe-tariff-analysis-card.js"
     apex_path = str(www_dir / "apexcharts.min.js")
     apex_url = "/api/bfe_rueckliefertarif/static/apexcharts.min.js"
-    apex_present = Path(apex_path).is_file()
+
+    # v0.21.5 — both stat-the-apex-file and read-the-manifest were running
+    # synchronously on the event loop, triggering HA's blocking-call warning.
+    # Wrap in a single executor call.
+    def _io():
+        return Path(apex_path).is_file(), _read_manifest_version()
 
     try:
-        version = _read_manifest_version()
+        apex_present, version = await hass.async_add_executor_job(_io)
     except Exception:
+        apex_present = False
         version = "dev"
 
     try:
