@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, date
 from typing import TYPE_CHECKING
 
-from .bfe import PriceNotYetPublishedError, fetch_monthly, fetch_quarterly
+from .bfe import BfePrice, PriceNotYetPublishedError, fetch_monthly, fetch_quarterly
 from .const import (
     ABRECHNUNGS_RHYTHMUS_MONAT,
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
@@ -37,7 +37,7 @@ from .importer import (
     compute_quarter_plan_segmented,
     cumulative_sums,
 )
-from .quarters import Quarter, hours_in_range, quarter_bounds_utc, quarter_of
+from .quarters import Month, Quarter, hours_in_range, quarter_bounds_utc, quarter_of
 from .tariffs_db import (
     find_active,
     load_tariffs,
@@ -1512,11 +1512,106 @@ def _cap_quarters(
     return quarters[-cap:], len(quarters)
 
 
+@dataclass(frozen=True)
+class _HistoryComputeResult:
+    """Output of :func:`_compute_hour_records_for_quarters`.
+
+    ``records`` is the flat per-hour list (as before). ``estimated_quarters``
+    holds the quarters where BFE prices were missing AND the floor fallback
+    actually affected the per-hour rate (i.e. RMP-based base_models). For
+    ``fixed_*`` utilities the floor synthesis just unblocks the loop guard;
+    those quarters are NOT marked as estimates because their per-hour rate
+    comes from ``tariffs.json`` regardless.
+    """
+
+    records: list  # HourRecord
+    estimated_quarters: frozenset[Quarter]
+
+
+def _synthesize_fallback_prices(
+    rt,
+    q: Quarter,
+    quarterly: dict[Quarter, BfePrice],
+    monthly: dict[Month, BfePrice] | None,
+    billing_mode: str,
+) -> tuple[dict[Quarter, BfePrice], dict[Month, BfePrice] | None, bool]:
+    """v0.21.11 — running-quarter floor fallback for the chart history path.
+
+    Returns ``(quarterly, monthly, used_floor)`` ready to hand to
+    ``compute_quarter_plan_segmented``. For unpublished pieces, synthesizes
+    ``BfePrice`` instances backed by the federal Mindestvergütung floor.
+    Mirrors what ``_import_running_quarter_estimate`` already does for LTS
+    writes and what ``GridExportTariffCurrentSensor`` does for the live
+    sensor — the chart was the only consumer not applying it.
+
+    ``used_floor`` is True only when the synthetic price actually changes
+    the per-hour rate (RMP-based base_models). For ``fixed_*`` utilities
+    the synthetic ``BfePrice`` is consumed and immediately discarded by
+    ``_rate_rp_kwh_at_hour`` — its value never reaches the user's chart,
+    so flagging the quarter as ``is_current_estimate`` would be misleading.
+
+    Synthesizing with ``days=0, volume_mwh=0.0``: only ``chf_per_mwh`` is
+    read downstream of construction (verified by grep across the codebase).
+    A future PR adding a read of those fields would need to handle the
+    synthetic case explicitly.
+
+    Designed to extend cleanly to a future ``rmp_hour`` base_model — add
+    one branch checking ``rmp_hour`` and topping up an ``hourly`` dict
+    parameter from ``BFE-Preise je Stunde``.
+    """
+    floor_rp = rt.federal_floor_rp_kwh or 0.0
+    fake = BfePrice(chf_per_mwh=floor_rp * 10.0, days=0, volume_mwh=0.0)
+
+    out_q = dict(quarterly)
+    out_m = dict(monthly) if monthly is not None else None
+    used_floor = False
+
+    if q not in out_q:
+        out_q[q] = fake
+        if rt.base_model in ("rmp_quartal", "rmp_monat"):
+            used_floor = True
+
+    # ``rmp_monat × billing=monat`` is the only path that reads
+    # ``monthly_prices`` (importer.py short-circuits all other combos).
+    if (
+        rt.base_model == "rmp_monat"
+        and billing_mode == ABRECHNUNGS_RHYTHMUS_MONAT
+        and out_m is not None
+    ):
+        for m in q.months():
+            if m not in out_m:
+                out_m[m] = fake
+                used_floor = True
+
+    return out_q, out_m, used_floor
+
+
+def _quarter_from_period_string(period: str) -> Quarter | None:
+    """Map an ``_aggregate_by_period`` period string back to its Quarter.
+
+    Shapes: ``YYYYQN`` / ``YYYY-MM`` / ``YYYY-MM-DD`` / ``YYYY-MM-DD HH:00``.
+    Returns ``None`` for the yearly shape (``YYYY``) — yearly aggregation
+    flows through ``_aggregate_to_yearly`` which already rolls up
+    ``is_current_estimate`` from per-quarter rows.
+    """
+    s = period.strip()
+    if "Q" in s or "q" in s:
+        return Quarter.parse(s)
+    # year-only shape: "YYYY"
+    if len(s) == 4 and s.isdigit():
+        return None
+    # All remaining shapes start with "YYYY-MM..."
+    year = int(s[:4])
+    month = int(s[5:7])
+    return Quarter(year, (month - 1) // 3 + 1)
+
+
 async def _compute_hour_records_for_quarters(
     hass: HomeAssistant, quarters: list[Quarter]
-) -> list:
+) -> _HistoryComputeResult:
     """Re-run the importer's per-hour computation for each quarter and
-    return the flat HourRecord list across all quarters.
+    return the flat HourRecord list across all quarters, plus the set of
+    quarters where the federal floor was substituted for a missing BFE price.
 
     Used by the chart-history view (granularity ∈ {stunde, tag, and monat
     for quartal-billed users}) when the snapshot's pre-aggregated periods
@@ -1527,12 +1622,15 @@ async def _compute_hour_records_for_quarters(
     - ``compute_quarter_plan_segmented`` with anchor=0 (we don't need
       cumulative sums — just per-hour rate × kWh contributions)
 
-    Quarters where BFE hasn't published the price yet, or that have no
-    recorder data, are silently skipped (zero contribution).
+    v0.21.11: quarters where BFE hasn't published the price yet are no
+    longer silently skipped — instead the floor is substituted via
+    ``_synthesize_fallback_prices`` and the affected quarter is reported
+    in ``estimated_quarters`` so downstream callers can mark rows as
+    ``is_current_estimate``. Quarters with no recorder data still produce
+    zero-contribution records (kWh=0 rows, not skipped).
     """
     import aiohttp
 
-    from .bfe import fetch_quarterly
     from .importer import compute_quarter_plan_segmented
 
     coordinator = _first_entry_data(hass).get("coordinator")
@@ -1544,9 +1642,8 @@ async def _compute_hour_records_for_quarters(
             quarterly_prices = await fetch_quarterly(session)
 
     out: list = []
+    estimated: set[Quarter] = set()
     for q in quarters:
-        if q not in quarterly_prices:
-            continue
         try:
             cfg, _tariff_cfg = _cfg_for_entry(hass, for_quarter=q)
         except (RuntimeError, KeyError, LookupError):
@@ -1565,15 +1662,25 @@ async def _compute_hour_records_for_quarters(
             continue
 
         billing = cfg.get(CONF_ABRECHNUNGS_RHYTHMUS) or ABRECHNUNGS_RHYTHMUS_QUARTAL
-        monthly_prices = coordinator.monthly if (coordinator and billing == ABRECHNUNGS_RHYTHMUS_MONAT) else None
+        monthly_prices = (
+            coordinator.monthly
+            if (coordinator and billing == ABRECHNUNGS_RHYTHMUS_MONAT)
+            else None
+        )
+
+        q_prices_eff, m_prices_eff, used_floor = _synthesize_fallback_prices(
+            _tariff_cfg.resolved, q, quarterly_prices, monthly_prices, billing,
+        )
+        if used_floor:
+            estimated.add(q)
 
         try:
             segments = _resolve_quarter_segments(hass, q)
             plan = compute_quarter_plan_segmented(
                 q=q,
                 hourly_kwh=hourly_kwh,
-                quarterly_price=quarterly_prices[q],
-                monthly_prices=monthly_prices,
+                quarterly_price=q_prices_eff[q],
+                monthly_prices=m_prices_eff,
                 segments=segments,
                 billing_mode=billing,
                 anchor_sum_chf=0.0,  # we don't need cumulative — just rates × kwh
@@ -1585,7 +1692,9 @@ async def _compute_hour_records_for_quarters(
 
         out.extend(plan.records)
 
-    return out
+    return _HistoryComputeResult(
+        records=out, estimated_quarters=frozenset(estimated)
+    )
 
 
 def _aggregate_to_yearly(report) -> _RecomputeReport:
@@ -1684,11 +1793,17 @@ async def _build_history_response(
     rhythm_for_aggregator = "stunde" if granularity == "stunde" else (
         "tag" if granularity == "tag" else ABRECHNUNGS_RHYTHMUS_MONAT
     )
-    records = await _compute_hour_records_for_quarters(hass, quarters)
-    period_dicts = _aggregate_by_period(records, rhythm_for_aggregator)
+    result = await _compute_hour_records_for_quarters(hass, quarters)
+    period_dicts = _aggregate_by_period(result.records, rhythm_for_aggregator)
 
     rows: list[_RecomputeReportRow] = []
     for p in period_dicts:
+        # v0.21.11 — mark rows that fall inside a quarter where the federal
+        # floor was substituted for a missing BFE price. Card surfaces this
+        # via the chart-adjacent footnote (and the existing detail-table
+        # asterisk for snapshot-path rows).
+        q_of_period = _quarter_from_period_string(p["period"])
+        is_est = q_of_period is not None and q_of_period in result.estimated_quarters
         rows.append(
             _RecomputeReportRow(
                 period=p["period"],
@@ -1699,6 +1814,7 @@ async def _build_history_response(
                 intended_hkn_rp_kwh=p["intended_hkn_rp_kwh"],
                 total_kwh=p["kwh"],
                 total_chf=p["chf"],
+                is_current_estimate=is_est,
                 # No per-period config metadata for recompute path —
                 # would require expensive per-bucket cfg resolution.
                 # The card uses only the period + rate/total fields for charts.

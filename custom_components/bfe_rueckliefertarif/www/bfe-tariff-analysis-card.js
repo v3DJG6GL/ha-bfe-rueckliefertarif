@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.10";
+const CARD_VERSION = "0.21.11";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -406,6 +406,13 @@ class BfeTariffAnalysisCard extends HTMLElement {
           font-size: 0.9em;
           font-style: italic;
         }
+        .chart-estimate-footnote {
+          padding: 0 16px 12px;
+          color: var(--secondary-text-color);
+          font-size: 0.8em;
+          font-style: italic;
+          line-height: 1.4;
+        }
       </style>
       <ha-card>
         <div class="header">
@@ -617,6 +624,12 @@ class BfeTariffAnalysisCard extends HTMLElement {
       html += `<section><h3>Verlauf — Aufschlüsselung pro Periode</h3>`;
       html += `<div class="chart-host tall" id="chart-stack"></div>`;
       html += `</section>`;
+      // v0.21.11 — visible only when at least one displayed period was
+      // computed from the federal Mindestvergütung floor (running quarter,
+      // BFE not yet published). Shown beneath the charts as a single
+      // footnote rather than per-bar markers — keeps the visual signal
+      // unobtrusive while still being honest about the estimate.
+      html += `<div class="chart-estimate-footnote" hidden></div>`;
     } else if (this._history) {
       html += `<section><h3>Verlauf</h3><div class="empty">Keine Daten für gewählten Zeitraum.</div></section>`;
     }
@@ -635,6 +648,20 @@ class BfeTariffAnalysisCard extends HTMLElement {
     // Mount charts after innerHTML is set
     if (historyRows.length > 0) {
       this._renderCharts(historyRows);
+      // v0.21.11 — surface the running-quarter estimate hint when any of
+      // the displayed history rows was computed from the federal floor.
+      // Same wording as the existing detail-table footnote so users get a
+      // single shared explanation across both surfaces.
+      const hasEst = historyRows.some((r) => r.is_current_estimate === true);
+      const footEl = this.shadowRoot.querySelector(".chart-estimate-footnote");
+      if (footEl) {
+        if (hasEst) {
+          footEl.textContent = "* Eine angezeigte Periode ist eine Schätzung — laufendes Quartal, BFE hat noch nicht publiziert. Mindestvergütung wird als Untergrenze angesetzt.";
+          footEl.hidden = false;
+        } else {
+          footEl.hidden = true;
+        }
+      }
     }
   }
 
