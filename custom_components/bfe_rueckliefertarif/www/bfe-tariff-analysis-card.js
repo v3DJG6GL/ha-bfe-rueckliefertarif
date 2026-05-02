@@ -24,11 +24,14 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.8";
+const CARD_VERSION = "0.21.9";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 // Time range presets — map to service-call params.
+//
+// `group` (v0.21.9): semantic bucket for the chip rendering — one row per
+// group with a small label prefix (Aktuell / Letzte / Andere).
 //
 // `gran` (optional): natural granularity for that window. When set, picking
 // the chip auto-flips the granularity dropdown so users don't end up with
@@ -39,27 +42,36 @@ const HISTORY_QUARTERS_DEFAULT = 8;
 // and then `_filterHistoryToWindow` trims rows client-side to the exact
 // calendar window (today / this ISO week / last calendar month / etc.).
 const RANGE_PRESETS = [
-  // Fine-grained windows — client-side filtered after quarter fetch.
-  { id: "today",           label: "Heute",            params: "today",           gran: "stunde" },
-  { id: "current_week",    label: "Aktuelle Woche",   params: "current_week",    gran: "tag"    },
-  { id: "last_week",       label: "Letzte Woche",     params: "last_week",       gran: "tag"    },
-  { id: "current_month",   label: "Aktueller Monat",  params: "current_month",   gran: "tag"    },
-  { id: "last_month",      label: "Letzter Monat",    params: "last_month",      gran: "tag"    },
-  { id: "current_quarter", label: "Aktuelles Quartal",params: "current_quarter", gran: "monat"  },
-  // Quarter-aligned windows — direct service params, no client filter.
-  { id: "last_4q",      label: "Letzte 4Q",       params: { last_n_quarters: 4  } },
-  { id: "last_8q",      label: "Letzte 8Q",       params: { last_n_quarters: 8  } },
-  { id: "last_12q",     label: "Letzte 12Q",      params: { last_n_quarters: 12 } },
-  { id: "last_year",    label: "Letztes Jahr",    params: "last_year" },
-  { id: "current_year", label: "Aktuelles Jahr",  params: "current_year" },
-  { id: "last_3y",      label: "Letzte 3J",       params: "last_3y" },
-  { id: "custom",       label: "Custom…",         params: "custom" },
+  // Aktuell — windows that include "now"
+  { id: "today",           label: "Heute",            group: "current", params: "today",           gran: "stunde" },
+  { id: "current_week",    label: "Aktuelle Woche",   group: "current", params: "current_week",    gran: "tag"    },
+  { id: "current_month",   label: "Aktueller Monat",  group: "current", params: "current_month",   gran: "tag"    },
+  { id: "current_quarter", label: "Aktuelles Quartal",group: "current", params: "current_quarter", gran: "monat"  },
+  { id: "current_year",    label: "Aktuelles Jahr",   group: "current", params: "current_year"  },
+  // Letzte — previous full calendar window
+  { id: "last_week",    label: "Letzte Woche",   group: "last", params: "last_week",    gran: "tag"   },
+  { id: "last_month",   label: "Letzter Monat",  group: "last", params: "last_month",   gran: "tag"   },
+  { id: "last_quarter", label: "Letztes Quartal",group: "last", params: "last_quarter", gran: "monat" },
+  { id: "last_year",    label: "Letztes Jahr",   group: "last", params: "last_year"    },
+  // Andere — multi-period and custom
+  { id: "last_4q",  label: "Letzte 4Q",  group: "other", params: { last_n_quarters: 4  } },
+  { id: "last_8q",  label: "Letzte 8Q",  group: "other", params: { last_n_quarters: 8  } },
+  { id: "last_12q", label: "Letzte 12Q", group: "other", params: { last_n_quarters: 12 } },
+  { id: "last_3y",  label: "Letzte 3J",  group: "other", params: "last_3y" },
+  { id: "custom",   label: "Custom…",    group: "other", params: "custom" },
+];
+
+const PRESET_GROUPS = [
+  { id: "current", label: "Aktuell" },
+  { id: "last",    label: "Letzte"  },
+  { id: "other",   label: "Andere"  },
 ];
 
 // Preset IDs that need client-side filtering after the service returns.
 const FINE_WINDOWED_PRESETS = new Set([
   "today", "current_week", "last_week",
-  "current_month", "last_month", "current_quarter",
+  "current_month", "last_month",
+  "current_quarter", "last_quarter",
 ]);
 
 const GRANULARITY_OPTIONS = [
@@ -183,6 +195,12 @@ class BfeTariffAnalysisCard extends HTMLElement {
       const prevQ     = curQ === 1 ? 4           : curQ - 1;
       out.from_year = prevQYear; out.from_quarter = prevQ;
       out.to_year = curYear;     out.to_quarter = curQ;
+    } else if (preset.params === "last_quarter") {
+      // v0.21.9 — previous quarter only (rolls into prev year for Q1).
+      const prevQYear = curQ === 1 ? curYear - 1 : curYear;
+      const prevQ     = curQ === 1 ? 4           : curQ - 1;
+      out.from_year = prevQYear; out.from_quarter = prevQ;
+      out.to_year   = prevQYear; out.to_quarter   = prevQ;
     } else {
       out.last_n_quarters = HISTORY_QUARTERS_DEFAULT;
     }
@@ -270,6 +288,24 @@ class BfeTariffAnalysisCard extends HTMLElement {
         .chips {
           display: flex; gap: 4px; flex-wrap: wrap;
           padding: 0 16px 8px;
+        }
+        .chip-groups {
+          display: flex; flex-direction: column; gap: 4px;
+          padding: 0 16px 8px;
+        }
+        .chip-group {
+          display: flex; gap: 8px; align-items: center;
+        }
+        .chip-group-label {
+          font-size: 0.7em; font-weight: 600;
+          color: var(--secondary-text-color);
+          min-width: 60px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .chip-group .chips {
+          padding: 0;
+          flex: 1;
         }
         .chips .chip {
           padding: 4px 10px;
@@ -456,7 +492,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
     // Active configuration block — for the selected period
     html += `<section>`;
-    html += `<h3>Aktive Konfiguration${detailRow ? ` (${this._escape(detailPeriod)})` : " (heute)"}</h3>`;
+    html += `<h3>Konfiguration${detailRow ? ` (${this._escape(detailPeriod)})` : " (heute)"}</h3>`;
     html += `<dl class="config-grid">`;
     html += this._configRow("Versorger", cfg.utility_name || cfg.utility_key || "—");
     html += this._configRow("Anlage", `${this._fmt(cfg.kwp, 1)} kWp${cfg.eigenverbrauch ? " · EV" : " · keine EV"}${cfg.hkn_optin ? " · HKN" : " · keine HKN"}`);
@@ -472,25 +508,28 @@ class BfeTariffAnalysisCard extends HTMLElement {
     if (cfg.fixed_ht_rp_kwh != null) {
       html += this._configRow("HT/NT", `HT ${this._fmt(cfg.fixed_ht_rp_kwh, 2)} · NT ${this._fmt(cfg.fixed_nt_rp_kwh, 2)} Rp/kWh`);
     }
+    // v0.21.9 — Boni inline in the Konfiguration table (was its own section).
+    // Only renders when the chosen period actually had Boni; the at-period
+    // fallback fix above (line ~654) ensures past quarters without Boni
+    // don't leak today's list.
+    const advertised = cfg.bonuses_active || [];
+    if (advertised.length > 0) {
+      const parts = advertised.map((b) => {
+        const value = b.kind === "multiplier_pct"
+          ? `${b.multiplier_pct >= 100 ? "+" : "−"}${Math.abs(b.multiplier_pct - 100).toFixed(2)}%`
+          : `${this._fmt(b.rate_rp_kwh, 2)} Rp/kWh`;
+        const annotation = b.applies_when === "always"
+          ? " (immer)"
+          : (b.applies_when === "opt_in" ? " (opt-in)" : "");
+        return `${b.name || "—"}: ${value}${annotation}`;
+      });
+      html += this._configRow("Boni", parts.join(" · "));
+    }
     html += `</dl>`;
     if (periodConfigDiffersFromToday) {
       html += `<div class="config-warning">⚠ Konfiguration für ${this._escape(detailPeriod)} — heute aktive Konfiguration weicht ab.</div>`;
     }
     html += `</section>`;
-
-    // Bonuses block
-    const advertised = cfg.bonuses_active || [];
-    if (advertised.length > 0) {
-      html += `<section><h3>Boni</h3><ul class="bonuses">`;
-      for (const b of advertised) {
-        const value = b.kind === "multiplier_pct"
-          ? `${b.multiplier_pct >= 100 ? "+" : "−"}${Math.abs(b.multiplier_pct - 100).toFixed(2)}%`
-          : `${this._fmt(b.rate_rp_kwh, 2)} Rp/kWh`;
-        const annotation = b.applies_when === "always" ? " (immer)" : (b.applies_when === "opt_in" ? " (opt-in)" : "");
-        html += `<li class="skipped">${this._escape(b.name || "—")}: ${value}${annotation}</li>`;
-      }
-      html += `</ul></section>`;
-    }
 
     // Per-period breakdown table (single quarter detail)
     if (!detailRow) {
@@ -537,10 +576,19 @@ class BfeTariffAnalysisCard extends HTMLElement {
     html += `</select></label>`;
     html += `<button class="refresh chart-refresh">Aktualisieren</button>`;
     html += `</div>`;
-    html += `<div class="chips">`;
-    for (const p of RANGE_PRESETS) {
-      const active = p.id === this._chartState.range_preset ? " active" : "";
-      html += `<button class="chip${active}" data-preset="${p.id}">${this._escape(p.label)}</button>`;
+    // v0.21.9 — three labelled chip rows (Aktuell / Letzte / Andere).
+    html += `<div class="chip-groups">`;
+    for (const group of PRESET_GROUPS) {
+      const groupPresets = RANGE_PRESETS.filter((p) => p.group === group.id);
+      if (groupPresets.length === 0) continue;
+      html += `<div class="chip-group">`;
+      html += `<span class="chip-group-label">${this._escape(group.label)}</span>`;
+      html += `<div class="chips">`;
+      for (const p of groupPresets) {
+        const active = p.id === this._chartState.range_preset ? " active" : "";
+        html += `<button class="chip${active}" data-preset="${p.id}">${this._escape(p.label)}</button>`;
+      }
+      html += `</div></div>`;
     }
     html += `</div>`;
     const customHidden = this._chartState.range_preset === "custom" ? "" : " hidden";
@@ -651,7 +699,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
       fixed_rp_kwh: row.fixed_rp_kwh_at_period ?? fallback.fixed_rp_kwh,
       fixed_ht_rp_kwh: row.fixed_ht_rp_kwh_at_period ?? fallback.fixed_ht_rp_kwh,
       fixed_nt_rp_kwh: row.fixed_nt_rp_kwh_at_period ?? fallback.fixed_nt_rp_kwh,
-      bonuses_active: row.bonuses_active_at_period ?? fallback.bonuses_active,
+      // v0.21.9 — when a historical row is missing this field (older imports
+      // that pre-date the at_period bonus snapshot), assume "no boni at that
+      // time" rather than leaking today's array into the past quarter's view.
+      bonuses_active: row.bonuses_active_at_period ?? [],
       user_inputs: row.user_inputs_at_period ?? fallback.user_inputs,
     };
   }
@@ -909,6 +960,13 @@ class BfeTariffAnalysisCard extends HTMLElement {
       const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
       from = new Date(now.getFullYear(), qStartMonth,     1);
       to   = new Date(now.getFullYear(), qStartMonth + 3, 1);
+    } else if (presetId === "last_quarter") {
+      // v0.21.9 — previous quarter. JS Date constructor rolls negative
+      // months back into the previous year automatically (curQStartMonth - 3
+      // → -3 in Q1 → resolves to October of the previous year).
+      const curQStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      from = new Date(now.getFullYear(), curQStartMonth - 3, 1);
+      to   = new Date(now.getFullYear(), curQStartMonth,     1);
     } else {
       return rows;
     }
