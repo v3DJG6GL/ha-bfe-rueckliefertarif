@@ -108,17 +108,18 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         from homeassistant.components.frontend import add_extra_js_url
         from homeassistant.components.http import StaticPathConfig
 
+        # v0.20.2: ship ApexCharts as a fetchable static asset, but DO NOT
+        # add it via add_extra_js_url — that would inject a <script> tag
+        # at HA boot, polluting window.ApexCharts and breaking other HACS
+        # cards (notably RomRider/apexcharts-card) that bundle their own
+        # internal ApexCharts copy. The card fetches + scope-isolates the
+        # bundle on demand instead (see `_loadApex` in the card JS).
         static_paths = [StaticPathConfig(card_url, card_path, cache_headers=False)]
         if apex_present:
             static_paths.append(
                 StaticPathConfig(apex_url, apex_path, cache_headers=True)
             )
         await hass.http.async_register_static_paths(static_paths)
-        # Load order matters — ApexCharts must be defined before the card
-        # module instantiates a chart. add_extra_js_url preserves
-        # registration order, so register Apex first.
-        if apex_present:
-            add_extra_js_url(hass, f"{apex_url}?v={version}")
         add_extra_js_url(hass, f"{card_url}?v={version}")
         hass.data[DOMAIN]["_card_registered"] = True
     except Exception as exc:

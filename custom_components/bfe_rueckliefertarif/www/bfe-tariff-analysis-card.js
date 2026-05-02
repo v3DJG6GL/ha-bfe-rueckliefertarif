@@ -19,7 +19,37 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.20.1";
+const CARD_VERSION = "0.20.2";
+
+// v0.20.2 — scope-isolated ApexCharts loader. Prevents global pollution
+// that broke RomRider/apexcharts-card in v0.20.0/v0.20.1 (their internally
+// bundled ApexCharts conflicted with our v3.54.0 sitting on window.ApexCharts).
+// We fetch the UMD bundle, wrap it in a CommonJS-style factory, and
+// capture the export into a module-private reference. window.ApexCharts
+// is never touched.
+const APEX_URL = "/api/bfe_rueckliefertarif/static/apexcharts.min.js";
+let _apexPromise = null;
+function _loadApexScoped() {
+  if (_apexPromise) return _apexPromise;
+  _apexPromise = (async () => {
+    const code = await fetch(APEX_URL).then((r) => {
+      if (!r.ok) throw new Error(`Failed to fetch ApexCharts: ${r.status}`);
+      return r.text();
+    });
+    // Wrap UMD bundle so it sees a CommonJS environment and assigns to
+    // module.exports instead of window.ApexCharts. Safe even if some inner
+    // code path also tries to set globals — we capture before they leak.
+    const factory = new Function(
+      "module", "exports",
+      code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
+    );
+    const moduleObj = { exports: {} };
+    const Apex = factory(moduleObj, moduleObj.exports);
+    if (!Apex) throw new Error("ApexCharts UMD bundle did not export anything");
+    return Apex;
+  })();
+  return _apexPromise;
+}
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 class BfeTariffAnalysisCard extends HTMLElement {
@@ -65,8 +95,8 @@ class BfeTariffAnalysisCard extends HTMLElement {
     if (!this._hass || this._loading) return;
     this._loading = true;
     this._error = null;
-    this._renderBody();
     try {
+      try { this._renderBody(); } catch (e) { console.error("BFE card pre-render failed:", e); }
       const detailPromise = this._hass.callService(
         DOMAIN, SERVICE,
         { year: this._year, quarter: this._quarter },
@@ -84,9 +114,21 @@ class BfeTariffAnalysisCard extends HTMLElement {
       this._error = err?.message || String(err);
       this._response = null;
       this._history = null;
+    } finally {
+      // v0.20.2 — guarantee the loading state clears even if rendering
+      // threw mid-flight. Without this, "Aktualisieren" stayed disabled
+      // forever after a chart-mount exception.
+      this._loading = false;
+      try {
+        this._renderBody();
+      } catch (e) {
+        console.error("BFE card post-render failed:", e);
+        const body = this.shadowRoot?.querySelector(".body");
+        if (body) {
+          body.innerHTML = `<div class="error">Render-Fehler: ${this._escape(e?.message || String(e))}</div>`;
+        }
+      }
     }
-    this._loading = false;
-    this._renderBody();
   }
 
   _renderShell() {
@@ -352,9 +394,13 @@ class BfeTariffAnalysisCard extends HTMLElement {
     }
   }
 
-  _renderCharts(historyRows) {
-    if (typeof window.ApexCharts === "undefined") {
-      const fallback = `<div class="chart-fallback">ApexCharts wurde nicht geladen — prüfe Browser-Konsole (Cache-Reload mit Ctrl+Shift+R hilft oft).</div>`;
+  async _renderCharts(historyRows) {
+    let Apex;
+    try {
+      Apex = await _loadApexScoped();
+    } catch (err) {
+      console.error("BFE card: ApexCharts load failed:", err);
+      const fallback = `<div class="chart-fallback">ApexCharts konnte nicht geladen werden: ${this._escape(err?.message || String(err))}<br><small>Hard-Refresh mit Ctrl+Shift+R hilft oft.</small></div>`;
       const r = this.shadowRoot.querySelector("#chart-rate");
       const s = this.shadowRoot.querySelector("#chart-stack");
       if (r) r.innerHTML = fallback;
@@ -374,7 +420,6 @@ class BfeTariffAnalysisCard extends HTMLElement {
     const bonusRpKwh = sorted.map((r) => this._numOrNull(r.bonus_rp_kwh_avg));
 
     const themeMode = this._isDarkTheme() ? "dark" : "light";
-    const accent = "var(--primary-color, #03a9f4)";
 
     // Sparkline — effective rate over time
     const rateEl = this.shadowRoot.querySelector("#chart-rate");
@@ -400,13 +445,19 @@ class BfeTariffAnalysisCard extends HTMLElement {
         markers: { size: 4 },
         dataLabels: { enabled: false },
         tooltip: {
+          // v0.20.2 — explicit shared+intersect (ApexCharts requires both
+          // when shared=true; default intersect=true causes a runtime
+          // throw "tooltip.shared cannot be enabled when tooltip.intersect
+          // is true").
+          shared: false,
+          intersect: false,
           y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
         },
         grid: { borderColor: "var(--divider-color, #eee)" },
         colors: ["#03a9f4"],
       };
-      this._chartRate = new window.ApexCharts(rateEl, opts);
-      this._chartRate.render();
+      this._chartRate = new Apex(rateEl, opts);
+      try { await this._chartRate.render(); } catch (e) { console.error("BFE rate chart render:", e); }
     }
 
     // Stacked bar — base / HKN / bonus per period
@@ -439,15 +490,19 @@ class BfeTariffAnalysisCard extends HTMLElement {
         },
         dataLabels: { enabled: false },
         tooltip: {
-          shared: true,
+          // v0.20.2 — see note in sparkline opts above. shared+intersect
+          // both false works for stacked bars too; users see a tooltip per
+          // bar segment (Basis / HKN / Boni separately).
+          shared: false,
+          intersect: false,
           y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
         },
         legend: { position: "top", horizontalAlign: "right", fontSize: "12px" },
         grid: { borderColor: "var(--divider-color, #eee)" },
         colors: ["#03a9f4", "#4caf50", "#ff9800"],
       };
-      this._chartStack = new window.ApexCharts(stackEl, opts);
-      this._chartStack.render();
+      this._chartStack = new Apex(stackEl, opts);
+      try { await this._chartStack.render(); } catch (e) { console.error("BFE stack chart render:", e); }
     }
   }
 
