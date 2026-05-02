@@ -1,0 +1,104 @@
+# BFE Rückliefertarif — Lovelace card sizing examples
+#
+# Copy-paste recipes for making `custom:bfe-tariff-analysis-card`
+# render full-width on different dashboard layouts.
+# Pick the option that matches your existing dashboard setup.
+
+
+# ============================================================
+# OPTION A — Wrap in custom:layout-card (simplest, works in any view)
+# ============================================================
+# Drop this anywhere on a masonry / sections / panel view. The
+# wrapper forces the inner card into a full-width column.
+# Requires: HACS plugin "thomasloven/lovelace-layout-card".
+
+- type: custom:layout-card
+  layout_type: grid
+  layout:
+    grid-template-columns: 1fr        # one full-width column
+  cards:
+    - type: custom:bfe-tariff-analysis-card
+
+
+# ============================================================
+# OPTION B — view_layout on the card (view uses custom:grid-layout)
+# ============================================================
+# Use when your VIEW has `layout_type: custom:grid-layout` set,
+# defining the column grid at view level. Each card then positions
+# itself via `view_layout`.
+
+- type: custom:bfe-tariff-analysis-card
+  view_layout:
+    grid-column: 1 / -1               # span all columns of the parent grid
+
+
+# ============================================================
+# OPTION C — Mixed cards inside a master layout-card
+# ============================================================
+# When a single layout-card wraps multiple cards and you want one
+# of them to span all columns while others stay in 1-column slots.
+
+- type: custom:layout-card
+  layout_type: grid
+  layout:
+    grid-template-columns: 1fr 1fr 1fr
+  cards:
+    - type: entities
+      view_layout:
+        grid-column: 1
+    - type: entities
+      view_layout:
+        grid-column: 2
+    - type: custom:bfe-tariff-analysis-card
+      view_layout:
+        grid-column: 1 / -1           # span all 3 columns of this layout-card
+
+
+# ============================================================
+# OPTION D — HA-native Sections layout (no HACS plugin)
+# ============================================================
+# Requires switching the entire view to `type: sections`. Each
+# section has its own 12-column grid; `grid_options` on the card
+# specifies how many columns it spans.
+# Edit dashboard → view tab pencil icon → Type: Sections.
+
+# View-level YAML (parent of the card):
+title: Photovoltaik
+type: sections
+sections:
+  - type: grid
+    cards:
+      - type: custom:bfe-tariff-analysis-card
+        grid_options:
+          columns: 12                 # full width (12 = max in Sections)
+          rows: auto
+
+
+# ============================================================
+# OPTION E — HA-native Panel mode (single-card view, full viewport)
+# ============================================================
+# Cleanest if you want a dedicated tab for the BFE card. The
+# entire view contains exactly this one card and fills the
+# whole viewport width.
+
+title: BFE Tariff
+type: panel
+cards:
+  - type: custom:bfe-tariff-analysis-card
+
+
+# ============================================================
+# Card config options (apply to all layouts above)
+# ============================================================
+# These go on the card itself, regardless of how it's wrapped:
+
+# Default — 8 quarters of history in the charts:
+- type: custom:bfe-tariff-analysis-card
+
+# Override — show 12 quarters (3 years) in the history charts:
+- type: custom:bfe-tariff-analysis-card
+  history_quarters: 12
+
+# Override — show 4 quarters (1 year) for a tighter view:
+- type: custom:bfe-tariff-analysis-card
+  history_quarters: 4

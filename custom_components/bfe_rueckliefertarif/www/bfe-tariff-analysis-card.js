@@ -19,7 +19,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.20.0";
+const CARD_VERSION = "0.20.1";
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 class BfeTariffAnalysisCard extends HTMLElement {
@@ -487,7 +487,24 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 7;
+    // Masonry layout estimate: each unit ≈ 50px. Card has header +
+    // controls + active config + bonuses + breakdown table + 2 charts +
+    // data-source footer ≈ 1000-1200px → ~22 units. HA caps at reasonable
+    // values so this just hints at "this is a tall card."
+    return 22;
+  }
+
+  static getLayoutOptions() {
+    // v0.20.1 — declare Sections-layout defaults so the card auto-spans
+    // full width on new placements. Without this method, HA shows
+    // "This card does not fully support resizing yet" and uses a small
+    // 4×4 default. Charts at 4-column width are unreadable.
+    return {
+      grid_columns: 12,        // full width (12 = max in Sections)
+      grid_rows: "auto",       // size to content (auto-height)
+      grid_min_columns: 6,     // narrower than 6 cols and the table breaks
+      grid_min_rows: 8,
+    };
   }
 
   static getStubConfig() {
