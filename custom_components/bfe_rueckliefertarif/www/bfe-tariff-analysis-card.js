@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.1";
+const CARD_VERSION = "0.21.2";
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 // v0.20.2 scope-isolated ApexCharts loader (avoid window.ApexCharts pollution
@@ -818,15 +818,33 @@ class BfeTariffAnalysisCard extends HTMLElement {
 // name is already taken (e.g. browser cached an older module from a
 // previous integration version). Log the conflict instead of swallowing
 // the throw silently — the user knows to hard-refresh.
+//
+// v0.21.2 — diagnostic logging: confirm the post-register customElements.get
+// actually finds the class. If not, the scoped-custom-element-registry
+// polyfill HA uses may be intercepting the global define.
 try {
-  if (customElements.get("bfe-tariff-analysis-card")) {
+  const existing = customElements.get("bfe-tariff-analysis-card");
+  if (existing && existing !== BfeTariffAnalysisCard) {
     console.warn(
       `[BFE] bfe-tariff-analysis-card already registered — likely a stale module ` +
       `from a previous integration version. Hard-refresh (Ctrl+Shift+R) to load ` +
       `v${CARD_VERSION}.`
     );
-  } else {
+  } else if (!existing) {
     customElements.define("bfe-tariff-analysis-card", BfeTariffAnalysisCard);
+  }
+  // Sanity check — confirm the registration is actually findable.
+  const post = customElements.get("bfe-tariff-analysis-card");
+  if (!post) {
+    console.error(
+      "[BFE] customElements.define ran but customElements.get returned undefined! " +
+      "The scoped-custom-element-registry polyfill may be intercepting our global " +
+      "define. Please paste this entire console output to the integration issue tracker."
+    );
+  } else {
+    console.info(
+      `[BFE] customElements registered OK. ctor: ${post.name || "(anonymous)"}`
+    );
   }
 } catch (err) {
   console.error("[BFE] customElements.define failed:", err);
