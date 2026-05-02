@@ -24,12 +24,29 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.21.7";
+const CARD_VERSION = "0.21.8";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
 // Time range presets — map to service-call params.
+//
+// `gran` (optional): natural granularity for that window. When set, picking
+// the chip auto-flips the granularity dropdown so users don't end up with
+// nonsensical combos like "Heute @ Jahr" (= no rows). Quarter-aligned
+// presets leave `gran` undefined → user's manual choice is preserved.
+//
+// Fine-grained presets fetch the covering quarter range from the service
+// and then `_filterHistoryToWindow` trims rows client-side to the exact
+// calendar window (today / this ISO week / last calendar month / etc.).
 const RANGE_PRESETS = [
+  // Fine-grained windows — client-side filtered after quarter fetch.
+  { id: "today",           label: "Heute",            params: "today",           gran: "stunde" },
+  { id: "current_week",    label: "Aktuelle Woche",   params: "current_week",    gran: "tag"    },
+  { id: "last_week",       label: "Letzte Woche",     params: "last_week",       gran: "tag"    },
+  { id: "current_month",   label: "Aktueller Monat",  params: "current_month",   gran: "tag"    },
+  { id: "last_month",      label: "Letzter Monat",    params: "last_month",      gran: "tag"    },
+  { id: "current_quarter", label: "Aktuelles Quartal",params: "current_quarter", gran: "monat"  },
+  // Quarter-aligned windows — direct service params, no client filter.
   { id: "last_4q",      label: "Letzte 4Q",       params: { last_n_quarters: 4  } },
   { id: "last_8q",      label: "Letzte 8Q",       params: { last_n_quarters: 8  } },
   { id: "last_12q",     label: "Letzte 12Q",      params: { last_n_quarters: 12 } },
@@ -38,6 +55,12 @@ const RANGE_PRESETS = [
   { id: "last_3y",      label: "Letzte 3J",       params: "last_3y" },
   { id: "custom",       label: "Custom…",         params: "custom" },
 ];
+
+// Preset IDs that need client-side filtering after the service returns.
+const FINE_WINDOWED_PRESETS = new Set([
+  "today", "current_week", "last_week",
+  "current_month", "last_month", "current_quarter",
+]);
 
 const GRANULARITY_OPTIONS = [
   { value: "jahr",    label: "Jahr"    },
@@ -66,11 +89,17 @@ class BfeTariffAnalysisCard extends HTMLElement {
     this._quarter = Math.floor(now.getMonth() / 3) + 1;
 
     // Chart-side state — independent of detail-view selectors.
+    // v0.21.8 — Custom preset now uses range_from_date/range_to_date
+    // (HTML5 date pickers); the legacy range_from/range_to year+quarter
+    // pair stays as a seed for the date pickers' default values on first
+    // open, but is no longer the source of truth for the service call.
     this._chartState = {
       granularity: "quartal",
       range_preset: "last_8q",
       range_from: { year: now.getFullYear() - 1, quarter: 1 },
       range_to:   { year: this._year,            quarter: this._quarter },
+      range_from_date: null,   // "YYYY-MM-DD" once user picks
+      range_to_date:   null,
     };
   }
 
@@ -93,11 +122,24 @@ class BfeTariffAnalysisCard extends HTMLElement {
   _historyParams() {
     const cs = this._chartState;
     const out = { granularity: cs.granularity };
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curQ = Math.floor(now.getMonth() / 3) + 1;
+
     if (cs.range_preset === "custom") {
-      out.from_year = cs.range_from.year;
-      out.from_quarter = cs.range_from.quarter;
-      out.to_year = cs.range_to.year;
-      out.to_quarter = cs.range_to.quarter;
+      // v0.21.8 — derive quarter range from date pickers; client filter
+      // trims rows back down to the exact day window. Without dates yet,
+      // fall back to current quarter (empty filter renders the empty state).
+      const from = cs.range_from_date ? new Date(cs.range_from_date + "T00:00") : null;
+      const to   = cs.range_to_date   ? new Date(cs.range_to_date   + "T00:00") : null;
+      if (!from || !to || isNaN(from) || isNaN(to)) {
+        out.from_year = curYear; out.from_quarter = curQ;
+        out.to_year = curYear;   out.to_quarter = curQ;
+      } else {
+        const qOf = (d) => Math.floor(d.getMonth() / 3) + 1;
+        out.from_year = from.getFullYear(); out.from_quarter = qOf(from);
+        out.to_year   = to.getFullYear();   out.to_quarter   = qOf(to);
+      }
       return out;
     }
     const preset = RANGE_PRESETS.find((p) => p.id === cs.range_preset);
@@ -110,9 +152,6 @@ class BfeTariffAnalysisCard extends HTMLElement {
       return out;
     }
     // Computed presets — derived from current calendar
-    const now = new Date();
-    const curYear = now.getFullYear();
-    const curQ = Math.floor(now.getMonth() / 3) + 1;
     if (preset.params === "current_year") {
       out.from_year = curYear;
       out.from_quarter = 1;
@@ -128,6 +167,22 @@ class BfeTariffAnalysisCard extends HTMLElement {
       out.from_quarter = 1;
       out.to_year = curYear;
       out.to_quarter = curQ;
+    } else if (
+      preset.params === "today" ||
+      preset.params === "current_week" ||
+      preset.params === "current_month" ||
+      preset.params === "current_quarter"
+    ) {
+      // v0.21.8 — fine-grained windows entirely inside the current quarter.
+      out.from_year = curYear; out.from_quarter = curQ;
+      out.to_year = curYear;   out.to_quarter = curQ;
+    } else if (preset.params === "last_week" || preset.params === "last_month") {
+      // v0.21.8 — previous week/month may straddle a quarter boundary.
+      // Request both quarters; client filter trims to the exact window.
+      const prevQYear = curQ === 1 ? curYear - 1 : curYear;
+      const prevQ     = curQ === 1 ? 4           : curQ - 1;
+      out.from_year = prevQYear; out.from_quarter = prevQ;
+      out.to_year = curYear;     out.to_quarter = curQ;
     } else {
       out.last_n_quarters = HISTORY_QUARTERS_DEFAULT;
     }
@@ -489,11 +544,14 @@ class BfeTariffAnalysisCard extends HTMLElement {
     }
     html += `</div>`;
     const customHidden = this._chartState.range_preset === "custom" ? "" : " hidden";
+    // v0.21.8 — Custom uses HTML5 date pickers (was: Year+Quarter number
+    // inputs). Picking dates lets the user view Month/Week/Day windows.
+    // Service still receives quarter range; client filter trims to exact days.
+    const fromDateVal = this._chartState.range_from_date || "";
+    const toDateVal   = this._chartState.range_to_date   || "";
     html += `<div class="custom-range${customHidden}">`;
-    html += `<label>Von Jahr <input type="number" class="from-year" value="${this._chartState.range_from.year}" min="2020" max="2099"></label>`;
-    html += `<label>Von Q <input type="number" class="from-quarter" value="${this._chartState.range_from.quarter}" min="1" max="4"></label>`;
-    html += `<label>Bis Jahr <input type="number" class="to-year" value="${this._chartState.range_to.year}" min="2020" max="2099"></label>`;
-    html += `<label>Bis Q <input type="number" class="to-quarter" value="${this._chartState.range_to.quarter}" min="1" max="4"></label>`;
+    html += `<label>Von Datum <input type="date" class="from-date" value="${this._escape(fromDateVal)}"></label>`;
+    html += `<label>Bis Datum <input type="date" class="to-date" value="${this._escape(toDateVal)}"></label>`;
     html += `</div>`;
     html += `</section>`;
 
@@ -518,7 +576,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
     // Data source footer
     html += `<section><h3>Datenquelle</h3><dl class="config-grid">`;
     html += this._configRow("Tariffs DB", `v${cfgToday.tariffs_version || "—"} (${cfgToday.tariffs_source || "—"})`);
-    html += this._configRow("Karte", `v${CARD_VERSION}`);
+    html += this._configRow("Integration", `v${CARD_VERSION}`);
     html += `</dl></section>`;
 
     body.innerHTML = html;
@@ -537,10 +595,8 @@ class BfeTariffAnalysisCard extends HTMLElement {
     const granularitySelect = root.querySelector(".granularity");
     const chartRefresh = root.querySelector(".chart-refresh");
     const chips = root.querySelectorAll(".chip");
-    const fromYear = root.querySelector(".from-year");
-    const fromQuarter = root.querySelector(".from-quarter");
-    const toYear = root.querySelector(".to-year");
-    const toQuarter = root.querySelector(".to-quarter");
+    const fromDate = root.querySelector(".from-date");
+    const toDate   = root.querySelector(".to-date");
 
     granularitySelect?.addEventListener("change", (e) => {
       this._chartState.granularity = e.target.value;
@@ -548,24 +604,29 @@ class BfeTariffAnalysisCard extends HTMLElement {
     chartRefresh?.addEventListener("click", () => this._fetch());
     chips.forEach((chip) => {
       chip.addEventListener("click", () => {
-        this._chartState.range_preset = chip.dataset.preset;
-        // Re-render to update chip-active state + show/hide custom inputs
-        this._renderBody();
+        const presetId = chip.dataset.preset;
+        this._chartState.range_preset = presetId;
+        // v0.21.8 — auto-set granularity to the preset's natural value
+        // (Heute → Stunde, Woche/Monat → Tag, Quartal → Monat). Quarter-
+        // aligned presets have no `gran` so the user's manual choice is
+        // preserved. Re-fetch because both granularity and quarter range
+        // likely changed.
+        const preset = RANGE_PRESETS.find((p) => p.id === presetId);
+        if (preset?.gran) {
+          this._chartState.granularity = preset.gran;
+        }
+        this._fetch();
       });
     });
-    fromYear?.addEventListener("change", (e) => {
-      this._chartState.range_from.year = parseInt(e.target.value, 10) || 2020;
+    // v0.21.8 — Custom date pickers. Re-fetch on change because the chosen
+    // dates may need a different quarter range from the service.
+    fromDate?.addEventListener("change", (e) => {
+      this._chartState.range_from_date = e.target.value || null;
+      if (this._chartState.range_to_date) this._fetch();
     });
-    fromQuarter?.addEventListener("change", (e) => {
-      const v = parseInt(e.target.value, 10);
-      this._chartState.range_from.quarter = (v >= 1 && v <= 4) ? v : 1;
-    });
-    toYear?.addEventListener("change", (e) => {
-      this._chartState.range_to.year = parseInt(e.target.value, 10) || 2099;
-    });
-    toQuarter?.addEventListener("change", (e) => {
-      const v = parseInt(e.target.value, 10);
-      this._chartState.range_to.quarter = (v >= 1 && v <= 4) ? v : 4;
+    toDate?.addEventListener("change", (e) => {
+      this._chartState.range_to_date = e.target.value || null;
+      if (this._chartState.range_from_date) this._fetch();
     });
   }
 
@@ -619,10 +680,21 @@ class BfeTariffAnalysisCard extends HTMLElement {
       return;
     }
 
-    // Sort rows OLDEST first
-    const sorted = [...historyRows].sort((a, b) => {
+    // Sort rows OLDEST first, then trim to the active window for fine-grained
+    // presets (Heute / Letzte Woche / etc.) and Custom date ranges. Quarter-
+    // aligned presets pass through unchanged (helper returns input).
+    const sortedAll = [...historyRows].sort((a, b) => {
       return String(a.period).localeCompare(String(b.period));
     });
+    const sorted = this._filterHistoryToWindow(sortedAll, this._chartState);
+    if (sorted.length === 0) {
+      const empty = `<div class="chart-fallback">Keine Daten für gewählten Zeitraum.</div>`;
+      const r = this.shadowRoot.querySelector("#chart-rate");
+      const s = this.shadowRoot.querySelector("#chart-stack");
+      if (r) r.innerHTML = empty;
+      if (s) s.innerHTML = empty;
+      return;
+    }
     const categories = sorted.map((r) => r.period);
     const ratesRpKwh = sorted.map((r) => this._numOrNull(r.rate_rp_kwh_avg));
     const baseRpKwh = sorted.map((r) => this._numOrNull(r.base_rp_kwh_avg));
@@ -704,9 +776,45 @@ class BfeTariffAnalysisCard extends HTMLElement {
           tooltip: {
             // v0.21.0 — shared:true now works because intersect:false is set
             // (was the missing piece in v0.20.2 that caused the API throw).
+            // v0.21.8 — custom HTML so we can show a combined Total row at
+            // the bottom (the effective Rückliefertarif for that period).
+            // Apex renders the tooltip outside our shadow root, so styles
+            // must be inline.
             shared: true,
             intersect: false,
-            y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
+            custom: ({ series, dataPointIndex, w }) => {
+              const seriesNames = w.globals.seriesNames || [];
+              const colors = w.globals.colors || [];
+              const period =
+                w.globals.categoryLabels?.[dataPointIndex] ??
+                w.globals.labels?.[dataPointIndex] ?? "";
+              let total = 0;
+              let hasAny = false;
+              let rowsHtml = "";
+              for (let i = 0; i < seriesNames.length; i++) {
+                const v = series[i]?.[dataPointIndex];
+                const n = (v == null || Number.isNaN(v)) ? null : Number(v);
+                if (n != null) { total += n; hasAny = true; }
+                const valStr = n == null ? "—" : `${n.toFixed(3)} Rp/kWh`;
+                rowsHtml +=
+                  `<div style="display:flex;align-items:center;gap:8px;padding:2px 0">` +
+                    `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${colors[i] || "#999"}"></span>` +
+                    `<span style="flex:1">${seriesNames[i]}</span>` +
+                    `<span style="font-variant-numeric:tabular-nums">${valStr}</span>` +
+                  `</div>`;
+              }
+              const totalStr = hasAny ? `${total.toFixed(3)} Rp/kWh` : "—";
+              return (
+                `<div style="padding:8px 12px;font-size:12px;min-width:200px">` +
+                  `<div style="font-weight:500;margin-bottom:6px;border-bottom:1px solid var(--divider-color,#ddd);padding-bottom:4px">${period}</div>` +
+                  rowsHtml +
+                  `<div style="display:flex;align-items:center;gap:8px;padding:4px 0 0;margin-top:4px;border-top:1px solid var(--divider-color,#ddd);font-weight:600">` +
+                    `<span style="flex:1">Total</span>` +
+                    `<span style="font-variant-numeric:tabular-nums">${totalStr}</span>` +
+                  `</div>` +
+                `</div>`
+              );
+            },
           },
           legend: { position: "top", horizontalAlign: "right", fontSize: "12px" },
           grid: { borderColor: "var(--divider-color, #eee)" },
@@ -753,6 +861,65 @@ class BfeTariffAnalysisCard extends HTMLElement {
     return Number.isFinite(n) ? n : null;
   }
 
+  // v0.21.8 — trim already-sorted rows to the calendar window implied by
+  // the active preset (or by the Custom date pickers). Quarter-aligned
+  // presets and an unset Custom (no dates picked) pass through unchanged.
+  // Day-aligned windows; sub-day skew (DST, UTC vs local) is invisible at
+  // this granularity.
+  _filterHistoryToWindow(rows, cs) {
+    const presetId = cs.range_preset;
+    const isCustomDated =
+      presetId === "custom" && cs.range_from_date && cs.range_to_date;
+    if (!FINE_WINDOWED_PRESETS.has(presetId) && !isCustomDated) return rows;
+
+    const now = new Date();
+    const startOfDay = (d) => {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    };
+    const startOfIsoWeek = (d) => {
+      const x = startOfDay(d);
+      const dow = (x.getDay() + 6) % 7;   // Mon=0 … Sun=6
+      x.setDate(x.getDate() - dow);
+      return x;
+    };
+
+    let from, to;
+    if (isCustomDated) {
+      from = new Date(cs.range_from_date + "T00:00");
+      to   = new Date(cs.range_to_date   + "T00:00");
+      to.setDate(to.getDate() + 1);   // make Bis Datum inclusive
+    } else if (presetId === "today") {
+      from = startOfDay(now);
+      to   = new Date(from); to.setDate(to.getDate() + 1);
+    } else if (presetId === "current_week") {
+      from = startOfIsoWeek(now);
+      to   = new Date(from); to.setDate(to.getDate() + 7);
+    } else if (presetId === "last_week") {
+      to   = startOfIsoWeek(now);
+      from = new Date(to); from.setDate(from.getDate() - 7);
+    } else if (presetId === "current_month") {
+      from = new Date(now.getFullYear(), now.getMonth(),     1);
+      to   = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    } else if (presetId === "last_month") {
+      from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      to   = new Date(now.getFullYear(), now.getMonth(),     1);
+    } else if (presetId === "current_quarter") {
+      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      from = new Date(now.getFullYear(), qStartMonth,     1);
+      to   = new Date(now.getFullYear(), qStartMonth + 3, 1);
+    } else {
+      return rows;
+    }
+
+    return rows.filter((r) => {
+      const p = String(r.period);
+      const ts = new Date(p.length <= 10 ? p + "T00:00" : p);
+      return ts >= from && ts < to;
+    });
+  }
+
   _configRow(label, value) {
     return `<dt>${this._escape(label)}</dt><dd>${this._escape(value)}</dd>`;
   }
@@ -777,19 +944,50 @@ class BfeTariffAnalysisCard extends HTMLElement {
     return 26;
   }
 
-  static getLayoutOptions() {
-    // v0.20.1 — Sections-layout defaults so new placements span full width.
+  getLayoutOptions() {
+    // v0.21.8 — was 'static' through v0.21.7, which made HA's instance-method
+    // call invisible. The card fell back to the 1-column default and could
+    // not be resized. Adding grid_max_* exposes drag handles in Sections view.
     return {
       grid_columns: 12,
       grid_rows: "auto",
       grid_min_columns: 6,
+      grid_max_columns: 12,
       grid_min_rows: 8,
+      grid_max_rows: 40,
     };
   }
 
   static getStubConfig() {
     return { type: `custom:bfe-tariff-analysis-card` };
   }
+
+  static getConfigElement() {
+    return document.createElement("bfe-tariff-analysis-card-editor");
+  }
+}
+
+// v0.21.8 — minimal editor element so HA's edit-card panel renders cleanly
+// instead of the red "Visual editor not supported" notification. The card
+// has no editable options today; resize/position is handled by Sections.
+class BfeTariffAnalysisCardEditor extends HTMLElement {
+  setConfig(_config) { /* no editable options */ }
+  set hass(_hass) {
+    if (this._rendered) return;
+    this._rendered = true;
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; padding: 16px; color: var(--secondary-text-color); font-size: 0.9em; }
+      </style>
+      <div>
+        Diese Karte hat keine konfigurierbaren Optionen.
+        Größe und Position lassen sich über das Sections-Layout verändern.
+      </div>`;
+  }
+}
+if (!customElements.get("bfe-tariff-analysis-card-editor")) {
+  customElements.define("bfe-tariff-analysis-card-editor", BfeTariffAnalysisCardEditor);
 }
 
 // v0.21.6 — continuous registration monitor (workaround for HA frontend bug).
