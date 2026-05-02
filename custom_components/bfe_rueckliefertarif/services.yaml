@@ -25,10 +25,20 @@ get_breakdown:
   description: >
     Returns the structured tariff breakdown as a JSON object. Used by the
     BFE tariff analysis Lovelace card. Read-only — does NOT trigger LTS
-    rewrites. With both year+quarter set, returns one quarter; with year
-    only, returns all 4 quarters of that year; with no args, returns the
-    current quarter.
+    rewrites. Precedence: last_n_quarters > year+quarter > year only > quarter
+    only > current quarter.
   fields:
+    last_n_quarters:
+      name: Last N quarters (history)
+      description: >
+        If set, returns the most recent N quarters (oldest first). Used by
+        the chart history view. Overrides year + quarter.
+      example: 8
+      selector:
+        number:
+          min: 1
+          max: 40
+          mode: box
     year:
       name: Year
       example: 2026

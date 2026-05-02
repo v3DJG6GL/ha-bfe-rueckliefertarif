@@ -1405,19 +1405,36 @@ async def _handle_refresh_data(call: ServiceCall) -> None:
 
 
 def _resolve_quarters(data: dict | None) -> list[Quarter]:
-    """Map (year, quarter) call args to a list of Quarters.
+    """Map call args to a list of Quarters.
 
-    - both year + quarter → ``[Quarter(year, quarter)]``
-    - year only          → all 4 quarters of that year
-    - quarter only       → that quarter of the current year
-    - neither            → ``[current_quarter]``
+    Precedence (first match wins):
+    - ``last_n_quarters: N``  → most recent N quarters (oldest first)
+    - both year + quarter     → ``[Quarter(year, quarter)]``
+    - year only               → all 4 quarters of that year
+    - quarter only            → that quarter of the current year
+    - neither                 → ``[current_quarter]``
     """
     from datetime import datetime as _dt
 
     data = data or {}
+    last_n = data.get("last_n_quarters")
     year = data.get("year")
     quarter = data.get("quarter")
     today = date.today()
+
+    if last_n is not None:
+        n = int(last_n)
+        if n < 1:
+            return [quarter_of(_dt.now(UTC))]
+        current = quarter_of(_dt.now(UTC))
+        out: list[Quarter] = []
+        q = current
+        for _ in range(n):
+            out.append(q)
+            q = q.prev()
+        out.reverse()  # oldest first — natural for time-series charts
+        return out
+
     if year is not None and quarter is not None:
         return [Quarter(int(year), int(quarter))]
     if year is not None:

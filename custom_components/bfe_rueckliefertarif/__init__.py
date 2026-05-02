@@ -92,8 +92,12 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         return
     from pathlib import Path
 
-    card_path = str(Path(__file__).parent / "www" / "bfe-tariff-analysis-card.js")
+    www_dir = Path(__file__).parent / "www"
+    card_path = str(www_dir / "bfe-tariff-analysis-card.js")
     card_url = "/api/bfe_rueckliefertarif/static/bfe-tariff-analysis-card.js"
+    apex_path = str(www_dir / "apexcharts.min.js")
+    apex_url = "/api/bfe_rueckliefertarif/static/apexcharts.min.js"
+    apex_present = Path(apex_path).is_file()
 
     try:
         version = _read_manifest_version()
@@ -104,9 +108,17 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         from homeassistant.components.frontend import add_extra_js_url
         from homeassistant.components.http import StaticPathConfig
 
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(card_url, card_path, cache_headers=False)]
-        )
+        static_paths = [StaticPathConfig(card_url, card_path, cache_headers=False)]
+        if apex_present:
+            static_paths.append(
+                StaticPathConfig(apex_url, apex_path, cache_headers=True)
+            )
+        await hass.http.async_register_static_paths(static_paths)
+        # Load order matters — ApexCharts must be defined before the card
+        # module instantiates a chart. add_extra_js_url preserves
+        # registration order, so register Apex first.
+        if apex_present:
+            add_extra_js_url(hass, f"{apex_url}?v={version}")
         add_extra_js_url(hass, f"{card_url}?v={version}")
         hass.data[DOMAIN]["_card_registered"] = True
     except Exception as exc:

@@ -1,21 +1,26 @@
 /**
  * BFE Rückliefertarif — Tarif-Analyse Lovelace card
  *
- * Calls service `bfe_rueckliefertarif.get_breakdown` (with year/quarter
- * params), renders the active configuration block + per-period breakdown
- * table + bonuses list. Auto-registered by the integration via
- * `frontend.add_extra_js_url` — no manual Lovelace resource setup.
+ * v0.20.0: adds rate sparkline + stacked breakdown bar via ApexCharts
+ * (loaded from `/api/bfe_rueckliefertarif/static/apexcharts.min.js`).
  *
- * Vanilla JS, no build step. Targets HA frontend Lit 3 / 2025+.
+ * Calls service `bfe_rueckliefertarif.get_breakdown` twice per refresh:
+ *   1. Current-period detail: { year, quarter }
+ *   2. Last-N-quarters history: { last_n_quarters: 8 }
+ *
+ * Auto-registered by the integration via `frontend.add_extra_js_url` —
+ * no manual Lovelace resource setup. Vanilla JS, no build step.
  *
  * Usage in Lovelace YAML:
  *   type: custom:bfe-tariff-analysis-card
+ *   history_quarters: 8   # optional, default 8
  */
 
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.19.0";
+const CARD_VERSION = "0.20.0";
+const HISTORY_QUARTERS_DEFAULT = 8;
 
 class BfeTariffAnalysisCard extends HTMLElement {
   constructor() {
@@ -26,7 +31,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
     this._rendered = false;
     this._loading = false;
     this._error = null;
-    this._response = null;
+    this._response = null;     // current-period detail
+    this._history = null;      // multi-quarter history for charts
+    this._chartRate = null;
+    this._chartStack = null;
     const now = new Date();
     this._year = now.getFullYear();
     this._quarter = Math.floor(now.getMonth() / 3) + 1;
@@ -48,24 +56,34 @@ class BfeTariffAnalysisCard extends HTMLElement {
     }
   }
 
+  _historyQuarters() {
+    const n = Number(this._config.history_quarters);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : HISTORY_QUARTERS_DEFAULT;
+  }
+
   async _fetch() {
     if (!this._hass || this._loading) return;
     this._loading = true;
     this._error = null;
     this._renderBody();
     try {
-      const result = await this._hass.callService(
-        DOMAIN,
-        SERVICE,
+      const detailPromise = this._hass.callService(
+        DOMAIN, SERVICE,
         { year: this._year, quarter: this._quarter },
-        undefined,
-        false,
-        true, // returnResponse
+        undefined, false, true,
       );
-      this._response = result?.response ?? result;
+      const historyPromise = this._hass.callService(
+        DOMAIN, SERVICE,
+        { last_n_quarters: this._historyQuarters() },
+        undefined, false, true,
+      );
+      const [detail, history] = await Promise.all([detailPromise, historyPromise]);
+      this._response = detail?.response ?? detail;
+      this._history = history?.response ?? history;
     } catch (err) {
       this._error = err?.message || String(err);
       this._response = null;
+      this._history = null;
     }
     this._loading = false;
     this._renderBody();
@@ -156,6 +174,14 @@ class BfeTariffAnalysisCard extends HTMLElement {
         ul.bonuses li { margin: 2px 0; }
         ul.bonuses .applied { color: var(--success-color, #6c0); font-weight: 500; }
         ul.bonuses .skipped { color: var(--secondary-text-color); }
+        .chart-host { height: 200px; }
+        .chart-host.tall { height: 260px; }
+        .chart-fallback {
+          padding: 16px;
+          color: var(--secondary-text-color);
+          font-size: 0.9em;
+          font-style: italic;
+        }
       </style>
       <ha-card>
         <div class="header">
@@ -199,11 +225,20 @@ class BfeTariffAnalysisCard extends HTMLElement {
     refreshBtn.addEventListener("click", () => this._fetch());
   }
 
+  _disposeCharts() {
+    try { this._chartRate?.destroy(); } catch (e) { /* ignore */ }
+    try { this._chartStack?.destroy(); } catch (e) { /* ignore */ }
+    this._chartRate = null;
+    this._chartStack = null;
+  }
+
   _renderBody() {
     const body = this.shadowRoot.querySelector(".body");
     const refreshBtn = this.shadowRoot.querySelector(".refresh");
     refreshBtn.disabled = this._loading;
     refreshBtn.textContent = this._loading ? "Lädt…" : "Aktualisieren";
+
+    this._disposeCharts();
 
     if (this._loading && !this._response) {
       body.innerHTML = `<div class="loading">Lade Tarifdaten…</div>`;
@@ -292,6 +327,17 @@ class BfeTariffAnalysisCard extends HTMLElement {
       html += `</section>`;
     }
 
+    // History charts (v0.20.0)
+    const historyRows = (this._history?.rows || []);
+    if (historyRows.length > 0) {
+      html += `<section><h3>Verlauf — Effektiver Tarif</h3>`;
+      html += `<div class="chart-host" id="chart-rate"></div>`;
+      html += `</section>`;
+      html += `<section><h3>Verlauf — Aufschlüsselung pro Periode</h3>`;
+      html += `<div class="chart-host tall" id="chart-stack"></div>`;
+      html += `</section>`;
+    }
+
     // Data source footer
     html += `<section><h3>Datenquelle</h3><dl class="config-grid">`;
     html += this._configRow("Tariffs DB", `v${cfg.tariffs_version || "—"} (${cfg.tariffs_source || "—"})`);
@@ -299,6 +345,126 @@ class BfeTariffAnalysisCard extends HTMLElement {
     html += `</dl></section>`;
 
     body.innerHTML = html;
+
+    // Mount charts after innerHTML is set
+    if (historyRows.length > 0) {
+      this._renderCharts(historyRows);
+    }
+  }
+
+  _renderCharts(historyRows) {
+    if (typeof window.ApexCharts === "undefined") {
+      const fallback = `<div class="chart-fallback">ApexCharts wurde nicht geladen — prüfe Browser-Konsole (Cache-Reload mit Ctrl+Shift+R hilft oft).</div>`;
+      const r = this.shadowRoot.querySelector("#chart-rate");
+      const s = this.shadowRoot.querySelector("#chart-stack");
+      if (r) r.innerHTML = fallback;
+      if (s) s.innerHTML = fallback;
+      return;
+    }
+
+    // Sort rows OLDEST first (service returns oldest-first for last_n_quarters,
+    // but defend against future changes)
+    const sorted = [...historyRows].sort((a, b) => {
+      return String(a.period).localeCompare(String(b.period));
+    });
+    const categories = sorted.map((r) => r.period);
+    const ratesRpKwh = sorted.map((r) => this._numOrNull(r.rate_rp_kwh_avg));
+    const baseRpKwh = sorted.map((r) => this._numOrNull(r.base_rp_kwh_avg));
+    const hknRpKwh = sorted.map((r) => this._numOrNull(r.hkn_rp_kwh_avg));
+    const bonusRpKwh = sorted.map((r) => this._numOrNull(r.bonus_rp_kwh_avg));
+
+    const themeMode = this._isDarkTheme() ? "dark" : "light";
+    const accent = "var(--primary-color, #03a9f4)";
+
+    // Sparkline — effective rate over time
+    const rateEl = this.shadowRoot.querySelector("#chart-rate");
+    if (rateEl) {
+      const opts = {
+        chart: {
+          type: "line",
+          height: 200,
+          background: "transparent",
+          toolbar: { show: false },
+          animations: { enabled: false },
+          parentHeightOffset: 0,
+        },
+        theme: { mode: themeMode },
+        series: [{ name: "Effektiv (Rp/kWh)", data: ratesRpKwh }],
+        xaxis: { categories, labels: { rotate: -45, style: { fontSize: "11px" } } },
+        yaxis: {
+          title: { text: "Rp/kWh", style: { fontSize: "11px" } },
+          labels: { formatter: (v) => v == null ? "—" : Number(v).toFixed(2) },
+          decimalsInFloat: 2,
+        },
+        stroke: { curve: "straight", width: 2 },
+        markers: { size: 4 },
+        dataLabels: { enabled: false },
+        tooltip: {
+          y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
+        },
+        grid: { borderColor: "var(--divider-color, #eee)" },
+        colors: ["#03a9f4"],
+      };
+      this._chartRate = new window.ApexCharts(rateEl, opts);
+      this._chartRate.render();
+    }
+
+    // Stacked bar — base / HKN / bonus per period
+    const stackEl = this.shadowRoot.querySelector("#chart-stack");
+    if (stackEl) {
+      const opts = {
+        chart: {
+          type: "bar",
+          stacked: true,
+          height: 260,
+          background: "transparent",
+          toolbar: { show: false },
+          animations: { enabled: false },
+          parentHeightOffset: 0,
+        },
+        theme: { mode: themeMode },
+        series: [
+          { name: "Basis",   data: baseRpKwh },
+          { name: "HKN",     data: hknRpKwh },
+          { name: "Boni",    data: bonusRpKwh },
+        ],
+        xaxis: { categories, labels: { rotate: -45, style: { fontSize: "11px" } } },
+        yaxis: {
+          title: { text: "Rp/kWh", style: { fontSize: "11px" } },
+          labels: { formatter: (v) => v == null ? "—" : Number(v).toFixed(2) },
+          decimalsInFloat: 2,
+        },
+        plotOptions: {
+          bar: { columnWidth: "55%", borderRadius: 2 },
+        },
+        dataLabels: { enabled: false },
+        tooltip: {
+          shared: true,
+          y: { formatter: (v) => v == null ? "—" : `${Number(v).toFixed(3)} Rp/kWh` },
+        },
+        legend: { position: "top", horizontalAlign: "right", fontSize: "12px" },
+        grid: { borderColor: "var(--divider-color, #eee)" },
+        colors: ["#03a9f4", "#4caf50", "#ff9800"],
+      };
+      this._chartStack = new window.ApexCharts(stackEl, opts);
+      this._chartStack.render();
+    }
+  }
+
+  _isDarkTheme() {
+    try {
+      const bg = getComputedStyle(this).getPropertyValue("--card-background-color") || "";
+      // Simple heuristic — HA dark themes have dark bg
+      return /^\s*#[0-3]/.test(bg) || /^\s*rgb\(\s*[0-9]{1,2}\s*,/.test(bg);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  _numOrNull(v) {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
   }
 
   _configRow(label, value) {
@@ -316,8 +482,12 @@ class BfeTariffAnalysisCard extends HTMLElement {
     }[c]));
   }
 
+  disconnectedCallback() {
+    this._disposeCharts();
+  }
+
   getCardSize() {
-    return 5;
+    return 7;
   }
 
   static getStubConfig() {
