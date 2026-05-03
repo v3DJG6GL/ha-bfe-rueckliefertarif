@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.23.0";
+const CARD_VERSION = "0.23.1";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
