@@ -19,11 +19,9 @@ Legal references (all in force since 1.1.2026 via the Mantelerlass / Stromgesetz
 from __future__ import annotations
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
+from .quarters import ZURICH
 from .tariffs_db import evaluate_federal_floor, find_rule
-
-_ZURICH = ZoneInfo("Europe/Zurich")
 
 # Default cap_rules — utility-published cost-recovery ceilings (EKZ, Groupe E,
 # Primeo converge on these 4 values). Cap mechanism per StromVV Art. 4 Abs. 3
@@ -154,7 +152,7 @@ def classify_ht(hour_utc: datetime, ht_window: dict | None) -> bool:
     """
     if not ht_window:
         return False
-    local = hour_utc.astimezone(_ZURICH)
+    local = hour_utc.astimezone(ZURICH)
     weekday = local.weekday()  # 0=Mon, 6=Sun
     if weekday < 5:
         window = ht_window.get("mofr")
@@ -182,7 +180,7 @@ def classify_season(
     list — the caller is responsible for ensuring summer_months and
     winter_months together cover all 12 months.
     """
-    local = hour_utc.astimezone(_ZURICH)
+    local = hour_utc.astimezone(ZURICH)
     if local.month in summer_months:
         return "summer"
     if local.month in winter_months:

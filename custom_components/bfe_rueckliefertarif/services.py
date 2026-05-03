@@ -203,17 +203,15 @@ def _resolve_quarter_segments(
     rendering downstream.
     """
     from datetime import date, datetime
-    from zoneinfo import ZoneInfo
 
-    _zrh = ZoneInfo("Europe/Zurich")
+    from .quarters import ZURICH
 
     def _zurich_midnight_utc(d: date) -> datetime:
         """Zurich-local 00:00 of ``d`` expressed in UTC. Mirrors the convention
         used by ``quarter_bounds_utc`` / ``month_bounds_utc`` so segment
         boundaries align with the importer's hour iteration.
         """
-        local = datetime(d.year, d.month, d.day, tzinfo=_zrh)
-        return local.astimezone(ZoneInfo("UTC"))
+        return datetime(d.year, d.month, d.day, tzinfo=ZURICH).astimezone(UTC)
 
     q_start_utc, q_end_utc = quarter_bounds_utc(q)
     q_start_date = date(q.year, ((q.q - 1) * 3) + 1, 1)
@@ -489,9 +487,8 @@ def _aggregate_by_period(
     rendering can emit sub-rows. The top-level period totals always reflect
     the whole period (sum across all segments).
     """
-    from zoneinfo import ZoneInfo
+    from .quarters import ZURICH as z
 
-    z = ZoneInfo("Europe/Zurich")
     quarterly = rhythm == ABRECHNUNGS_RHYTHMUS_QUARTAL
     yearly = rhythm == "jahr"
     daily = rhythm == "tag"
@@ -909,11 +906,8 @@ def _record_snapshot(
     # the quarter actually spans >1 segment (single-segment quarters render
     # as today's flat shape).
     if segments and len(segments) > 1:
-        from zoneinfo import ZoneInfo
+        from .quarters import ZURICH as z
 
-        from .quarters import month_bounds_utc as _mbu  # noqa: F401
-
-        z = ZoneInfo("Europe/Zurich")
         segments_meta: dict[str, dict] = {}
         db = load_tariffs()
         for seg in segments:
