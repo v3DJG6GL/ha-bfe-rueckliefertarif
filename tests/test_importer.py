@@ -125,6 +125,11 @@ EKZ_CFG = TariffConfig(
 )
 
 EKZ_Q1_2026_PRICE = BfePrice(chf_per_mwh=102.66, days=90, volume_mwh=683957.0)
+_EKZ_Q1_2026_EFFECTIVE_RP_KWH = effective_rp_kwh(
+    chf_per_mwh_to_rp_per_kwh(EKZ_Q1_2026_PRICE.chf_per_mwh), 0.0,
+    federal_floor_rp_kwh=6.00,  # ≤30 kW small-band floor
+    cap_rp_kwh=None,
+)
 EKZ_MONTHLY_Q1_2026 = {
     Month(2026, 1): BfePrice(chf_per_mwh=126.77, days=31, volume_mwh=101447.0),
     Month(2026, 2): BfePrice(chf_per_mwh=97.70, days=28, volume_mwh=185438.0),
@@ -149,12 +154,7 @@ class TestQuarterlyMode:
         # Every hour's rate should be the same flat quarterly effective rate
         rates = {r.rate_rp_kwh for r in plan.records}
         assert len(rates) == 1
-        expected = effective_rp_kwh(
-            chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
-            federal_floor_rp_kwh=6.00,  # ≤30 kW small-band floor
-            cap_rp_kwh=None,
-        )
-        assert rates.pop() == pytest.approx(expected)
+        assert rates.pop() == pytest.approx(_EKZ_Q1_2026_EFFECTIVE_RP_KWH)
 
     def test_quarterly_sum_equals_kwh_times_quarter_rate(self):
         kwh_per_hour = 1.0
@@ -163,13 +163,8 @@ class TestQuarterlyMode:
             Q, kwh, EKZ_Q1_2026_PRICE, None, EKZ_CFG, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
-        q_rate_rp = effective_rp_kwh(
-            chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
-            federal_floor_rp_kwh=6.00,
-            cap_rp_kwh=None,
-        )
         total_kwh = sum(kwh.values())
-        expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
+        expected = total_kwh * rp_per_kwh_to_chf_per_kwh(_EKZ_Q1_2026_EFFECTIVE_RP_KWH)
         assert plan.final_sum_chf == pytest.approx(expected, rel=1e-9)
 
     def test_anchor_is_applied(self):
@@ -241,11 +236,7 @@ class TestMonthlyMode:
             ABRECHNUNGS_RHYTHMUS_MONAT, 0.0, None,
         )
         # Verify sum = Q_kWh × Q_rate exactly
-        q_rate_rp = effective_rp_kwh(
-            chf_per_mwh_to_rp_per_kwh(102.66), 0.0,
-            federal_floor_rp_kwh=6.00,
-            cap_rp_kwh=None,
-        )
+        q_rate_rp = _EKZ_Q1_2026_EFFECTIVE_RP_KWH
         total_kwh = sum(monthly_totals.values())
         expected = total_kwh * rp_per_kwh_to_chf_per_kwh(q_rate_rp)
         assert plan.final_sum_chf == pytest.approx(expected, rel=1e-9)
