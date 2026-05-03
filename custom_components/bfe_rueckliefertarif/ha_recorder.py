@@ -9,6 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import (
+    async_import_statistics,
+    statistics_during_period,
+)
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
@@ -21,9 +27,6 @@ async def read_hourly_export(
     Reads one hour earlier than `start` to anchor the first hour's delta. Returns
     {hour_start_utc: kwh_in_that_hour}. Missing hours are omitted (caller treats as 0).
     """
-    from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.statistics import statistics_during_period
-
     padded_start = start - timedelta(hours=1)
     data = await get_instance(hass).async_add_executor_job(
         statistics_during_period,
@@ -63,9 +66,6 @@ async def read_compensation_anchor(
     hass: HomeAssistant, statistic_id: str, at: datetime
 ) -> float:
     """Read the compensation LTS `sum` at a specific hour start. Returns 0 if missing."""
-    from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.statistics import statistics_during_period
-
     data = await get_instance(hass).async_add_executor_job(
         statistics_during_period,
         hass,
@@ -87,9 +87,6 @@ async def read_post_quarter_sums(
     hass: HomeAssistant, statistic_id: str, start: datetime, end: datetime
 ) -> list[tuple[datetime, float]]:
     """Read all compensation LTS `sum` values in [start, end). For transition-spike shift."""
-    from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.statistics import statistics_during_period
-
     data = await get_instance(hass).async_add_executor_job(
         statistics_during_period,
         hass,
@@ -160,11 +157,8 @@ async def import_statistics(
     ``_reimport_all_history``) can race the queue and observe ``sum=0``,
     leading to every quarter being written from anchor 0 — and the Energy
     Dashboard then displays per-period deltas as ``current - previous``
-    instead of the actual quarter total. v0.9.10 bug fix.
+    instead of the actual quarter total.
     """
-    from homeassistant.components.recorder import get_instance
-    from homeassistant.components.recorder.statistics import async_import_statistics
-
     async_import_statistics(hass, metadata, stats)
     await get_instance(hass).async_block_till_done()
 
@@ -173,6 +167,5 @@ def _to_datetime(value: Any) -> datetime:
     """Recorder returns `start` as either datetime or unix timestamp (HA version-dependent)."""
     if isinstance(value, datetime):
         return value
-    # Fall back to unix timestamp
     from datetime import UTC
     return datetime.fromtimestamp(float(value), tz=UTC)
