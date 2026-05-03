@@ -101,9 +101,12 @@ class BfeCoordinator(DataUpdateCoordinator):
 
         abrechnungs_rhythmus = self._config.get(CONF_ABRECHNUNGS_RHYTHMUS)
         async with aiohttp.ClientSession() as session:
-            self.quarterly = await fetch_quarterly(session)
             if abrechnungs_rhythmus == ABRECHNUNGS_RHYTHMUS_MONAT:
-                self.monthly = await fetch_monthly(session)
+                self.quarterly, self.monthly = await asyncio.gather(
+                    fetch_quarterly(session), fetch_monthly(session)
+                )
+            else:
+                self.quarterly = await fetch_quarterly(session)
 
         # v0.9.14 — defer auto-import on the first refresh so sensor
         # platform setup doesn't block on the recorder drain
