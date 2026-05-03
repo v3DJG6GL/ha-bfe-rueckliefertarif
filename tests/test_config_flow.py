@@ -8,22 +8,39 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from custom_components.bfe_rueckliefertarif.config_flow import _validate_tariff
+from custom_components.bfe_rueckliefertarif.config_flow import (
+    _format_change_advisory,
+    _format_rate_window_dates,
+    _format_tarif_urls_block,
+    _notes_block,
+    _pick_note_text,
+    _render_refresh_notification,
+    _resolve_tarif_urls,
+    _validate_tariff,
+)
 from custom_components.bfe_rueckliefertarif.const import (
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
     CONF_ABRECHNUNGS_RHYTHMUS,
     CONF_EIGENVERBRAUCH_AKTIVIERT,
+    CONF_ENERGIEVERSORGER,
     CONF_HKN_AKTIVIERT,
     CONF_INSTALLIERTE_LEISTUNG_KWP,
     CONF_NAMENSPRAEFIX,
     CONF_PLANT_NAME,
     CONF_RUECKLIEFERVERGUETUNG_CHF,
     CONF_STROMNETZEINSPEISUNG_KWH,
+    OPT_CONFIG_HISTORY,
 )
 from custom_components.bfe_rueckliefertarif.tariffs_db import list_utility_keys
+
+
+def _hass(lang: str):
+    """Build a minimal Hass-like object exposing only ``config.language``."""
+    return SimpleNamespace(config=SimpleNamespace(language=lang))
 
 _COMPONENT_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "bfe_rueckliefertarif"
 
@@ -42,19 +59,18 @@ class TestValidateTariff:
         data.update(overrides)
         return data
 
-    def test_positive_kw_passes(self):
-        assert _validate_tariff(self._base()) == {}
-
-    def test_zero_kw_rejected(self):
-        errors = _validate_tariff(self._base(installierte_leistung_kwp=0.0))
-        assert errors == {CONF_INSTALLIERTE_LEISTUNG_KWP: "kw_required"}
-
-    def test_negative_kw_rejected(self):
-        errors = _validate_tariff(self._base(installierte_leistung_kwp=-1.0))
-        assert errors == {CONF_INSTALLIERTE_LEISTUNG_KWP: "kw_required"}
+    @pytest.mark.parametrize(
+        "kw,expected",
+        [
+            (25.0, {}),
+            (0.0, {CONF_INSTALLIERTE_LEISTUNG_KWP: "kw_required"}),
+            (-1.0, {CONF_INSTALLIERTE_LEISTUNG_KWP: "kw_required"}),
+        ],
+    )
+    def test_kw_boundary(self, kw, expected):
+        assert _validate_tariff(self._base(installierte_leistung_kwp=kw)) == expected
 
     def test_eigenverbrauch_false_still_passes(self):
-        # Pure ohne-Eigenverbrauch (Volleinspeisung) plants are valid.
         assert _validate_tariff(self._base(eigenverbrauch_aktiviert=False)) == {}
 
     def test_hkn_aktiviert_doesnt_affect_validation(self):
@@ -246,51 +262,28 @@ class TestNotesBlockHelper:
     rate-window-level notes; falls back gracefully when nothing applies."""
 
     def test_bkw_has_naturemade_warning_in_de(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
-        class _Hass:
-            class config:
-                language = "de"
-
-        out = _notes_block("bkw", "2026-04-01", _Hass())
+        out = _notes_block("bkw", "2026-04-01", _hass("de"))
         assert "naturemade" in out.lower()
         assert "⚠" in out  # warning emoji prefix
 
     def test_bkw_falls_back_when_unknown_locale(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
-        class _Hass:
-            class config:
-                language = "xx"  # unknown locale → falls back to de
-
-        out = _notes_block("bkw", "2026-04-01", _Hass())
+        # Unknown locale → falls back to de.
+        out = _notes_block("bkw", "2026-04-01", _hass("xx"))
         assert "naturemade" in out.lower()
 
     def test_utility_without_notes_returns_empty(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
-        class _Hass:
-            class config:
-                language = "en"
-
-        out = _notes_block("ekz", "2026-04-01", _Hass())
+        out = _notes_block("ekz", "2026-04-01", _hass("en"))
         assert out == ""
 
     def test_unknown_utility_returns_empty(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
         out = _notes_block("does_not_exist", "2026-04-01", None)
         assert out == ""
 
     def test_invalid_date_returns_empty(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
         out = _notes_block("bkw", "not-a-date", None)
         assert out == ""
 
     def test_pick_note_text_locale_priority(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _pick_note_text
-
         text = {"de": "Hallo", "en": "Hello", "fr": "Bonjour"}
         assert _pick_note_text(text, "fr") == "Bonjour"
         # User locale missing → fallback to de.
@@ -301,24 +294,12 @@ class TestNotesBlockHelper:
 
     def test_renders_blockquote_with_severity_label_de(self):
         # v0.12.1 — note rendered as markdown blockquote with locale severity.
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
-        class _Hass:
-            class config:
-                language = "de"
-
-        out = _notes_block("bkw", "2026-04-01", _Hass())
+        out = _notes_block("bkw", "2026-04-01", _hass("de"))
         # Blockquote prefix + emoji + bold severity label.
         assert "> ⚠️ **Warnung:**" in out
 
     def test_renders_blockquote_with_severity_label_en(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _notes_block
-
-        class _Hass:
-            class config:
-                language = "en"
-
-        out = _notes_block("bkw", "2026-04-01", _Hass())
+        out = _notes_block("bkw", "2026-04-01", _hass("en"))
         assert "> ⚠️ **Warning:**" in out
 
 
@@ -327,17 +308,9 @@ class TestChangeAdvisory:
     after the user changes valid_from in the ConfigFlow tariff step."""
 
     def test_empty_when_not_shown(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_change_advisory,
-        )
-
         assert _format_change_advisory(False, "de") == ""
 
     def test_locale_picks(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_change_advisory,
-        )
-
         de = _format_change_advisory(True, "de")
         en = _format_change_advisory(True, "en")
         fr = _format_change_advisory(True, "fr")
@@ -349,10 +322,6 @@ class TestChangeAdvisory:
             assert s.startswith("ℹ️")
 
     def test_unknown_locale_falls_back_to_en(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_change_advisory,
-        )
-
         out = _format_change_advisory(True, "xx")
         assert "date changed" in out.lower()
 
@@ -384,14 +353,6 @@ class TestEditRowWizard:
 
     @pytest.mark.asyncio
     async def test_add_pick_then_save(self):
-        from custom_components.bfe_rueckliefertarif.const import (
-            CONF_EIGENVERBRAUCH_AKTIVIERT,
-            CONF_ENERGIEVERSORGER,
-            CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KWP,
-            OPT_CONFIG_HISTORY,
-        )
-
         existing = [
             {"valid_from": "2026-02-01", "valid_to": None,
              "config": {
@@ -399,7 +360,7 @@ class TestEditRowWizard:
                  CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
-                 "abrechnungs_rhythmus": "QUARTAL",
+                 "abrechnungs_rhythmus": ABRECHNUNGS_RHYTHMUS_QUARTAL,
              }},
         ]
         flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
@@ -438,14 +399,6 @@ class TestEditRowWizard:
 
     @pytest.mark.asyncio
     async def test_edit_pick_then_save(self):
-        from custom_components.bfe_rueckliefertarif.const import (
-            CONF_EIGENVERBRAUCH_AKTIVIERT,
-            CONF_ENERGIEVERSORGER,
-            CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KWP,
-            OPT_CONFIG_HISTORY,
-        )
-
         existing = [
             {"valid_from": "2026-02-01", "valid_to": None,
              "config": {
@@ -453,7 +406,7 @@ class TestEditRowWizard:
                  CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
-                 "abrechnungs_rhythmus": "QUARTAL",
+                 "abrechnungs_rhythmus": ABRECHNUNGS_RHYTHMUS_QUARTAL,
              }},
         ]
         flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
@@ -495,14 +448,6 @@ class TestEditRowWizard:
         # re-runs auto-import and the recompute notification fires.
         # async_update_entry alone does not reload; we add an explicit
         # async_reload via async_create_task.
-        from custom_components.bfe_rueckliefertarif.const import (
-            CONF_EIGENVERBRAUCH_AKTIVIERT,
-            CONF_ENERGIEVERSORGER,
-            CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KWP,
-            OPT_CONFIG_HISTORY,
-        )
-
         existing = [
             {"valid_from": "2026-02-01", "valid_to": None,
              "config": {
@@ -510,7 +455,7 @@ class TestEditRowWizard:
                  CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
-                 "abrechnungs_rhythmus": "QUARTAL",
+                 "abrechnungs_rhythmus": ABRECHNUNGS_RHYTHMUS_QUARTAL,
              }},
         ]
         flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
@@ -537,14 +482,6 @@ class TestEditRowWizard:
     @pytest.mark.asyncio
     async def test_edit_row_delete_triggers_reload(self):
         # Same reload contract on the delete branch.
-        from custom_components.bfe_rueckliefertarif.const import (
-            CONF_EIGENVERBRAUCH_AKTIVIERT,
-            CONF_ENERGIEVERSORGER,
-            CONF_HKN_AKTIVIERT,
-            CONF_INSTALLIERTE_LEISTUNG_KWP,
-            OPT_CONFIG_HISTORY,
-        )
-
         existing = [
             {"valid_from": "2026-01-01", "valid_to": "2026-04-01",
              "config": {
@@ -552,7 +489,7 @@ class TestEditRowWizard:
                  CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: False,
-                 "abrechnungs_rhythmus": "QUARTAL",
+                 "abrechnungs_rhythmus": ABRECHNUNGS_RHYTHMUS_QUARTAL,
              }},
             {"valid_from": "2026-04-01", "valid_to": None,
              "config": {
@@ -560,7 +497,7 @@ class TestEditRowWizard:
                  CONF_INSTALLIERTE_LEISTUNG_KWP: 8.0,
                  CONF_EIGENVERBRAUCH_AKTIVIERT: True,
                  CONF_HKN_AKTIVIERT: True,
-                 "abrechnungs_rhythmus": "QUARTAL",
+                 "abrechnungs_rhythmus": ABRECHNUNGS_RHYTHMUS_QUARTAL,
              }},
         ]
         flow = self._make_flow({OPT_CONFIG_HISTORY: existing})
@@ -626,17 +563,9 @@ class TestFormatTarifUrlsBlock:
     """v0.12.0 — markdown rendering of rate.tarif_urls (schema v1.2.0)."""
 
     def test_empty_returns_empty_string(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_tarif_urls_block,
-        )
-
         assert _format_tarif_urls_block([], "de") == ""
 
     def test_renders_locale_heading_and_label(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_tarif_urls_block,
-        )
-
         urls = [
             {
                 "url": "https://example.test/de.pdf",
@@ -654,10 +583,6 @@ class TestFormatTarifUrlsBlock:
 
     def test_falls_back_to_url_derived_label_for_pdf(self):
         # v0.12.1 — when no curator label, build "📄 PDF · domain".
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_tarif_urls_block,
-        )
-
         urls = [{"url": "https://www.example.test/raw.pdf"}]
         out = _format_tarif_urls_block(urls, "de")
         assert "📄 PDF · example.test" in out
@@ -665,10 +590,6 @@ class TestFormatTarifUrlsBlock:
         assert "(https://www.example.test/raw.pdf)" in out
 
     def test_falls_back_to_url_derived_label_for_html(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_tarif_urls_block,
-        )
-
         urls = [{"url": "https://aew.ch/foo"}]
         out_de = _format_tarif_urls_block(urls, "de")
         assert "🌐 Webseite · aew.ch" in out_de
@@ -676,10 +597,6 @@ class TestFormatTarifUrlsBlock:
         assert "🌐 Webpage · aew.ch" in out_en
 
     def test_skips_entries_without_url(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_tarif_urls_block,
-        )
-
         urls = [{"label_de": "no url"}]
         # Heading would appear alone → caller-friendly: collapse to "".
         assert _format_tarif_urls_block(urls, "de") == ""
@@ -692,28 +609,16 @@ class TestResolveTarifUrls:
     circuits, plus a bundled smoke test."""
 
     def test_missing_inputs_returns_empty(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _resolve_tarif_urls,
-        )
-
         assert _resolve_tarif_urls(None, "2026-04-01", None) == []
         assert _resolve_tarif_urls("ekz", None, None) == []
         assert _resolve_tarif_urls("ekz", "not-a-date", None) == []
 
     def test_unknown_utility_returns_empty(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _resolve_tarif_urls,
-        )
-
         assert _resolve_tarif_urls("does_not_exist", "2026-04-01", None) == []
 
     def test_bundled_ekz_has_at_least_one_url(self):
         # Smoke test on bundled v1.2.0 data: every 2026 rate window has a
         # tarif_urls entry per the upstream migration.
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _resolve_tarif_urls,
-        )
-
         urls = _resolve_tarif_urls("ekz", "2026-06-01", None)
         assert len(urls) >= 1
         assert all(entry.get("url") for entry in urls)
@@ -776,7 +681,7 @@ class TestSelfConsumptionRelevant:
     distinguishes on ``self_consumption`` for this (utility, kW, date).
     """
 
-    def test_relevant_when_federal_rule_distinguishes(self, monkeypatch):
+    def test_relevant_when_federal_rule_distinguishes(self):
         """30-150 kW band of bundled federal_minimum has a 'mit/ohne EV' split."""
         from custom_components.bfe_rueckliefertarif.tariffs_db import (
             self_consumption_relevant,
@@ -1222,13 +1127,8 @@ class TestKwAwareUserInputFiltering:
         assert self._enum_options(schema_dict, "a_choice") == ["x"]
 
     def test_text_field_passes_through_unfiltered(self):
-        # Non-gate-affecting types (text/number) are not filtered: they
-        # pass through with the unfiltered candidates list (i.e. the
-        # helper renders them via the bool/enum branches it has, or skips
-        # if neither). Smoke test that gates don't crash on a synthetic
-        # text decl (the helper currently renders only enum + boolean,
-        # so a text decl is silently skipped — assert no exception, no
-        # field added).
+        # Smoke test: a synthetic text decl is silently skipped (the helper
+        # only renders enum + boolean) — gates must not crash on it.
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _add_user_input_fields_namespaced,
         )
@@ -1339,9 +1239,6 @@ class TestRefreshNotificationRendering:
     """
 
     def test_bfe_section_always_present(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _render_refresh_notification,
-        )
         body = _render_refresh_notification(
             _refresh_result(
                 available=[1, 2, 3],
@@ -1355,9 +1252,6 @@ class TestRefreshNotificationRendering:
         assert "## Reference market prices (SFOE)" in body
 
     def test_no_changes_message_when_diff_empty(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _render_refresh_notification,
-        )
         body = _render_refresh_notification(
             _refresh_result(
                 tariffs_diff={
@@ -1372,9 +1266,6 @@ class TestRefreshNotificationRendering:
         assert "### Newly added utilities" not in body
 
     def test_added_utilities_section(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _render_refresh_notification,
-        )
         body = _render_refresh_notification(
             _refresh_result(
                 tariffs_diff={
@@ -1397,9 +1288,6 @@ class TestRefreshNotificationRendering:
         assert "- 2025" in body
 
     def test_modified_rate_windows_section(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _render_refresh_notification,
-        )
         body = _render_refresh_notification(
             _refresh_result(
                 tariffs_diff={
@@ -1421,9 +1309,6 @@ class TestRefreshNotificationRendering:
         assert "- 2024" in body
 
     def test_year_grouping_collapses_single_window(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_rate_window_dates,
-        )
         # Single window per year → just year
         assert _format_rate_window_dates(["2026-01-01"]) == ["2026"]
         assert _format_rate_window_dates(
@@ -1431,18 +1316,12 @@ class TestRefreshNotificationRendering:
         ) == ["2026", "2025"]
 
     def test_year_expands_when_multiple_windows_in_year(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _format_rate_window_dates,
-        )
         # Two windows in 2026 → both dates
         assert _format_rate_window_dates(
             ["2026-01-01", "2026-07-01", "2025-01-01"]
         ) == ["2026-01-01", "2026-07-01", "2025"]
 
     def test_fetch_failure_shows_error(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _render_refresh_notification,
-        )
         body = _render_refresh_notification(
             _refresh_result(
                 tariffs_refreshed=False,

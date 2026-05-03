@@ -13,8 +13,15 @@ from __future__ import annotations
 import json
 
 import pytest
+from aioresponses import aioresponses
 
-from custom_components.bfe_rueckliefertarif.data_coordinator import TariffsDataCoordinator
+from custom_components.bfe_rueckliefertarif.data_coordinator import (
+    REMOTE_SCHEMA_URL,
+    REMOTE_URL,
+    TariffsDataCoordinator,
+    _scan_history_for_drift,
+)
+from custom_components.bfe_rueckliefertarif.repairs import TariffDriftRepairFlow
 from custom_components.bfe_rueckliefertarif.tariffs_db import (
     _BUNDLED_DATA_PATH,
     _OVERRIDE_PATH,
@@ -94,32 +101,32 @@ class TestLooseValidate:
             "utilities": {"x": {}},
         })
 
-    def test_rejects_missing_schema_version(self):
-        with pytest.raises(ValueError, match="schema_version"):
-            TariffsDataCoordinator._loose_validate({
-                "federal_minimum": [{}],
-                "utilities": {"x": {}},
-            })
-
-    def test_rejects_empty_utilities(self):
-        with pytest.raises(ValueError, match="utilities"):
-            TariffsDataCoordinator._loose_validate({
-                "schema_version": "1.0.0",
-                "federal_minimum": [{}],
-                "utilities": {},
-            })
-
-    def test_rejects_empty_federal_minimum(self):
-        with pytest.raises(ValueError, match="federal_minimum"):
-            TariffsDataCoordinator._loose_validate({
-                "schema_version": "1.0.0",
-                "federal_minimum": [],
-                "utilities": {"x": {}},
-            })
+    @pytest.mark.parametrize(
+        "payload,match_pattern",
+        [
+            (
+                {"federal_minimum": [{}], "utilities": {"x": {}}},
+                "schema_version",
+            ),
+            (
+                {"schema_version": "1.0.0",
+                 "federal_minimum": [{}], "utilities": {}},
+                "utilities",
+            ),
+            (
+                {"schema_version": "1.0.0",
+                 "federal_minimum": [], "utilities": {"x": {}}},
+                "federal_minimum",
+            ),
+        ],
+    )
+    def test_rejects_invalid(self, payload, match_pattern):
+        with pytest.raises(ValueError, match=match_pattern):
+            TariffsDataCoordinator._loose_validate(payload)
 
 
 class TestBundledStillWorks:
-    """Sanity: bundled tariffs.json must always be loadable."""
+    """bundled tariffs.json must always be loadable."""
 
     def test_bundled_path_exists(self):
         assert _BUNDLED_DATA_PATH.is_file()
@@ -130,9 +137,9 @@ class TestBundledStillWorks:
 
 
 class TestScanHistoryForDrift:
-    """v0.13.0 (Phase 3) — drift scanner. Walks one config entry's
-    OPT_CONFIG_HISTORY against the current tariff schema; emits a
-    descriptor per stale (entry × period) pair."""
+    """Drift scanner. Walks one config entry's OPT_CONFIG_HISTORY against
+    the current tariff schema; emits a descriptor per stale (entry × period)
+    pair."""
 
     def _make_entry(self, history):
         from types import SimpleNamespace
@@ -165,10 +172,6 @@ class TestScanHistoryForDrift:
         monkeypatch.setattr(tdb, "load_tariffs", lambda: synthetic)
 
     def test_no_drift_when_stored_matches_current(self, monkeypatch):
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
@@ -188,10 +191,6 @@ class TestScanHistoryForDrift:
         assert _scan_history_for_drift(entry) == []
 
     def test_added_key_reported_as_missing(self, monkeypatch):
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
@@ -217,10 +216,6 @@ class TestScanHistoryForDrift:
         assert descs[0]["utility"] == "syn"
 
     def test_stale_value_reported(self, monkeypatch):
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
@@ -245,10 +240,6 @@ class TestScanHistoryForDrift:
     def test_removed_key_does_not_fire(self, monkeypatch):
         # Stored has key "k"; current rate window declares NO user_inputs.
         # Stored value becomes inert noise; no repair issue should fire.
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
@@ -266,10 +257,6 @@ class TestScanHistoryForDrift:
 
     def test_pure_rate_change_does_not_fire(self, monkeypatch):
         # Same user_inputs decls across both windows; only fixed_rp_kwh differs.
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         common_decl = [{
             "key": "k", "type": "enum", "default": "x",
             "values": ["x", "y"], "label_de": "K",
@@ -299,10 +286,6 @@ class TestScanHistoryForDrift:
 
     def test_sentinel_record_skipped(self, monkeypatch):
         # 1970-01-01 sentinel records are skipped (they have None values).
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         rates = [{
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
@@ -321,17 +304,13 @@ class TestScanHistoryForDrift:
         assert _scan_history_for_drift(entry) == []
 
     def test_empty_history_returns_empty(self):
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            _scan_history_for_drift,
-        )
-
         entry = self._make_entry([])
         assert _scan_history_for_drift(entry) == []
 
 
 class TestTariffDriftRepairFlow:
-    """v0.13.0 (Phase 3) — repair flow that resolves a drift issue by
-    appending a new history entry at period_from with the user's picks."""
+    """Repair flow that resolves a drift issue by appending a new history
+    entry at period_from with the user's picks."""
 
     def _patch_db(self, monkeypatch, rates):
         from custom_components.bfe_rueckliefertarif import config_flow as cf
@@ -365,9 +344,6 @@ class TestTariffDriftRepairFlow:
             CONF_ENERGIEVERSORGER,
             CONF_USER_INPUTS,
             OPT_CONFIG_HISTORY,
-        )
-        from custom_components.bfe_rueckliefertarif.repairs import (
-            TariffDriftRepairFlow,
         )
 
         # Synthetic rate window: declares a renamed key the stored entry doesn't have.
@@ -437,10 +413,6 @@ class TestTariffDriftRepairFlow:
     async def test_aborts_when_no_rate_window(self, monkeypatch):
         from unittest.mock import MagicMock
 
-        from custom_components.bfe_rueckliefertarif.repairs import (
-            TariffDriftRepairFlow,
-        )
-
         # No rate window for the period we're trying to fix.
         self._patch_db(monkeypatch, [])
 
@@ -462,8 +434,8 @@ class TestTariffDriftRepairFlow:
 
 
 class TestRemoteSchemaFetch:
-    """v0.15.0 — schema is fetched alongside tariffs.json. Schema-fetch
-    failure is non-fatal: validation falls back to the bundled schema."""
+    """Schema is fetched alongside tariffs.json. Schema-fetch failure is
+    non-fatal: validation falls back to the bundled schema."""
 
     @pytest.fixture
     def minimal_tariffs(self):
@@ -512,10 +484,6 @@ class TestRemoteSchemaFetch:
         """Build a TariffsDataCoordinator with a minimal stub HA-side."""
         from types import SimpleNamespace
 
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            TariffsDataCoordinator,
-        )
-
         async def _exec(func, *args, **kwargs):
             return func(*args, **kwargs)
 
@@ -533,13 +501,6 @@ class TestRemoteSchemaFetch:
     async def test_fetch_schema_success_uses_remote_for_validation(
         self, tmp_path, canonical_schema, minimal_tariffs
     ):
-        from aioresponses import aioresponses
-
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            REMOTE_SCHEMA_URL,
-            REMOTE_URL,
-        )
-
         coord = self._make_coordinator(tmp_path)
         with aioresponses() as m:
             m.get(REMOTE_SCHEMA_URL, payload=canonical_schema)
@@ -553,20 +514,28 @@ class TestRemoteSchemaFetch:
         assert coord.last_data_version == "0.0.2"
         assert coord.last_data_updated == "2026-05-01"
 
+    @pytest.mark.parametrize(
+        "schema_mock_kwargs",
+        [
+            # HTTP 500 from the remote.
+            {"status": 500},
+            # Malformed JSON body.
+            {"body": "<html>not json</html>", "content_type": "text/html"},
+            # Valid JSON but not a valid Draft 2020-12 schema.
+            {"payload": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "nonexistent",
+            }},
+        ],
+        ids=["http_error", "malformed_json", "fails_meta_schema"],
+    )
     @pytest.mark.asyncio
-    async def test_fetch_schema_http_error_falls_back_to_bundled(
-        self, tmp_path, minimal_tariffs
+    async def test_fetch_schema_failure_falls_back_to_bundled(
+        self, tmp_path, minimal_tariffs, schema_mock_kwargs
     ):
-        from aioresponses import aioresponses
-
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            REMOTE_SCHEMA_URL,
-            REMOTE_URL,
-        )
-
         coord = self._make_coordinator(tmp_path)
         with aioresponses() as m:
-            m.get(REMOTE_SCHEMA_URL, status=500)
+            m.get(REMOTE_SCHEMA_URL, **schema_mock_kwargs)
             m.get(REMOTE_URL, payload=minimal_tariffs)
             ok = await coord.async_refresh()
 
@@ -576,62 +545,9 @@ class TestRemoteSchemaFetch:
         assert coord.last_error is None
 
     @pytest.mark.asyncio
-    async def test_fetch_schema_malformed_json_falls_back_to_bundled(
-        self, tmp_path, minimal_tariffs
-    ):
-        from aioresponses import aioresponses
-
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            REMOTE_SCHEMA_URL,
-            REMOTE_URL,
-        )
-
-        coord = self._make_coordinator(tmp_path)
-        with aioresponses() as m:
-            m.get(REMOTE_SCHEMA_URL, body="<html>not json</html>",
-                  content_type="text/html")
-            m.get(REMOTE_URL, payload=minimal_tariffs)
-            ok = await coord.async_refresh()
-
-        assert ok is True
-        assert coord.last_schema_source == "bundled"
-        assert coord.last_schema_error is not None
-
-    @pytest.mark.asyncio
-    async def test_fetch_schema_fails_meta_schema_falls_back_to_bundled(
-        self, tmp_path, minimal_tariffs
-    ):
-        from aioresponses import aioresponses
-
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            REMOTE_SCHEMA_URL,
-            REMOTE_URL,
-        )
-
-        coord = self._make_coordinator(tmp_path)
-        # Valid JSON, but not a valid Draft 2020-12 schema (`type` enum violation).
-        invalid_schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
-                          "type": "nonexistent"}
-        with aioresponses() as m:
-            m.get(REMOTE_SCHEMA_URL, payload=invalid_schema)
-            m.get(REMOTE_URL, payload=minimal_tariffs)
-            ok = await coord.async_refresh()
-
-        assert ok is True
-        assert coord.last_schema_source == "bundled"
-        assert coord.last_schema_error is not None
-
-    @pytest.mark.asyncio
     async def test_data_version_and_last_updated_recorded_on_refresh(
         self, tmp_path, canonical_schema, minimal_tariffs
     ):
-        from aioresponses import aioresponses
-
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            REMOTE_SCHEMA_URL,
-            REMOTE_URL,
-        )
-
         coord = self._make_coordinator(tmp_path)
         with aioresponses() as m:
             m.get(REMOTE_SCHEMA_URL, payload=canonical_schema)
@@ -674,14 +590,6 @@ class TestRemoteSchemaFetch:
     ):
         """Schema fetch fails AND tariffs.json violates the bundled schema
         → async_refresh returns False, falls back to bundled tariffs."""
-        from aioresponses import aioresponses
-
-        from custom_components.bfe_rueckliefertarif.data_coordinator import (
-            REMOTE_SCHEMA_URL,
-            REMOTE_URL,
-        )
-        from custom_components.bfe_rueckliefertarif.tariffs_db import get_source
-
         # Tariffs payload that violates v1.5.0: rate is missing the
         # required `power_tiers` array (schema 1.5.0 dropped `cap_mode`,
         # but `power_tiers` remains required).
