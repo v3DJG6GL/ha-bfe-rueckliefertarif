@@ -2104,20 +2104,15 @@ class TestFirstRefreshDefersAutoImport:
 
         coord.hass.async_create_background_task = _capture_bg
 
-        async def _fake_fetch_quarterly(_session):
-            return {Quarter(2026, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)}
-
-        async def _fake_fetch_monthly(_session):
-            return {}
-
         # Sentinel: if auto-import ran inline it would call this and fail.
         async def _fake_auto_import_inline(*, is_user_reload=False):
             raise AssertionError("auto-import must NOT run inline on first refresh")
 
         coord._auto_import_newly_published = _fake_auto_import_inline
 
-        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
-             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+        q_prices = {Quarter(2026, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)}
+        with patch.object(coord_mod, "fetch_quarterly", new=_async_return(q_prices)), \
+             patch.object(coord_mod, "fetch_monthly", new=_async_return({})):
             result = await coord._async_update_data()
 
         # Result returned promptly with BFE prices populated.
@@ -2142,12 +2137,6 @@ class TestFirstRefreshDefersAutoImport:
 
         coord.hass.async_create_background_task = _capture_bg
 
-        async def _fake_fetch_quarterly(_session):
-            return {Quarter(2026, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)}
-
-        async def _fake_fetch_monthly(_session):
-            return {}
-
         inline_calls = []
 
         async def _fake_auto_import_inline(*, is_user_reload=False):
@@ -2155,8 +2144,9 @@ class TestFirstRefreshDefersAutoImport:
 
         coord._auto_import_newly_published = _fake_auto_import_inline
 
-        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
-             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+        q_prices = {Quarter(2026, 1): BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)}
+        with patch.object(coord_mod, "fetch_quarterly", new=_async_return(q_prices)), \
+             patch.object(coord_mod, "fetch_monthly", new=_async_return({})):
             await coord._async_update_data()
 
         # Inline path ran, background-task path did not.
@@ -2438,14 +2428,8 @@ class TestAsyncUpdateDataPassesIsUserReload:
         coord._auto_import_newly_published = _fake_auto_import
         coord.hass.async_create_background_task = lambda coro, *, name=None: (coro.close(), MagicMock())[1]
 
-        async def _fake_fetch_quarterly(_session):
-            return {}
-
-        async def _fake_fetch_monthly(_session):
-            return {}
-
-        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
-             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+        with patch.object(coord_mod, "fetch_quarterly", new=_async_return({})), \
+             patch.object(coord_mod, "fetch_monthly", new=_async_return({})):
             await coord._async_update_data()
 
         assert captured_kwargs == [{"is_user_reload": True}]
@@ -2462,14 +2446,8 @@ class TestAsyncUpdateDataPassesIsUserReload:
 
         coord._auto_import_newly_published = _fake_auto_import
 
-        async def _fake_fetch_quarterly(_session):
-            return {}
-
-        async def _fake_fetch_monthly(_session):
-            return {}
-
-        with patch.object(coord_mod, "fetch_quarterly", new=_fake_fetch_quarterly), \
-             patch.object(coord_mod, "fetch_monthly", new=_fake_fetch_monthly):
+        with patch.object(coord_mod, "fetch_quarterly", new=_async_return({})), \
+             patch.object(coord_mod, "fetch_monthly", new=_async_return({})):
             await coord._async_update_data()
 
         assert captured_kwargs == [{"is_user_reload": False}]
