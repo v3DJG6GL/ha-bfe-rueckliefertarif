@@ -7,6 +7,7 @@ and that the transition-spike delta is computed correctly.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -18,11 +19,15 @@ from custom_components.bfe_rueckliefertarif.const import (
     ABRECHNUNGS_RHYTHMUS_QUARTAL,
 )
 from custom_components.bfe_rueckliefertarif.importer import (
+    QuarterSegment,
     TariffConfig,
+    _apply_floor_cap_hkn,
     _effective_rate,
     _effective_rate_at_hour,
+    _effective_rate_breakdown_at_hour,
     compute_breakdown_at,
     compute_quarter_plan,
+    compute_quarter_plan_segmented,
     cumulative_sums,
 )
 from custom_components.bfe_rueckliefertarif.quarters import (
@@ -125,6 +130,12 @@ EKZ_MONTHLY_Q1_2026 = {
     Month(2026, 3): BfePrice(chf_per_mwh=98.81, days=31, volume_mwh=397071.0),
 }
 Q = Quarter(2026, 1)
+
+
+def _zurich_utc(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
+    """Build a UTC datetime from a Zurich-local wall-clock time."""
+    local = datetime(year, month, day, hour, minute, tzinfo=ZoneInfo("Europe/Zurich"))
+    return local.astimezone(UTC)
 
 
 class TestQuarterlyMode:
@@ -356,40 +367,26 @@ class TestFixedHtNtMode:
             ),
         )
 
-    def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
-        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(UTC)
-
-    def test_weekday_midday_uses_ht_rate_with_hkn(self):
+    @pytest.mark.parametrize(
+        "year,month,day,hour,expected_rp",
+        [
+            pytest.param(2025, 1, 15, 14, 15.60, id="weekday-midday-ht"),
+            pytest.param(2025, 1, 15, 22, 14.60, id="weekday-night-nt"),
+            pytest.param(2025, 1, 18, 14, 14.60, id="saturday-midday-nt"),
+            pytest.param(2025, 1, 19, 12, 14.60, id="sunday-nt"),
+        ],
+    )
+    def test_ht_nt_matrix_with_hkn(self, year, month, day, hour, expected_rp):
         cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
-        # Wed 14:00 Zurich → HT 12.60 + HKN 3.00 = 15.60
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14))
-        assert rate == pytest.approx(15.60)
-
-    def test_weekday_night_uses_nt_rate_with_hkn(self):
-        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
-        # Wed 22:00 Zurich → NT 11.60 + HKN 3.00 = 14.60
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 22))
-        assert rate == pytest.approx(14.60)
-
-    def test_saturday_midday_uses_nt_rate(self):
-        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
-        # Sat 14:00 Zurich → Sat is all-NT for EKZ producer; 11.60 + 3.00 = 14.60
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 18, 14))
-        assert rate == pytest.approx(14.60)
-
-    def test_sunday_uses_nt_rate(self):
-        cfg = self._make_ekz_2025_cfg(hkn_opted_in=True)
-        # Sun 12:00 Zurich → NT
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 19, 12))
-        assert rate == pytest.approx(14.60)
+        rate = _effective_rate_at_hour(cfg, 0.0, _zurich_utc(year, month, day, hour))
+        assert rate == pytest.approx(expected_rp)
 
     def test_no_hkn_drops_only_hkn_addend(self):
         cfg = self._make_ekz_2025_cfg(hkn_opted_in=False)
         # Wed 14:00 → HT 12.60 only
-        assert _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14)) == pytest.approx(12.60)
+        assert _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 1, 15, 14)) == pytest.approx(12.60)
         # Wed 22:00 → NT 11.60 only
-        assert _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 22)) == pytest.approx(11.60)
+        assert _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 1, 15, 22)) == pytest.approx(11.60)
 
     def test_quarter_total_matches_hand_computed_sum(self):
         """compute_quarter_plan output equals Σ(kwh_h × rate_h) computed
@@ -457,7 +454,7 @@ class TestFixedHtNtMode:
         )
         # Wed 22:00 → NT hour; NT rate is None → raise
         with pytest.raises(ValueError, match="fixed_ht_nt requires both"):
-            _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 22))
+            _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 1, 15, 22))
 
 
 class TestSeasonalFixedFlat:
@@ -488,29 +485,22 @@ class TestSeasonalFixedFlat:
             ),
         )
 
-    def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
-        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(UTC)
-
-    def test_july_uses_summer_rate(self):
+    @pytest.mark.parametrize(
+        "year,month,day,hour,expected_rp",
+        [
+            pytest.param(2025, 7, 15, 12, 9.00, id="july-summer"),
+            pytest.param(2025, 1, 15, 12, 12.00, id="january-winter"),
+            pytest.param(2025, 4, 1, 0, 9.00, id="april-first-summer-boundary"),
+        ],
+    )
+    def test_seasonal_rate_matrix(self, year, month, day, hour, expected_rp):
         cfg = self._make_cfg(seasonal=self.BAGNES_SEASONAL)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 7, 15, 12))
-        assert rate == pytest.approx(9.00)
-
-    def test_january_uses_winter_rate(self):
-        cfg = self._make_cfg(seasonal=self.BAGNES_SEASONAL)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 12))
-        assert rate == pytest.approx(12.00)
-
-    def test_april_first_is_summer(self):
-        # Boundary: first instant of summer → summer rate.
-        cfg = self._make_cfg(seasonal=self.BAGNES_SEASONAL)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 4, 1, 0))
-        assert rate == pytest.approx(9.00)
+        rate = _effective_rate_at_hour(cfg, 0.0, _zurich_utc(year, month, day, hour))
+        assert rate == pytest.approx(expected_rp)
 
     def test_summer_rate_plus_hkn(self):
         cfg = self._make_cfg(seasonal=self.BAGNES_SEASONAL, hkn=3.00)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 7, 15, 12))
+        rate = _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 7, 15, 12))
         assert rate == pytest.approx(12.00)  # 9.00 + 3.00 HKN
 
     def test_missing_winter_rate_raises_in_winter(self):
@@ -522,7 +512,7 @@ class TestSeasonalFixedFlat:
         }
         cfg = self._make_cfg(seasonal=broken)
         with pytest.raises(ValueError, match="winter_rp_kwh"):
-            _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 12))
+            _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 1, 15, 12))
 
     def test_period_fallback_raises_for_seasonal(self):
         # _effective_rate has no hour context → can't pick season → must raise.
@@ -532,14 +522,9 @@ class TestSeasonalFixedFlat:
 
 
 class TestComputeBreakdownAt:
-    """v0.19.0 — full breakdown dict at one hour. Used by:
-    - coordinator._tariff_breakdown (live sensor, hour=now)
-    - services.get_breakdown (analysis service, hour=quarter midpoint)
-
-    Verifies the seasonal-bug fix (was: live sensor ignored summer/winter
-    overlay for fixed_flat utilities) plus the v0.19.0 attr additions
-    (season_now, ht_nt_now, bonuses_applied, bonuses_advertised).
-    """
+    """compute_breakdown_at — single-hour breakdown dict for the live sensor
+    and analysis service. Covers v0.19.0 schema additions (season_now,
+    ht_nt_now, bonuses_applied/advertised)."""
 
     SEASONAL_FIXED_FLAT = {
         "summer_months": [4, 5, 6, 7, 8, 9],
@@ -547,10 +532,6 @@ class TestComputeBreakdownAt:
         "summer_rp_kwh": 6.20,
         "winter_rp_kwh": 9.00,
     }
-
-    def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
-        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(UTC)
 
     def _make_seasonal_cfg(self) -> TariffConfig:
         return TariffConfig(
@@ -568,7 +549,7 @@ class TestComputeBreakdownAt:
 
     def test_dict_shape_has_expected_keys(self):
         cfg = self._make_seasonal_cfg()
-        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 5, 15, 12))
+        bd = compute_breakdown_at(cfg, 0.0, _zurich_utc(2026, 5, 15, 12))
         for key in (
             "utility", "tariff_source", "floor_label",
             "eigenverbrauch_aktiviert", "hkn_aktiviert", "base_model",
@@ -587,7 +568,7 @@ class TestComputeBreakdownAt:
         """Bug fix: v0.18.x live sensor returned 7.6 (Jahresmittel) for
         regio_energie_solothurn in May; should be 6.2 (summer)."""
         cfg = self._make_seasonal_cfg()
-        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 5, 15, 12))
+        bd = compute_breakdown_at(cfg, 0.0, _zurich_utc(2026, 5, 15, 12))
         assert bd["base_input_rp_kwh"] == pytest.approx(6.20)
         assert bd["effective_rp_kwh"] == pytest.approx(6.20)
         assert bd["effective_chf_kwh"] == pytest.approx(0.062)
@@ -597,7 +578,7 @@ class TestComputeBreakdownAt:
 
     def test_winter_picks_winter_rate(self):
         cfg = self._make_seasonal_cfg()
-        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 1, 15, 12))
+        bd = compute_breakdown_at(cfg, 0.0, _zurich_utc(2026, 1, 15, 12))
         assert bd["base_input_rp_kwh"] == pytest.approx(9.00)
         assert bd["effective_rp_kwh"] == pytest.approx(9.00)
         assert bd["season_now"] == "winter"
@@ -633,11 +614,10 @@ class TestComputeBreakdownAt:
             ),
         )
         # Inject bonuses via dataclasses.replace
-        from dataclasses import replace as _replace
-        cfg = _replace(
-            cfg, resolved=_replace(cfg.resolved, bonuses=tuple(bonuses))
+        cfg = replace(
+            cfg, resolved=replace(cfg.resolved, bonuses=tuple(bonuses))
         )
-        bd = compute_breakdown_at(cfg, 0.0, self._utc(2026, 5, 15, 12))
+        bd = compute_breakdown_at(cfg, 0.0, _zurich_utc(2026, 5, 15, 12))
 
         # Advertised: both bonuses present
         names_advertised = [b["name"] for b in bd["bonuses_advertised"]]
@@ -681,51 +661,28 @@ class TestSeasonalFixedHtNt:
             ),
         )
 
-    def _utc(self, year: int, month: int, day: int, hour: int) -> datetime:
-        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(UTC)
-
-    def test_summer_weekday_midday_is_summer_ht(self):
+    @pytest.mark.parametrize(
+        "year,month,day,hour,expected_rp",
+        [
+            pytest.param(2025, 7, 16, 14, 5.50, id="summer-weekday-midday-ht"),
+            pytest.param(2025, 7, 16, 22, 4.50, id="summer-weekday-night-nt"),
+            pytest.param(2025, 1, 15, 14, 7.00, id="winter-weekday-midday-ht"),
+            pytest.param(2025, 1, 18, 12, 6.50, id="winter-saturday-nt"),
+            # Boundaries: 2025-10-01 00:00 Wed → winter NT (window 07-20);
+            # 2025-04-01 14:00 Tue → summer HT.
+            pytest.param(2025, 10, 1, 0, 6.50, id="october-first-winter-nt-boundary"),
+            pytest.param(2025, 4, 1, 14, 5.50, id="april-first-summer-ht-boundary"),
+        ],
+    )
+    def test_seasonal_ht_nt_matrix(self, year, month, day, hour, expected_rp):
         cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
-        # Wed 2025-07-16 14:00 → summer + HT
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 7, 16, 14))
-        assert rate == pytest.approx(5.50)
-
-    def test_summer_weekday_night_is_summer_nt(self):
-        cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
-        # Wed 2025-07-16 22:00 → summer + NT
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 7, 16, 22))
-        assert rate == pytest.approx(4.50)
-
-    def test_winter_weekday_midday_is_winter_ht(self):
-        cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
-        # Wed 2025-01-15 14:00 → winter + HT
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14))
-        assert rate == pytest.approx(7.00)
-
-    def test_winter_saturday_is_winter_nt(self):
-        cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
-        # Sat 2025-01-18 12:00 → winter + NT (sa=None → all-NT)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 18, 12))
-        assert rate == pytest.approx(6.50)
+        rate = _effective_rate_at_hour(cfg, 0.0, _zurich_utc(year, month, day, hour))
+        assert rate == pytest.approx(expected_rp)
 
     def test_winter_ht_plus_hkn(self):
         cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL, hkn=2.00)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14))
+        rate = _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 1, 15, 14))
         assert rate == pytest.approx(9.00)  # 7.00 + 2.00
-
-    def test_october_first_is_winter(self):
-        # Boundary: 2025-10-01 00:00 Zurich → winter
-        cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 10, 1, 0))
-        # Oct 1 2025 is a Wed; 00:00 is NT (window 07-20)
-        assert rate == pytest.approx(6.50)  # winter NT
-
-    def test_april_first_midday_is_summer_ht(self):
-        cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
-        # Tue 2025-04-01 14:00 → summer + HT (boundary day)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 4, 1, 14))
-        assert rate == pytest.approx(5.50)
 
     def test_missing_summer_nt_raises_at_summer_nt_hour(self):
         broken = dict(self.SAMNAUN_SEASONAL)
@@ -733,14 +690,14 @@ class TestSeasonalFixedHtNt:
         cfg = self._make_cfg(seasonal=broken)
         # Wed 22:00 in summer → should hit missing summer_nt_rp_kwh
         with pytest.raises(ValueError, match="missing summer_nt_rp_kwh"):
-            _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 7, 16, 22))
+            _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 7, 16, 22))
 
     def test_missing_winter_ht_raises_at_winter_ht_hour(self):
         broken = dict(self.SAMNAUN_SEASONAL)
         del broken["winter_ht_rp_kwh"]
         cfg = self._make_cfg(seasonal=broken)
         with pytest.raises(ValueError, match="missing winter_ht_rp_kwh"):
-            _effective_rate_at_hour(cfg, 0.0, self._utc(2025, 1, 15, 14))
+            _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2025, 1, 15, 14))
 
     def test_period_fallback_raises_for_seasonal(self):
         cfg = self._make_cfg(seasonal=self.SAMNAUN_SEASONAL)
@@ -758,7 +715,6 @@ class TestSeasonalFixedHtNt:
             q, kwh, unused, None, cfg, ABRECHNUNGS_RHYTHMUS_QUARTAL,
             anchor_sum_chf=0.0, old_post_quarter_first_sum_chf=None,
         )
-        from custom_components.bfe_rueckliefertarif.tariff import classify_ht
         ht_kwh = sum(kwh[h] for h in kwh if classify_ht(h, self.HT_WINDOW))
         nt_kwh = sum(kwh[h] for h in kwh if not classify_ht(h, self.HT_WINDOW))
         expected = (
@@ -809,34 +765,18 @@ class TestEffectiveFloorMaxOfFederalAndUtility:
             ),
         )
 
-    def test_utility_floor_dominates_when_higher(self):
-        # Federal 6.0, utility 8.0; reference price 4.0 must be lifted to 8.0.
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _apply_floor_cap_hkn,
-        )
-        rp = _apply_floor_cap_hkn(4.0, self._cfg(federal=6.0, utility=8.0))
-        assert rp == pytest.approx(8.0)
-
-    def test_federal_floor_dominates_when_higher(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _apply_floor_cap_hkn,
-        )
-        rp = _apply_floor_cap_hkn(3.0, self._cfg(federal=6.0, utility=4.0))
-        assert rp == pytest.approx(6.0)
-
-    def test_no_floor_at_all_passes_through(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _apply_floor_cap_hkn,
-        )
-        rp = _apply_floor_cap_hkn(3.0, self._cfg(federal=None, utility=None))
-        assert rp == pytest.approx(3.0)
-
-    def test_only_utility_floor_set(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _apply_floor_cap_hkn,
-        )
-        rp = _apply_floor_cap_hkn(3.0, self._cfg(federal=None, utility=7.0))
-        assert rp == pytest.approx(7.0)
+    @pytest.mark.parametrize(
+        "federal,utility,reference,expected",
+        [
+            pytest.param(6.0, 8.0, 4.0, 8.0, id="utility-dominates"),
+            pytest.param(6.0, 4.0, 3.0, 6.0, id="federal-dominates"),
+            pytest.param(None, None, 3.0, 3.0, id="no-floor-passthrough"),
+            pytest.param(None, 7.0, 3.0, 7.0, id="utility-only"),
+        ],
+    )
+    def test_floor_max_of_federal_and_utility(self, federal, utility, reference, expected):
+        rp = _apply_floor_cap_hkn(reference, self._cfg(federal=federal, utility=utility))
+        assert rp == pytest.approx(expected)
 
 
 class TestSnapshotFloorSource:
@@ -886,11 +826,6 @@ class TestSegmentedQuarterPlan:
         assert {r.seg_id for r in plan.records} == {"single"}
 
     def test_segmented_two_configs_split_at_mid_quarter_boundary(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            QuarterSegment,
-            compute_quarter_plan_segmented,
-        )
-
         q = Quarter(2026, 1)
         q_start, q_end = quarter_bounds_utc(q)
         # Split mid-quarter at Zurich-local 2026-02-15 00:00.
@@ -928,10 +863,6 @@ class TestSegmentedQuarterPlan:
         assert b_rates == {10.0}
 
     def test_segmented_empty_segments_raises(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            compute_quarter_plan_segmented,
-        )
-
         q = Quarter(2026, 1)
         with pytest.raises(ValueError):
             compute_quarter_plan_segmented(
@@ -979,10 +910,6 @@ class TestBatchDPerHourBonusesAndHknCases:
         )
 
     def test_static_hkn_unchanged_when_no_hkn_cases(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=2.0, federal_floor_rp_kwh=6.0,
@@ -996,17 +923,12 @@ class TestBatchDPerHourBonusesAndHknCases:
         assert rate == pytest.approx(base + hkn)
 
     def test_hkn_cases_first_match_wins_per_season(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=1.0, federal_floor_rp_kwh=6.0,
             seasonal=self._seasonal_classify_only(),
         )
         # Patch in hkn_cases (frozen dataclass — recreate with replace).
-        from dataclasses import replace
         rt = replace(rt, hkn_cases=(
             {"when": {"season": "winter"}, "rp_kwh": 4.0},
             {"when": {"season": "summer"}, "rp_kwh": 1.5},
@@ -1024,12 +946,6 @@ class TestBatchDPerHourBonusesAndHknCases:
         assert hkn_s == pytest.approx(1.5)
 
     def test_hkn_cases_falls_through_to_static_on_no_match(self):
-        from dataclasses import replace
-
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=1.0, federal_floor_rp_kwh=6.0,
@@ -1046,12 +962,6 @@ class TestBatchDPerHourBonusesAndHknCases:
         assert hkn == pytest.approx(1.0)
 
     def test_additive_bonus_adds_to_rate(self):
-        from dataclasses import replace
-
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
@@ -1071,12 +981,6 @@ class TestBatchDPerHourBonusesAndHknCases:
 
     def test_multiplier_pct_curtailment(self):
         # multiplier_pct=85 → rate scaled to 85%; bonus_delta = -15% × current.
-        from dataclasses import replace
-
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=10.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=0.0,
@@ -1098,12 +1002,6 @@ class TestBatchDPerHourBonusesAndHknCases:
 
     def test_optin_bonus_without_when_clause_skipped(self):
         # opt_in bonuses without a when-clause cannot be gated → never apply.
-        from dataclasses import replace
-
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
@@ -1121,12 +1019,6 @@ class TestBatchDPerHourBonusesAndHknCases:
         assert bonus == 0.0
 
     def test_optin_bonus_with_when_user_inputs_applies_on_match(self):
-        from dataclasses import replace
-
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
-
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
@@ -1255,10 +1147,6 @@ class TestFixedSeasonalRate:
         "winter_rp_kwh": 30.0,
     }
 
-    def _hour(self, year, month, day, hour):
-        local = datetime(year, month, day, hour, tzinfo=ZoneInfo("Europe/Zurich"))
-        return local.astimezone(UTC)
-
     def _cfg(self, *, hkn=0.0, bonuses=None, tier_bonuses=None):
         return TariffConfig(
             eigenverbrauch_aktiviert=True,
@@ -1276,15 +1164,15 @@ class TestFixedSeasonalRate:
         )
 
     def test_summer_uses_summer_rp_kwh(self):
-        rate = _effective_rate_at_hour(self._cfg(), 0.0, self._hour(2026, 7, 15, 12))
+        rate = _effective_rate_at_hour(self._cfg(), 0.0, _zurich_utc(2026, 7, 15, 12))
         assert rate == pytest.approx(20.0)
 
     def test_winter_uses_winter_rp_kwh(self):
-        rate = _effective_rate_at_hour(self._cfg(), 0.0, self._hour(2026, 1, 15, 12))
+        rate = _effective_rate_at_hour(self._cfg(), 0.0, _zurich_utc(2026, 1, 15, 12))
         assert rate == pytest.approx(30.0)
 
     def test_summer_with_hkn_optin(self):
-        rate = _effective_rate_at_hour(self._cfg(hkn=15.0), 0.0, self._hour(2026, 7, 15, 12))
+        rate = _effective_rate_at_hour(self._cfg(hkn=15.0), 0.0, _zurich_utc(2026, 7, 15, 12))
         assert rate == pytest.approx(35.0)
 
     def test_winter_bonus_applies(self):
@@ -1294,11 +1182,8 @@ class TestFixedSeasonalRate:
              "rate_rp_kwh": 15.0, "when": {"season": "winter"}},
         )
         cfg = self._cfg(hkn=15.0, tier_bonuses=winter_bonus)
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _effective_rate_breakdown_at_hour,
-        )
         rate, base, hkn, bonus = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour(2026, 1, 15, 12)
+            cfg, 0.0, _zurich_utc(2026, 1, 15, 12)
         )
         assert rate == pytest.approx(60.0)
         assert base == pytest.approx(30.0)
@@ -1311,7 +1196,7 @@ class TestFixedSeasonalRate:
              "rate_rp_kwh": 15.0, "when": {"season": "winter"}},
         )
         cfg = self._cfg(hkn=15.0, tier_bonuses=winter_bonus)
-        rate = _effective_rate_at_hour(cfg, 0.0, self._hour(2026, 7, 15, 12))
+        rate = _effective_rate_at_hour(cfg, 0.0, _zurich_utc(2026, 7, 15, 12))
         assert rate == pytest.approx(35.0)
 
     def test_season_at_uses_tier_seasonal_block(self):
@@ -1319,6 +1204,6 @@ class TestFixedSeasonalRate:
         rt = _make_resolved(base_model="fixed_seasonal", seasonal=self._SEASONAL)
         # Resolver writes the tier's calendar into `rt.seasonal`, so
         # _season_at transparently classifies against tier-level months.
-        assert _season_at(rt, self._hour(2026, 7, 15, 12)) == "summer"
-        assert _season_at(rt, self._hour(2026, 1, 15, 12)) == "winter"
+        assert _season_at(rt, _zurich_utc(2026, 7, 15, 12)) == "summer"
+        assert _season_at(rt, _zurich_utc(2026, 1, 15, 12)) == "winter"
 
