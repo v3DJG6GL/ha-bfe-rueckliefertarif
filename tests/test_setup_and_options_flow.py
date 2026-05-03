@@ -13,11 +13,12 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from types import MappingProxyType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from custom_components.bfe_rueckliefertarif import async_setup_entry
+from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
 from custom_components.bfe_rueckliefertarif import services as svc
 from custom_components.bfe_rueckliefertarif.bfe import BfePrice
 from custom_components.bfe_rueckliefertarif.config_flow import (
@@ -40,7 +41,10 @@ from custom_components.bfe_rueckliefertarif.const import (
     OPT_CONFIG_HISTORY,
 )
 from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+from custom_components.bfe_rueckliefertarif.importer import TariffConfig
 from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
+from custom_components.bfe_rueckliefertarif.services import _first_entry_data
+from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
 
 def _entry_data(utility="ekz", kw=8.0):
@@ -257,8 +261,6 @@ class TestFirstEntryDataLiveReads:
         return hass, live_entry
 
     def test_returns_live_entry_data_after_mutation(self):
-        from custom_components.bfe_rueckliefertarif.services import _first_entry_data
-
         hass, entry = self._setup_hass_with_entry(
             entry_data=_entry_data(utility="ekz"),
             entry_options={OPT_CONFIG_HISTORY: []},
@@ -269,8 +271,6 @@ class TestFirstEntryDataLiveReads:
         assert result["config"][CONF_ENERGIEVERSORGER] == "age_sa"
 
     def test_returns_live_entry_options_after_mutation(self):
-        from custom_components.bfe_rueckliefertarif.services import _first_entry_data
-
         new_history = [
             {"valid_from": "1970-01-01", "valid_to": "2026-01-01",
              "config": _entry_data(utility="ekz")},
@@ -341,8 +341,6 @@ class TestApplyChangeWizard:
     Step 2 captures EV/HKN/user_inputs)."""
 
     def _make_flow(self, options, data=None):
-        from unittest.mock import AsyncMock
-
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
         flow.hass = MagicMock()
         # async_add_executor_job is awaited in _async_warm_cache.
@@ -358,17 +356,9 @@ class TestApplyChangeWizard:
         return flow, flow_entry
 
     async def _drive(self, flow, valid_from, utility, details):
-        """Drive the two-step add-transition flow end-to-end. v0.18.1:
-        unified through manage_history → add_pick_row → add_new_row.
-        Save commits via ``async_update_entry``; the result is a MENU
-        (manage_history). Use ``flow.config_entry.options`` (mock or
-        real) to inspect the resulting history.
-
-        For convenience, the helper synthesises a result dict with the
-        ``data`` field populated from the most recent
-        ``async_update_entry`` call so existing test assertions
-        (``result["data"][OPT_CONFIG_HISTORY]``) keep working.
-        """
+        """Drive add_pick_row → add_new_row and synthesise a CREATE_ENTRY-shaped
+        result from ``async_update_entry`` so callers can assert
+        ``result["data"][OPT_CONFIG_HISTORY]`` directly."""
         kw = details.get(CONF_INSTALLIERTE_LEISTUNG_KWP, 10.0)
         step1_payload = {
             "valid_from": valid_from,
@@ -388,7 +378,6 @@ class TestApplyChangeWizard:
         # options dict. Synthesise the v0.18.0 CREATE_ENTRY shape.
         upd = flow.hass.config_entries.async_update_entry
         if upd.called:
-            from types import SimpleNamespace
             new_options = upd.call_args.kwargs.get("options") or upd.call_args.args[1]
             return {
                 "type": SimpleNamespace(name="CREATE_ENTRY"),
@@ -636,8 +625,6 @@ class TestPerPeriodEditor:
     period-scoped user_inputs."""
 
     def _make_flow(self, options, data=None):
-        from unittest.mock import AsyncMock
-
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
         flow.hass = MagicMock()
         flow.hass.async_add_executor_job = AsyncMock(return_value=None)
@@ -1017,8 +1004,6 @@ class TestRecomputeHistoryStep:
 
     @pytest.mark.asyncio
     async def test_confirmed_invokes_full_reimport(self):
-        from unittest.mock import AsyncMock
-
         flow = self._make_flow()
         with patch(
             "custom_components.bfe_rueckliefertarif.services._reimport_all_history",
@@ -1039,8 +1024,6 @@ class TestRefreshUpstreamDataHelper:
     """`_refresh_upstream_data` refreshes both BFE prices and tariffs.json."""
 
     def _make_hass(self, *, tdc_refresh_returns=True, tdc_last_error=None):
-        from unittest.mock import AsyncMock
-
         coordinator = MagicMock()
         coordinator._imported = {"2025Q4": {}, "2026Q1": {}}
         coordinator.async_refresh = AsyncMock(return_value=None)
@@ -1123,8 +1106,6 @@ class TestRefreshDataStep:
 
     @pytest.mark.asyncio
     async def test_confirmed_invokes_upstream_data_refresh(self):
-        from unittest.mock import AsyncMock
-
         flow = self._make_flow()
         # The mocked return now includes the v0.9.6 tariffs_* keys.
         with patch(
@@ -1168,8 +1149,6 @@ class TestWarmCacheBootstrap:
 
     @pytest.mark.asyncio
     async def test_lazy_inits_when_missing(self):
-        from unittest.mock import AsyncMock
-
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _async_warm_cache,
         )
@@ -1191,8 +1170,6 @@ class TestWarmCacheBootstrap:
 
     @pytest.mark.asyncio
     async def test_reuses_existing_singleton(self):
-        from unittest.mock import AsyncMock
-
         from custom_components.bfe_rueckliefertarif.config_flow import (
             _async_warm_cache,
         )
@@ -1266,7 +1243,6 @@ class TestFirstTimeSetupSplitFlow:
         # _data populated with utility key for tests that call
         # tariff_details directly via _setup_pick; the user-step itself
         # accepts utility via the form payload now.
-        from unittest.mock import AsyncMock
         flow = BfeRuecklieferTarifFlow.__new__(BfeRuecklieferTarifFlow)
         flow._data = {CONF_ENERGIEVERSORGER: energieversorger}
         flow.hass = MagicMock()
@@ -2139,7 +2115,6 @@ class TestFirstRefreshDefersAutoImport:
     async def test_first_refresh_schedules_background_task(self):
         # `self.data is None` → schedule auto-import as a background task,
         # don't await it inline.
-        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
 
         coord = self._make_coord(data=None)
         background_tasks: list = []
@@ -2177,7 +2152,6 @@ class TestFirstRefreshDefersAutoImport:
     async def test_subsequent_tick_runs_auto_import_inline(self):
         # `self.data` already populated → 6h tick path → run inline,
         # no background task.
-        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
 
         coord = self._make_coord(data={"already": "populated"})
 
@@ -2471,7 +2445,6 @@ class TestAsyncUpdateDataPassesIsUserReload:
 
     @pytest.mark.asyncio
     async def test_first_refresh_passes_is_user_reload_true(self):
-        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
 
         coord = self._make_coord(data=None)
 
@@ -2501,7 +2474,6 @@ class TestAsyncUpdateDataPassesIsUserReload:
 
     @pytest.mark.asyncio
     async def test_subsequent_tick_passes_is_user_reload_false(self):
-        from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
 
         coord = self._make_coord(data={"already": "populated"})
 
@@ -2567,8 +2539,6 @@ class TestRunningQuarterEstimatePerHourRates:
         # export hours land in 2026Q2 — one in HT (Tue 2026-04-07 09:00
         # UTC = 11:00 CEST → HT mofr 06–22) and one in NT (Tue 2026-04-07
         # 21:00 UTC = 23:00 CEST → after 22:00 → NT). Both 2 kWh.
-        from custom_components.bfe_rueckliefertarif.importer import TariffConfig
-        from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
         resolved = ResolvedTariff(
             utility_key="ewz",
@@ -2687,8 +2657,6 @@ class TestRunningQuarterEstimatePerHourRates:
         # Regression: a fixed_flat utility (no HT/NT split) should produce
         # constant per-hour rates equal to fixed_rp_kwh + HKN. Base/HKN
         # cells now light up but with the same value across all hours.
-        from custom_components.bfe_rueckliefertarif.importer import TariffConfig
-        from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
         resolved = ResolvedTariff(
             utility_key="age_sa",
@@ -2780,8 +2748,6 @@ class TestRunningEstimateDuringFirstRefresh:
 
     @pytest.mark.asyncio
     async def test_runs_when_coordinator_data_is_none(self):
-        from custom_components.bfe_rueckliefertarif.importer import TariffConfig
-        from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
         resolved = ResolvedTariff(
             utility_key="age_sa",
