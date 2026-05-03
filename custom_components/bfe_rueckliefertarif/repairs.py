@@ -28,6 +28,7 @@ from homeassistant.core import HomeAssistant
 from .config_flow import (
     _add_user_input_fields,
     _append_history_record,
+    _hass_lang,
     _normalize_history,
 )
 from .const import CONF_USER_INPUTS, OPT_CONFIG_HISTORY
@@ -93,9 +94,7 @@ class TariffDriftRepairFlow(RepairsFlow):
         if user_input is not None:
             return self._save(user_input, decls_to_ask)
 
-        lang = (
-            getattr(self.hass.config, "language", None) or "en"
-        ).split("-")[0].lower()
+        lang = _hass_lang(self.hass)
         schema_dict: dict[Any, Any] = {}
         _add_user_input_fields(schema_dict, decls_to_ask, {}, lang)
         return self.async_show_form(
