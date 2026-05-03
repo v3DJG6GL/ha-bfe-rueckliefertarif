@@ -1,9 +1,4 @@
-"""Tests for v0.8.2: skipped-quarters notification recorder gating.
-
-Covers ``BfeCoordinator._filter_skipped_to_quarters_with_export`` — the
-recorder-presence check that prevents the "Older quarters skipped"
-notification from claiming HA has grid-export records when it doesn't.
-"""
+"""Tests for ``BfeCoordinator`` filter helpers and auto-import gating."""
 
 from __future__ import annotations
 
@@ -13,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.bfe_rueckliefertarif.bfe import BfePrice
+from custom_components.bfe_rueckliefertarif.const import OPT_CONFIG_HISTORY
 from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
 
 def _make_coordinator(statistic_id: str | None = "sensor.power_meter_exported"):
@@ -41,68 +39,54 @@ def _make_coordinator(statistic_id: str | None = "sensor.power_meter_exported"):
     return coord
 
 
+_ZERO_ROWS = {datetime(2025, 9, 1, h, tzinfo=UTC): 0.0 for h in range(3)}
+_REAL_ROWS = {
+    datetime(2025, 9, 1, 12, tzinfo=UTC): 1.5,
+    datetime(2025, 9, 2, 12, tzinfo=UTC): 2.0,
+}
+_RECORDER_ERROR = RuntimeError("recorder offline")
+_NO_PATCH = object()  # sentinel: skip recorder patch entirely (no statistic_id case)
+
+
 class TestFilterSkippedQuarters:
     @pytest.mark.asyncio
-    async def test_dismisses_when_sensor_has_no_export_records(self):
-        coord = _make_coordinator()
-        with patch(
-            "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
-            new=AsyncMock(return_value={}),
-        ):
-            result = await coord._filter_skipped_to_quarters_with_export(
-                ["2023Q1", "2024Q4", "2025Q3"]
-            )
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_dismisses_when_sensor_has_only_zero_rows(self):
-        # Recorder returns rows but all zero — no real export data.
-        coord = _make_coordinator()
-        zero_rows = {datetime(2025, 9, 1, h, tzinfo=UTC): 0.0 for h in range(3)}
-        with patch(
-            "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
-            new=AsyncMock(return_value=zero_rows),
-        ):
-            result = await coord._filter_skipped_to_quarters_with_export(["2025Q3"])
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_filters_quarters_ending_before_first_export(self):
-        # User's first non-zero export is 2025-09-01. Quarters ending
-        # *before* that (2023Q1..2025Q2) should drop. 2025Q3 spans
-        # 2025-07..2025-09-30, ends after threshold → kept.
-        coord = _make_coordinator()
-        rows = {
-            datetime(2025, 9, 1, 12, tzinfo=UTC): 1.5,
-            datetime(2025, 9, 2, 12, tzinfo=UTC): 2.0,
-        }
-        with patch(
-            "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
-            new=AsyncMock(return_value=rows),
-        ):
-            result = await coord._filter_skipped_to_quarters_with_export(
-                ["2023Q1", "2024Q4", "2025Q1", "2025Q2", "2025Q3", "2025Q4"]
-            )
-        assert result == ["2025Q3", "2025Q4"]
-
-    @pytest.mark.asyncio
-    async def test_passes_through_on_recorder_error(self):
-        # Recorder hiccup → don't suppress a real notification.
-        coord = _make_coordinator()
-        with patch(
-            "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
-            new=AsyncMock(side_effect=RuntimeError("recorder offline")),
-        ):
-            result = await coord._filter_skipped_to_quarters_with_export(
-                ["2025Q3", "2025Q4"]
-            )
-        assert result == ["2025Q3", "2025Q4"]
-
-    @pytest.mark.asyncio
-    async def test_passes_through_when_no_statistic_id_configured(self):
-        coord = _make_coordinator(statistic_id=None)
-        result = await coord._filter_skipped_to_quarters_with_export(["2025Q3"])
-        assert result == ["2025Q3"]
+    @pytest.mark.parametrize(
+        ("recorder_outcome", "statistic_id", "quarters", "expected"),
+        [
+            # Empty recorder → all quarters dropped.
+            ({}, "sensor.power_meter_exported",
+             ["2023Q1", "2024Q4", "2025Q3"], []),
+            # Only zero rows → no real export data, all dropped.
+            (_ZERO_ROWS, "sensor.power_meter_exported", ["2025Q3"], []),
+            # First non-zero export 2025-09-01: quarters ending before
+            # threshold drop, 2025Q3 (ends 2025-09-30) and 2025Q4 are kept.
+            (_REAL_ROWS, "sensor.power_meter_exported",
+             ["2023Q1", "2024Q4", "2025Q1", "2025Q2", "2025Q3", "2025Q4"],
+             ["2025Q3", "2025Q4"]),
+            # Recorder error → don't suppress a real notification.
+            (_RECORDER_ERROR, "sensor.power_meter_exported",
+             ["2025Q3", "2025Q4"], ["2025Q3", "2025Q4"]),
+            # No statistic_id configured → passthrough, no recorder call.
+            (_NO_PATCH, None, ["2025Q3"], ["2025Q3"]),
+        ],
+    )
+    async def test_filter_skipped_quarters(
+        self, recorder_outcome, statistic_id, quarters, expected,
+    ):
+        coord = _make_coordinator(statistic_id=statistic_id)
+        if recorder_outcome is _NO_PATCH:
+            result = await coord._filter_skipped_to_quarters_with_export(quarters)
+        else:
+            if isinstance(recorder_outcome, BaseException):
+                mock = AsyncMock(side_effect=recorder_outcome)
+            else:
+                mock = AsyncMock(return_value=recorder_outcome)
+            with patch(
+                "custom_components.bfe_rueckliefertarif.ha_recorder.read_hourly_export",
+                new=mock,
+            ):
+                result = await coord._filter_skipped_to_quarters_with_export(quarters)
+        assert result == expected
 
     @pytest.mark.asyncio
     async def test_caches_earliest_hour_across_calls(self):
@@ -129,10 +113,6 @@ class TestCoordinatorAutoImportSkipsPreValidFrom:
 
     @pytest.mark.asyncio
     async def test_skips_quarters_predating_earliest_history_record(self):
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.const import OPT_CONFIG_HISTORY
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
-
         coord = _make_coordinator()
         # History anchored at 2025-04-01 (plant install).
         coord.entry = SimpleNamespace(
@@ -191,9 +171,6 @@ class TestCoordinatorAutoImportSkipsPreValidFrom:
     async def test_no_history_means_no_filter_applied(self):
         # Defensive: when entry.options has no history, the coordinator
         # falls back to importing everything (legacy behavior, no regression).
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
-
         coord = _make_coordinator()
         coord.entry = SimpleNamespace(
             entry_id="test_entry",
@@ -369,7 +346,6 @@ class TestUserInputsFingerprint:
             "custom_components.bfe_rueckliefertarif.services._cfg_for_entry",
             return_value=(cfg, tariff_cfg),
         ):
-            from custom_components.bfe_rueckliefertarif.quarters import Quarter
             assert coord._running_q_config_changed(prior, Quarter(2026, 2))
 
     def test_running_q_config_changed_unchanged_when_user_inputs_equal(self):
@@ -391,7 +367,6 @@ class TestUserInputsFingerprint:
             "custom_components.bfe_rueckliefertarif.services._cfg_for_entry",
             return_value=(cfg, tariff_cfg),
         ):
-            from custom_components.bfe_rueckliefertarif.quarters import Quarter
             assert not coord._running_q_config_changed(prior, Quarter(2026, 2))
 
     def test_running_q_config_changed_pre_v0_17_snapshot_no_false_positive(
@@ -415,5 +390,4 @@ class TestUserInputsFingerprint:
             "custom_components.bfe_rueckliefertarif.services._cfg_for_entry",
             return_value=(cfg, tariff_cfg),
         ):
-            from custom_components.bfe_rueckliefertarif.quarters import Quarter
             assert not coord._running_q_config_changed(prior, Quarter(2026, 2))

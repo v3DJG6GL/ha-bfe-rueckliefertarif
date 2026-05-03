@@ -1,23 +1,16 @@
-"""Tests for v0.8.0+: unified config-history timeline (post-A+ refactor).
-
-Covers:
-- ``_resolve_config_at`` picks the correct full-config dict per ``at_date``,
-  honoring half-open ``[valid_from, valid_to)`` semantics.
-- ``_normalize_history`` sorts by valid_from and chains valid_to.
-- ``_parse_valid_from`` accepts ISO-date inputs (YYYY-MM-DD).
-
-Note (v0.9.0): ``_apply_config_change`` and ``_sync_entry_data_from_history``
-are removed — the wizard inlines history mutation and entry.data no longer
-mirrors versioned fields. The ``apply_change`` wizard's persistence path is
-covered by tests/test_setup_and_options_flow.py.
-"""
+"""Tests for the unified config-history timeline and related helpers."""
 
 from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from custom_components.bfe_rueckliefertarif.config_flow import (
+    _active_hkn_structure,
     _append_history_record,
+    _derive_billing,
+    _force_hkn_for_save,
     _format_config_summary,
     _make_sentinel_record,
     _normalize_history,
@@ -208,7 +201,6 @@ class TestParseValidFrom:
         assert _parse_valid_from("2024-08-15") == "2024-08-15"
 
     def test_rejects_garbage(self):
-        import pytest
         with pytest.raises(ValueError):
             _parse_valid_from("foobar")
         with pytest.raises(ValueError):
@@ -223,30 +215,15 @@ class TestDeriveBilling:
     """v0.9.8 #9 — billing rhythm comes from utility's settlement_period."""
 
     def test_quartal_utility_yields_quartal(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
-        from custom_components.bfe_rueckliefertarif.const import (
-            ABRECHNUNGS_RHYTHMUS_QUARTAL,
-        )
-
         # All bundled utilities use settlement_period="quartal" today.
         assert _derive_billing("ekz", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
-        # v0.11.0 — AEW unified into one entry with user_inputs.tariff_model.
         assert _derive_billing("aew", "2026-04-01") == ABRECHNUNGS_RHYTHMUS_QUARTAL
 
     def test_unknown_utility_raises(self):
-        import pytest
-
-        from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
-
         with pytest.raises(KeyError):
             _derive_billing("does_not_exist", "2026-04-01")
 
     def test_no_active_rate_raises(self):
-        import pytest
-
-        from custom_components.bfe_rueckliefertarif.config_flow import _derive_billing
-
-        # v1.5.0 bundled data: EKZ + AEW now carry historical rate windows.
         # Pick a utility with only 2026+ rates (e.g. bkw) and a date before that.
         with pytest.raises(LookupError):
             _derive_billing("bkw", "2025-06-01")
@@ -257,10 +234,6 @@ class TestHknGate:
     ``hkn_structure``."""
 
     def test_active_hkn_structure_resolves_for_known_utility(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _active_hkn_structure,
-        )
-
         # ekz has hkn_structure="additive_optin" in bundled data.
         assert _active_hkn_structure("ekz", "2026-04-01") == "additive_optin"
         # v0.23.0 — AEW's first power_tier (applies_when={fixpreis_rmp:fixpreis})
@@ -270,10 +243,6 @@ class TestHknGate:
         assert _active_hkn_structure("aew", "2026-04-01") == "additive_optin"
 
     def test_active_hkn_structure_returns_none_on_lookup_failure(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _active_hkn_structure,
-        )
-
         # Unknown utility → None (graceful degradation; UI shows toggle).
         assert _active_hkn_structure("does_not_exist", "2026-04-01") is None
         # Date before any rate window → None.
@@ -281,39 +250,25 @@ class TestHknGate:
         # Garbage date → None (caught by ValueError).
         assert _active_hkn_structure("ekz", "garbage") is None
 
-    def test_force_hkn_for_save_additive_optin_preserves_choice(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _force_hkn_for_save,
-        )
-
-        assert _force_hkn_for_save("additive_optin", True) is True
-        assert _force_hkn_for_save("additive_optin", False) is False
-
-    def test_force_hkn_for_save_bundled_forces_false(self):
-        # Math-correct: HKN already in base rate, don't double-add.
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _force_hkn_for_save,
-        )
-
-        assert _force_hkn_for_save("bundled", True) is False
-        assert _force_hkn_for_save("bundled", False) is False
-
-    def test_force_hkn_for_save_none_forces_false(self):
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _force_hkn_for_save,
-        )
-
-        assert _force_hkn_for_save("none", True) is False
-        assert _force_hkn_for_save("none", False) is False
-
-    def test_force_hkn_for_save_null_preserves_choice(self):
-        # Legacy / missing field → preserve user choice (don't force).
-        from custom_components.bfe_rueckliefertarif.config_flow import (
-            _force_hkn_for_save,
-        )
-
-        assert _force_hkn_for_save(None, True) is True
-        assert _force_hkn_for_save(None, False) is False
+    @pytest.mark.parametrize(
+        ("structure", "choice", "expected"),
+        [
+            # additive_optin: user choice preserved.
+            ("additive_optin", True, True),
+            ("additive_optin", False, False),
+            # bundled: HKN already in base rate; force False to avoid double-add.
+            ("bundled", True, False),
+            ("bundled", False, False),
+            # none: utility offers no HKN; force False.
+            ("none", True, False),
+            ("none", False, False),
+            # null (legacy/missing field): preserve user choice.
+            (None, True, True),
+            (None, False, False),
+        ],
+    )
+    def test_force_hkn_for_save(self, structure, choice, expected):
+        assert _force_hkn_for_save(structure, choice) is expected
 
 
 class TestFormatConfigSummary:
