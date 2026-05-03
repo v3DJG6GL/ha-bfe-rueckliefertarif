@@ -151,9 +151,18 @@ def _format_change_advisory(should_show: bool, lang: str) -> str:
     return _CHANGE_ADVISORY.get(lang) or _CHANGE_ADVISORY["en"]
 
 
+def _hass_lang(hass, default: str = "en") -> str:
+    """Two-letter HA UI language (e.g. ``"de"``, ``"en"``).
+
+    Strips any region suffix (``"de-CH"`` → ``"de"``) and falls back to
+    ``default`` when ``hass.config.language`` is unset.
+    """
+    return (getattr(hass.config, "language", None) or default).split("-")[0].lower()
+
+
 def _source_links(hass) -> dict[str, str]:
     """Return locale-correct data-source URLs for description_placeholders."""
-    lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+    lang = _hass_lang(hass)
     return {
         "agency_url": _AGENCY_URLS.get(lang, _AGENCY_URLS["en"]),
         "opendata_url": _OPENDATA_URLS.get(lang, _OPENDATA_URLS["en"]),
@@ -273,9 +282,7 @@ def _hkn_gate_note(hkn_structure: str | None, hass=None) -> str:
     """
     if hkn_structure not in ("bundled", "none"):
         return ""
-    lang = "en"
-    if hass is not None:
-        lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+    lang = _hass_lang(hass) if hass is not None else "en"
     return _HKN_GATE_NOTES[hkn_structure].get(lang) or _HKN_GATE_NOTES[hkn_structure]["en"]
 
 
@@ -451,9 +458,7 @@ def _notes_block(utility_key: str, valid_from_iso: str, hass=None) -> str:
     except (KeyError, ValueError, LookupError):
         return ""
 
-    lang = "en"
-    if hass is not None:
-        lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+    lang = _hass_lang(hass) if hass is not None else "en"
     return _render_rate_notes(rate, at_date, lang)
 
 
@@ -1370,9 +1375,7 @@ class BfeRuecklieferTarifFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ] = selector.BooleanSelector()
 
         decl_defaults: dict = {}
-        lang = (
-            getattr(self.hass.config, "language", None) or "de"
-        ).split("-")[0].lower()
+        lang = _hass_lang(self.hass, default="de")
 
         if is_multi:
             for idx, (pf, _pt, rep_rate) in enumerate(periods):
@@ -1921,9 +1924,7 @@ class BfeRuecklieferTarifOptionsFlow(config_entries.OptionsFlowWithReload):
             ] = selector.BooleanSelector()
 
         decl_defaults = (defaults_cfg.get(CONF_USER_INPUTS) or {})
-        lang = (
-            getattr(self.hass.config, "language", None) or "de"
-        ).split("-")[0].lower()
+        lang = _hass_lang(self.hass, default="de")
 
         if is_multi:
             for p_idx, (pf, _pt, rep_rate) in enumerate(periods):
