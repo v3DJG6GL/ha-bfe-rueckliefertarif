@@ -23,20 +23,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
 
-    # Phase 6: a single TariffsDataCoordinator is shared across config entries
-    # (only ever one in v0.5; the dict-keyed shape is forward-compat).
+    # A single TariffsDataCoordinator is shared across config entries
+    # (the dict-keyed shape is forward-compat for multi-entry setups).
     if "_tariffs_data" not in hass.data[DOMAIN]:
         tdc = TariffsDataCoordinator(hass)
         await tdc.async_load()
         hass.data[DOMAIN]["_tariffs_data"] = tdc
 
-    # v0.8.2: split first-setup vs pathological-empty-history. The earlier
-    # falsy guard re-seeded the sentinel from entry.data even when
-    # OPT_CONFIG_HISTORY went empty mid-life — and entry.data may already
-    # carry the *latest* utility (mutated by _sync_entry_data_from_history
-    # in the options flow). After the OptionsFlow wipe race was fixed, an
-    # empty history can no longer happen via normal flows; if it does, log
-    # loudly and refuse to silently encode the wrong utility.
+    # Split first-setup vs pathological-empty-history. A naive falsy guard
+    # would re-seed the sentinel from entry.data even when OPT_CONFIG_HISTORY
+    # went empty mid-life — and entry.data may already carry the *latest*
+    # utility (mutated by _sync_entry_data_from_history in the options flow).
+    # An empty history can't happen via normal flows; if it does, log loudly
+    # and refuse to silently encode the wrong utility.
     options = dict(entry.options or {})
     options.pop("plant_history", None)
     options.pop("hkn_optin_history", None)
@@ -44,9 +43,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     history = options.get(OPT_CONFIG_HISTORY)
     if history is None:
         # First setup — synthesize sentinel from the just-collected entry.data.
-        # v0.9.2: anchor at user-supplied CONF_VALID_FROM (plant install date)
-        # instead of 1970-01-01. The 1970 fallback covers any pre-v0.9.2 entry
-        # that somehow reaches this code path without the new field.
+        # Anchor at user-supplied CONF_VALID_FROM (plant install date); the
+        # 1970 fallback covers any legacy entry reaching this path without
+        # the field.
         options[OPT_CONFIG_HISTORY] = [
             {
                 "valid_from": entry.data.get(CONF_VALID_FROM, "1970-01-01"),
@@ -75,7 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """v0.19.0 — auto-register the BFE tariff analysis Lovelace card.
+    """Auto-register the BFE tariff analysis Lovelace card.
 
     Ships ``www/bfe-tariff-analysis-card.js`` as a Lovelace resource so
     users don't need to manually wire it up. Idempotent — the
@@ -98,9 +97,9 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     apex_path = str(www_dir / "apexcharts.min.js")
     apex_url = "/api/bfe_rueckliefertarif/static/apexcharts.min.js"
 
-    # v0.21.5 — both stat-the-apex-file and read-the-manifest were running
-    # synchronously on the event loop, triggering HA's blocking-call warning.
-    # Wrap in a single executor call.
+    # Both stat-the-apex-file and read-the-manifest run synchronously; wrap
+    # them in a single executor call so they don't trigger HA's blocking-call
+    # warning on the event loop.
     def _io():
         return Path(apex_path).is_file(), _read_manifest_version()
 
@@ -114,12 +113,12 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         from homeassistant.components.frontend import add_extra_js_url
         from homeassistant.components.http import StaticPathConfig
 
-        # v0.20.2: ship ApexCharts as a fetchable static asset, but DO NOT
-        # add it via add_extra_js_url — that would inject a <script> tag
-        # at HA boot, polluting window.ApexCharts and breaking other HACS
-        # cards (notably RomRider/apexcharts-card) that bundle their own
-        # internal ApexCharts copy. The card fetches + scope-isolates the
-        # bundle on demand instead (see `_loadApex` in the card JS).
+        # Ship ApexCharts as a fetchable static asset, but DO NOT add it via
+        # add_extra_js_url — that would inject a <script> tag at HA boot,
+        # polluting window.ApexCharts and breaking other HACS cards (notably
+        # RomRider/apexcharts-card) that bundle their own internal ApexCharts
+        # copy. The card fetches + scope-isolates the bundle on demand
+        # instead (see `_loadApex` in the card JS).
         static_paths = [StaticPathConfig(card_url, card_path, cache_headers=False)]
         if apex_present:
             static_paths.append(

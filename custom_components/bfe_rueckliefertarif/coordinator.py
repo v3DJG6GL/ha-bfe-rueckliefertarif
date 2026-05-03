@@ -29,10 +29,8 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
-# v0.19.0: 15 min for live sensor accuracy across HT/NT and seasonal
-# boundaries. Per-tick work is cheap — TariffsDataCoordinator caches its
-# remote fetch separately, BFE polling has its own cadence; the coordinator
-# tick mostly re-resolves from already-cached data.
+# 15 min for live sensor accuracy across HT/NT and seasonal boundaries.
+# Per-tick work is cheap.
 _UPDATE_INTERVAL = timedelta(minutes=15)
 _STORAGE_VERSION = 1
 _STORAGE_KEY_FMT = "bfe_rueckliefertarif.{entry_id}"
@@ -58,8 +56,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         # don't claim HA has records when it doesn't. Lazily computed; reset
         # on coordinator restart only.
         self._earliest_export_hour: datetime | None = None
-        # v0.9.14 — single-flight guard around `_auto_import_newly_published`.
-        # The first-refresh path schedules it as a background task while
+        # Single-flight guard around `_auto_import_newly_published`. The
+        # first-refresh path schedules it as a background task while
         # `_async_update_data` returns early; a 6h tick that fires before the
         # background task finishes must wait, not interleave.
         self._auto_import_lock = asyncio.Lock()
@@ -68,12 +66,12 @@ class BfeCoordinator(DataUpdateCoordinator):
     def _config(self) -> dict:
         """Live merge of entity-wiring (entry.data) + today's resolved versioned fields.
 
-        v0.9.0 (Option A+): versioned fields (utility, kW, EV, HKN, billing)
-        live exclusively in ``entry.options[OPT_CONFIG_HISTORY]`` — the open
-        record IS today's config. Entity-wiring fields (export sensor,
-        compensation sensor, name prefix) stay in ``entry.data``. This merge
-        gives consumers a single dict identical in shape to pre-A+ but with
-        history as the source of truth for everything that varies over time.
+        Versioned fields (utility, kW, EV, HKN, billing) live exclusively in
+        ``entry.options[OPT_CONFIG_HISTORY]`` — the open record IS today's
+        config. Entity-wiring fields (export sensor, compensation sensor,
+        name prefix) stay in ``entry.data``. This merge gives consumers a
+        single dict with history as the source of truth for everything that
+        varies over time.
         """
         from datetime import date
 
@@ -108,16 +106,15 @@ class BfeCoordinator(DataUpdateCoordinator):
             else:
                 self.quarterly = await fetch_quarterly(session)
 
-        # v0.9.14 — defer auto-import on the first refresh so sensor
-        # platform setup doesn't block on the recorder drain
-        # (`async_block_till_done` inside `import_statistics` waits for
-        # the entire recorder queue, not just our writes — multi-second
-        # on Postgres-backed recorders during cold HA startup).
-        # Subsequent ticks (6h tick, refresh_data service) run inline.
-        # v0.9.15 — `is_user_reload` distinguishes cold startup /
-        # apply_change reload (gate the running-quarter estimate on
-        # config-staleness) from 6h tick / refresh_data (keep
-        # unconditional kWh roll-forward).
+        # Defer auto-import on the first refresh so sensor platform setup
+        # doesn't block on the recorder drain (`async_block_till_done`
+        # inside `import_statistics` waits for the entire recorder queue,
+        # not just our writes — multi-second on Postgres-backed recorders
+        # during cold HA startup). Subsequent ticks (6h tick, refresh_data
+        # service) run inline. `is_user_reload` distinguishes cold startup
+        # / apply_change reload (gate the running-quarter estimate on
+        # config-staleness) from 6h tick / refresh_data (keep unconditional
+        # kWh roll-forward).
         if self.data is None:
             self.hass.async_create_background_task(
                 self._auto_import_newly_published(is_user_reload=True),
@@ -134,10 +131,10 @@ class BfeCoordinator(DataUpdateCoordinator):
         }
 
     def _tariff_breakdown(self) -> dict[str, Any] | None:
-        """Return the live tariff breakdown dict for the renamed
+        """Return the live tariff breakdown dict for the
         ``grid_export_tariff_current`` sensor's state + attributes.
 
-        v0.19.0: thin wrapper around ``importer.compute_breakdown_at(hour=now)``.
+        Thin wrapper around ``importer.compute_breakdown_at(hour=now)``.
         Adds coordinator-state-dependent fields (``is_estimate``,
         ``estimate_basis``, ``tariffs_data_*``, ``current_rmp_*``) on top of
         the pure-tariff math returned by the importer helper. The seasonal
@@ -188,9 +185,8 @@ class BfeCoordinator(DataUpdateCoordinator):
         except (ValueError, KeyError):
             return None
 
-        # v0.19.0: when RMP fallback kicked in, override base_source so the
-        # "estimate" intent is visible in the attribute (matches pre-v0.19.0
-        # 'fallback_mindestverguetung' label semantic).
+        # When RMP fallback kicked in, override base_source so the
+        # "estimate" intent is visible in the attribute.
         if is_estimate:
             breakdown["base_source"] = "fallback_mindestverguetung"
         elif rt.base_model in ("rmp_quartal", "rmp_monat"):
@@ -230,10 +226,9 @@ class BfeCoordinator(DataUpdateCoordinator):
     ) -> None:
         """Detect quarters needing reimport — BFE-price changes OR config drift.
 
-        v0.7: extended from "BFE-price-only" to also reimport when the
-        snapshot's resolved config (utility, kW, EV, HKN opt-in,
-        tariffs.json version) differs from what the integration would
-        resolve today. So a kW change in the options flow now triggers
+        Reimports when the snapshot's resolved config (utility, kW, EV,
+        HKN opt-in, tariffs.json version) differs from what the integration
+        would resolve today. So a kW change in the options flow triggers
         retroactive recompute on the next coordinator refresh.
 
         ``_reimport_quarter`` updates ``self._imported[key]`` itself with the
@@ -241,18 +236,17 @@ class BfeCoordinator(DataUpdateCoordinator):
         snapshot already matches the current resolved config.
 
         Quarters BFE has published but the bundled tariff database doesn't
-        cover (e.g. pre-2026 dates while v0.5 ships only 2026 utility data)
-        produce a single persistent notification listing the gap, instead
-        of one warning per skipped quarter. Populating older years is a
-        community-PR effort against the bfe-tariffs-data companion repo.
-        Genuine errors still surface as warnings.
+        cover produce a single persistent notification listing the gap,
+        instead of one warning per skipped quarter. Populating older years
+        is a community-PR effort against the bfe-tariffs-data companion
+        repo. Genuine errors still surface as warnings.
 
         After the loop, any quarters that were actually reimported get
         summarized in a single rich notification card (utility, model,
-        kW/EV/HKN/billing, plus a per-month results table). v0.9.14: the
-        running quarter rides along in that notification when the
-        estimate ran successfully (so apply_change recomputes show the
-        running quarter alongside the stale-published ones).
+        kW/EV/HKN/billing, plus a per-month results table). The running
+        quarter rides along in that notification when the estimate ran
+        successfully (so apply_change recomputes show the running quarter
+        alongside the stale-published ones).
         """
         from datetime import date
 
@@ -264,15 +258,15 @@ class BfeCoordinator(DataUpdateCoordinator):
             _reimport_quarter,
         )
 
-        # v0.9.14 — single-flight: a 6h tick that fires while the
-        # first-refresh-deferred background task is still running waits
-        # here, instead of double-mutating `_imported`.
+        # Single-flight: a 6h tick that fires while the first-refresh-deferred
+        # background task is still running waits here, instead of
+        # double-mutating `_imported`.
         async with self._auto_import_lock:
-            # v0.9.3: skip quarters that predate the earliest config-history
-            # record (the plant install date). Without this guard, every
-            # 6-hourly coordinator refresh logs a "predates earliest record"
-            # WARNING for each pre-install quarter BFE has published — same
-            # root cause `_reimport_all_history`'s pre-active filter addresses
+            # Skip quarters that predate the earliest config-history record
+            # (the plant install date). Without this guard, every 6-hourly
+            # coordinator refresh logs a "predates earliest record" WARNING
+            # for each pre-install quarter BFE has published — same root
+            # cause `_reimport_all_history`'s pre-active filter addresses
             # for the explicit Recompute button.
             history = (self.entry.options or {}).get(OPT_CONFIG_HISTORY) or []
             earliest_date: date | None = None
@@ -284,10 +278,10 @@ class BfeCoordinator(DataUpdateCoordinator):
 
             no_data_skipped: list[str] = []
             reimported: list[Quarter] = []
-            # v0.9.12 — track the most recent quarter reimported in this tick so
-            # a contiguous running-quarter estimate can chain its anchor through
-            # memory (avoiding the recorder commit-timer race that v0.9.11 fixed
-            # in `_reimport_all_history`).
+            # Track the most recent quarter reimported in this tick so a
+            # contiguous running-quarter estimate can chain its anchor through
+            # memory (avoiding the recorder commit-timer race that
+            # `_reimport_all_history` handles separately).
             last_reimported_q: Quarter | None = None
             last_reimported_final: float = 0.0
 
@@ -313,17 +307,17 @@ class BfeCoordinator(DataUpdateCoordinator):
                 except Exception as exc:
                     _LOGGER.warning("Auto-import skipped %s: %s", q, exc)
 
-            # v0.9.12 — refresh the running-quarter estimate under the same
-            # triggers as published quarters (6h tick, apply_change reload via
+            # Refresh the running-quarter estimate under the same triggers as
+            # published quarters (6h tick, apply_change reload via
             # `async_config_entry_first_refresh`, `refresh_data` service). Skip
             # only when BFE has just published the running quarter — in that
             # case the loop above already imported it via `_reimport_quarter`.
-            # v0.9.15 — gate the estimate on user-reload triggers (cold
-            # startup, apply_change reload) so an edit to a historical
-            # record that doesn't touch the running quarter's resolved
-            # config doesn't list the running quarter in the notification.
-            # 6h tick / refresh_data keep unconditional behavior to
-            # preserve the kWh roll-forward feature.
+            # Gate the estimate on user-reload triggers (cold startup,
+            # apply_change reload) so an edit to a historical record that
+            # doesn't touch the running quarter's resolved config doesn't
+            # list the running quarter in the notification. 6h tick /
+            # refresh_data keep unconditional behavior to preserve the kWh
+            # roll-forward feature.
             running_q = quarter_of(datetime.now(UTC))
             running_q_estimated = False
             prior_running_snapshot = (
@@ -353,11 +347,11 @@ class BfeCoordinator(DataUpdateCoordinator):
                         )
 
             await self._notify_skipped_quarters(no_data_skipped)
-            # v0.9.15 — only list the running quarter when its resolved
-            # config actually changed (NOT just because the estimate ran
-            # on a kWh-roll-forward tick). v0.16.0 — also fire when ONLY
-            # the running quarter changed (active-tariff edit case), so
-            # editing the open record produces a notification too.
+            # Only list the running quarter when its resolved config actually
+            # changed (NOT just because the estimate ran on a kWh-roll-forward
+            # tick). Also fire when ONLY the running quarter changed
+            # (active-tariff edit case), so editing the open record produces a
+            # notification too.
             if reimported or (running_q_estimated and running_q_config_changed):
                 notify_quarters = list(reimported)
                 if running_q_estimated and running_q_config_changed:
@@ -413,7 +407,7 @@ class BfeCoordinator(DataUpdateCoordinator):
     def _running_q_config_changed(
         self, prior_snapshot: dict, running_q: Quarter
     ) -> bool:
-        """v0.9.15 — running-quarter analog of `_snapshot_is_stale`, minus the
+        """Running-quarter analog of `_snapshot_is_stale`, minus the
         BFE-price field (running quarter has no published price yet).
 
         Returns True when today's resolved config for ``running_q`` differs
