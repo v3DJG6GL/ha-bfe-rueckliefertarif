@@ -11,3 +11,4 @@ dist/
 build/
 *.log
 .claude/settings.local.json
+SIMPLIFY_NOTES.md
