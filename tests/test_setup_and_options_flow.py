@@ -2865,6 +2865,14 @@ class TestRenderConfigBlockShared:
 class TestManageHistoryLabels:
     """Manage-history menu distinguishes active (`→ now`) vs future (`→ ...`) records."""
 
+    @pytest.fixture(autouse=True)
+    def _freeze_today(self):
+        with patch(
+            "custom_components.bfe_rueckliefertarif.config_flow.date"
+        ) as mock_date:
+            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
+            yield
+
     def _make_flow(self, history):
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
         flow.hass = MagicMock()
@@ -2886,11 +2894,7 @@ class TestManageHistoryLabels:
              "config": _entry_data(utility="ekz")},
         ]
         flow = self._make_flow(history)
-        with patch(
-            "custom_components.bfe_rueckliefertarif.config_flow.date"
-        ) as mock_date:
-            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
-            result = await flow.async_step_manage_history()
+        result = await flow.async_step_manage_history()
         labels = result["menu_options"]
         assert "→ now" in labels["edit_pick_row_0"]
         assert "→ ..." not in labels["edit_pick_row_0"]
@@ -2905,11 +2909,7 @@ class TestManageHistoryLabels:
              "config": _entry_data(utility="age_sa")},
         ]
         flow = self._make_flow(history)
-        with patch(
-            "custom_components.bfe_rueckliefertarif.config_flow.date"
-        ) as mock_date:
-            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
-            result = await flow.async_step_manage_history()
+        result = await flow.async_step_manage_history()
         labels = result["menu_options"]
         # Closed past record renders the explicit valid_to.
         assert "→ 2026-07-01" in labels["edit_pick_row_0"]
@@ -2925,11 +2925,7 @@ class TestManageHistoryLabels:
              "config": _entry_data(utility="ekz")},
         ]
         flow = self._make_flow(history)
-        with patch(
-            "custom_components.bfe_rueckliefertarif.config_flow.date"
-        ) as mock_date:
-            mock_date.today.return_value.isoformat.return_value = "2026-04-27"
-            result = await flow.async_step_manage_history()
+        result = await flow.async_step_manage_history()
         labels = result["menu_options"]
         assert "→ now" in labels["edit_pick_row_0"]
         assert "→ ..." not in labels["edit_pick_row_0"]
