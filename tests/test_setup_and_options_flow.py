@@ -336,6 +336,13 @@ async def _async_noop(*args, **kwargs):
     return None
 
 
+def _close_coro(coro):
+    """For MagicMock hass: services fire-and-forget coros via
+    ``hass.async_create_task``; close them so they don't leak as
+    ``coroutine was never awaited`` warnings at test teardown."""
+    coro.close()
+
+
 class TestApplyChangeWizard:
     """OptionsFlow ``apply_change`` two-step wizard (Step 1 picks utility/date/kW,
     Step 2 captures EV/HKN/user_inputs)."""
@@ -1578,7 +1585,7 @@ class TestReimportClearsFirst:
         hass = MagicMock()
         coordinator = MagicMock()
         coordinator._imported = {"2025Q4": {"snapshot": {}}}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
 
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -1675,7 +1682,7 @@ class TestReimportClearsFirst:
         hass = MagicMock()
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
 
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -1704,7 +1711,7 @@ class TestReimportClearsFirst:
             }
         }
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
-        hass.async_add_executor_job = _async_noop_factory()
+        hass.async_add_executor_job = _async_noop
 
         imported_quarters: list[Quarter] = []
 
@@ -1743,7 +1750,7 @@ class TestReimportClearsFirst:
         hass = MagicMock()
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
 
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -1764,7 +1771,7 @@ class TestReimportClearsFirst:
             }
         }
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
-        hass.async_add_executor_job = _async_noop_factory()
+        hass.async_add_executor_job = _async_noop
 
         async def _fake_estimate(_hass, **_kw):
             return {}
@@ -1787,7 +1794,7 @@ class TestAnchorThreading:
         hass = MagicMock()
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
 
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -1816,7 +1823,7 @@ class TestAnchorThreading:
             }
         }
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
-        hass.async_add_executor_job = _async_noop_factory()
+        hass.async_add_executor_job = _async_noop
 
         # Prescribed per-quarter final sums, in the order they're called.
         quarter_finals = {
@@ -1858,7 +1865,7 @@ class TestAnchorThreading:
         hass = MagicMock()
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
 
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -1887,7 +1894,7 @@ class TestAnchorThreading:
             }
         }
         hass.config_entries.async_get_entry = MagicMock(return_value=live_entry)
-        hass.async_add_executor_job = _async_noop_factory()
+        hass.async_add_executor_job = _async_noop
 
         prices = {
             Quarter(2025, 3): BfePrice(chf_per_mwh=80.0, days=92, volume_mwh=0.0),
@@ -1949,7 +1956,7 @@ class TestCoordinatorRefreshesRunningQuarter:
         # lock; the BfeCoordinator(__new__) skip means we set it manually.
         coord._auto_import_lock = asyncio.Lock()
         # Sub-helpers that aren't relevant to these tests.
-        coord._notify_skipped_quarters = _async_noop_factory()
+        coord._notify_skipped_quarters = _async_noop
         return coord
 
     @pytest.mark.asyncio
@@ -2212,7 +2219,7 @@ class TestAutoImportLock:
         coord._imported = {}
         coord.hass = MagicMock()
         coord._auto_import_lock = asyncio.Lock()
-        coord._notify_skipped_quarters = _async_noop_factory()
+        coord._notify_skipped_quarters = _async_noop
 
         events: list[str] = []
         first_in_critical = asyncio.Event()
@@ -2282,7 +2289,7 @@ class TestApplyChangeNotificationIncludesRunningQuarter:
         coord._imported = {}
         coord.hass = MagicMock()
         coord._auto_import_lock = asyncio.Lock()
-        coord._notify_skipped_quarters = _async_noop_factory()
+        coord._notify_skipped_quarters = _async_noop
         coord._snapshot_is_stale = MagicMock(return_value=True)
 
         async def _fake_reimport_quarter(_hass, q):
@@ -2335,7 +2342,7 @@ class TestRunningQuarterStalenessGate:
         coord._imported = imported or {}
         coord.hass = MagicMock()
         coord._auto_import_lock = asyncio.Lock()
-        coord._notify_skipped_quarters = _async_noop_factory()
+        coord._notify_skipped_quarters = _async_noop
         return coord
 
     @pytest.mark.parametrize(
@@ -2523,12 +2530,6 @@ def _recorder_instance_mock():
     return inst
 
 
-def _async_noop_factory():
-    async def _f(*args, **kwargs):
-        return None
-    return _f
-
-
 class TestRunningQuarterEstimatePerHourRates:
     """`_import_running_quarter_estimate` resolves rate per hour via the rate-breakdown helper."""
 
@@ -2573,9 +2574,10 @@ class TestRunningQuarterEstimatePerHourRates:
         }
 
         hass = MagicMock()
+        hass.async_create_task = _close_coro
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
         coordinator.data = {"current_tariff_rp_kwh": 12.91}
 
         live_entry = SimpleNamespace(
@@ -2691,9 +2693,10 @@ class TestRunningQuarterEstimatePerHourRates:
         }
 
         hass = MagicMock()
+        hass.async_create_task = _close_coro
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
         coordinator.data = {"current_tariff_rp_kwh": 12.0}
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -2782,9 +2785,10 @@ class TestRunningEstimateDuringFirstRefresh:
         }
 
         hass = MagicMock()
+        hass.async_create_task = _close_coro
         coordinator = MagicMock()
         coordinator._imported = {}
-        coordinator._async_save_state = _async_noop_factory()
+        coordinator._async_save_state = _async_noop
         # First-refresh state: DataUpdateCoordinator.data is still None
         # while `_async_update_data` populates it. Pre-fix this raised
         # "Coordinator not ready — run 'Refresh prices from BFE' first".
