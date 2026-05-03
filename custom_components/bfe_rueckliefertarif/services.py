@@ -2496,7 +2496,7 @@ def _period_bounds(period: str) -> tuple[str, str] | None:
     """Parse ``YYYYQN`` or ``YYYY-MM`` → ``(start_iso, end_iso)`` (end inclusive
     last day). Returns ``None`` if unparseable. Used by the date-bounded
     "Configuration in effect: X → Y" group heading."""
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     s = period.strip()
     if "Q" in s:
