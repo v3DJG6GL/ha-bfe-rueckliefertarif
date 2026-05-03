@@ -667,11 +667,11 @@ class TestPerPeriodEditor:
         # import-time-bound load_tariffs from tdb. Patch both so all
         # paths see the synthetic db.
 
-    @pytest.mark.asyncio
-    async def test_renders_namespaced_fields_when_decls_differ(self, monkeypatch):
-        # Two rate windows with different user_inputs decls:
-        # 2026 has key=old_key, 2027 has key=new_key.
-        rates = [
+    def _two_decl_rates(self):
+        """Two rate windows with *different* user_inputs decls (old_key
+        vs new_key) — the namespaced/split-history scenario shared by
+        the two tests below."""
+        return [
             {
                 "valid_from": "2026-01-01", "valid_to": "2027-01-01",
                 "settlement_period": "quartal",
@@ -699,7 +699,12 @@ class TestPerPeriodEditor:
                 }],
             },
         ]
-        self._patch_synthetic_db(monkeypatch, rates)
+
+    @pytest.mark.asyncio
+    async def test_renders_namespaced_fields_when_decls_differ(self, monkeypatch):
+        # Two rate windows with different user_inputs decls:
+        # 2026 has key=old_key, 2027 has key=new_key.
+        self._patch_synthetic_db(monkeypatch, self._two_decl_rates())
 
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: []})
         # Step 1: pick syn + 2026-04-01 + kW=10
@@ -723,35 +728,7 @@ class TestPerPeriodEditor:
     @pytest.mark.asyncio
     async def test_save_splits_into_n_entries(self, monkeypatch):
         # Same setup as above; submit Step 2 → expect 2 history records.
-        rates = [
-            {
-                "valid_from": "2026-01-01", "valid_to": "2027-01-01",
-                "settlement_period": "quartal",
-                "power_tiers": [{
-                    "kw_min": 0, "kw_max": None,
-                    "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
-                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
-                }],
-                "user_inputs": [{
-                    "key": "old_key", "type": "enum", "default": "fix",
-                    "values": ["fix", "rmp"], "label_de": "Old",
-                }],
-            },
-            {
-                "valid_from": "2027-01-01", "valid_to": None,
-                "settlement_period": "quartal",
-                "power_tiers": [{
-                    "kw_min": 0, "kw_max": None,
-                    "base_model": "fixed_flat", "fixed_rp_kwh": 9.0,
-                    "hkn_rp_kwh": 0.0, "hkn_structure": "none",
-                }],
-                "user_inputs": [{
-                    "key": "new_key", "type": "enum", "default": "fix",
-                    "values": ["fix", "rmp"], "label_de": "New",
-                }],
-            },
-        ]
-        self._patch_synthetic_db(monkeypatch, rates)
+        self._patch_synthetic_db(monkeypatch, self._two_decl_rates())
 
         flow, _ = self._make_flow({OPT_CONFIG_HISTORY: []})
         await flow.async_step_add_pick_row({
