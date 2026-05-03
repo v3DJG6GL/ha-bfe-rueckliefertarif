@@ -746,11 +746,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
       Apex = await _loadApexScoped();
     } catch (err) {
       console.error("BFE card: ApexCharts load failed:", err);
-      const fallback = `<div class="chart-fallback">ApexCharts konnte nicht geladen werden: ${this._escape(err?.message || String(err))}<br><small>Hard-Refresh mit Ctrl+Shift+R hilft oft.</small></div>`;
-      const r = this.shadowRoot.querySelector("#chart-rate");
-      const s = this.shadowRoot.querySelector("#chart-stack");
-      if (r) r.innerHTML = fallback;
-      if (s) s.innerHTML = fallback;
+      this._setChartFallback(`<div class="chart-fallback">ApexCharts konnte nicht geladen werden: ${this._escape(err?.message || String(err))}<br><small>Hard-Refresh mit Ctrl+Shift+R hilft oft.</small></div>`);
       return;
     }
 
@@ -771,11 +767,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
       const hint = isCurrent
         ? "Keine Daten für gewählten Zeitraum — BFE-Veröffentlichung für das laufende Quartal steht noch aus."
         : "Keine Daten für gewählten Zeitraum.";
-      const empty = `<div class="chart-fallback">${this._escape(hint)}</div>`;
-      const r = this.shadowRoot.querySelector("#chart-rate");
-      const s = this.shadowRoot.querySelector("#chart-stack");
-      if (r) r.innerHTML = empty;
-      if (s) s.innerHTML = empty;
+      this._setChartFallback(`<div class="chart-fallback">${this._escape(hint)}</div>`);
       return;
     }
     const categories = sorted.map((r) => r.period);
@@ -940,6 +932,13 @@ class BfeTariffAnalysisCard extends HTMLElement {
     if (v == null) return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
+  }
+
+  _setChartFallback(html) {
+    const r = this.shadowRoot.querySelector("#chart-rate");
+    const s = this.shadowRoot.querySelector("#chart-stack");
+    if (r) r.innerHTML = html;
+    if (s) s.innerHTML = html;
   }
 
   // Trim already-sorted rows to the calendar window implied by the active
