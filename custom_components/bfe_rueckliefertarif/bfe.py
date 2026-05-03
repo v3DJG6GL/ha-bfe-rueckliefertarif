@@ -47,43 +47,42 @@ async def fetch_csv(session: aiohttp.ClientSession, url: str) -> str:
         return await resp.text()
 
 
+def _parse_pv_price(row: dict) -> BfePrice | None:
+    try:
+        return BfePrice(
+            chf_per_mwh=float(row["Price_pv_CHF_MWh"]),
+            days=int(row["Days"]),
+            volume_mwh=float(row["Volume_pv_MWh"]),
+        )
+    except (KeyError, ValueError):
+        return None
+
+
 def parse_quartalspreise(csv_text: str) -> dict[Quarter, BfePrice]:
     """Parse the quarterly CSV into {Quarter: BfePrice}. PV column only."""
     out: dict[Quarter, BfePrice] = {}
-    reader = csv.DictReader(io.StringIO(csv_text))
-    for row in reader:
+    for row in csv.DictReader(io.StringIO(csv_text)):
         year_raw = row.get("Year", "").strip()
         period_raw = (row.get("Period") or row.get("Quarter") or "").strip()
         if not year_raw or not period_raw:
             continue
         try:
             year = int(year_raw)
-        except ValueError:
-            continue
-        period = period_raw.upper().lstrip("Q")
-        try:
-            q_num = int(period)
+            q_num = int(period_raw.upper().lstrip("Q"))
         except ValueError:
             continue
         if not 1 <= q_num <= 4:
             continue
-        try:
-            price = float(row["Price_pv_CHF_MWh"])
-            volume = float(row["Volume_pv_MWh"])
-            days = int(row["Days"])
-        except (KeyError, ValueError):
-            continue
-        out[Quarter(year, q_num)] = BfePrice(
-            chf_per_mwh=price, days=days, volume_mwh=volume
-        )
+        price = _parse_pv_price(row)
+        if price is not None:
+            out[Quarter(year, q_num)] = price
     return out
 
 
 def parse_monatspreise(csv_text: str) -> dict[Month, BfePrice]:
     """Parse the monthly CSV into {Month: BfePrice}. PV column only."""
     out: dict[Month, BfePrice] = {}
-    reader = csv.DictReader(io.StringIO(csv_text))
-    for row in reader:
+    for row in csv.DictReader(io.StringIO(csv_text)):
         year_raw = row.get("Year", "").strip()
         month_raw = row.get("Month", "").strip()
         if not year_raw or not month_raw:
@@ -95,15 +94,9 @@ def parse_monatspreise(csv_text: str) -> dict[Month, BfePrice]:
             continue
         if not 1 <= month <= 12:
             continue
-        try:
-            price = float(row["Price_pv_CHF_MWh"])
-            volume = float(row["Volume_pv_MWh"])
-            days = int(row["Days"])
-        except (KeyError, ValueError):
-            continue
-        out[Month(year, month)] = BfePrice(
-            chf_per_mwh=price, days=days, volume_mwh=volume
-        )
+        price = _parse_pv_price(row)
+        if price is not None:
+            out[Month(year, month)] = price
     return out
 
 
