@@ -30,7 +30,7 @@ const HISTORY_QUARTERS_DEFAULT = 8;
 
 // Time range presets — map to service-call params.
 //
-// `group` (v0.21.9): semantic bucket for the chip rendering — one row per
+// `group`: semantic bucket for the chip rendering — one row per
 // group with a small label prefix (Aktuell / Letzte / Andere).
 //
 // `gran` (optional): natural granularity for that window. When set, picking
@@ -101,10 +101,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
     this._quarter = Math.floor(now.getMonth() / 3) + 1;
 
     // Chart-side state — independent of detail-view selectors.
-    // v0.21.8 — Custom preset now uses range_from_date/range_to_date
-    // (HTML5 date pickers); the legacy range_from/range_to year+quarter
-    // pair stays as a seed for the date pickers' default values on first
-    // open, but is no longer the source of truth for the service call.
+    // Custom preset uses range_from_date/range_to_date (HTML5 date pickers);
+    // the legacy range_from/range_to year+quarter pair stays as a seed for
+    // the date pickers' default values on first open, but is no longer the
+    // source of truth for the service call.
     this._chartState = {
       granularity: "quartal",
       range_preset: "last_8q",
@@ -139,9 +139,9 @@ class BfeTariffAnalysisCard extends HTMLElement {
     const curQ = Math.floor(now.getMonth() / 3) + 1;
 
     if (cs.range_preset === "custom") {
-      // v0.21.8 — derive quarter range from date pickers; client filter
-      // trims rows back down to the exact day window. Without dates yet,
-      // fall back to current quarter (empty filter renders the empty state).
+      // Derive quarter range from date pickers; client filter trims rows
+      // back down to the exact day window. Without dates yet, fall back to
+      // current quarter (empty filter renders the empty state).
       const from = cs.range_from_date ? new Date(cs.range_from_date + "T00:00") : null;
       const to   = cs.range_to_date   ? new Date(cs.range_to_date   + "T00:00") : null;
       if (!from || !to || isNaN(from) || isNaN(to)) {
@@ -185,18 +185,18 @@ class BfeTariffAnalysisCard extends HTMLElement {
       preset.params === "current_month" ||
       preset.params === "current_quarter"
     ) {
-      // v0.21.8 — fine-grained windows entirely inside the current quarter.
+      // Fine-grained windows entirely inside the current quarter.
       out.from_year = curYear; out.from_quarter = curQ;
       out.to_year = curYear;   out.to_quarter = curQ;
     } else if (preset.params === "last_week" || preset.params === "last_month") {
-      // v0.21.8 — previous week/month may straddle a quarter boundary.
+      // Previous week/month may straddle a quarter boundary.
       // Request both quarters; client filter trims to the exact window.
       const prevQYear = curQ === 1 ? curYear - 1 : curYear;
       const prevQ     = curQ === 1 ? 4           : curQ - 1;
       out.from_year = prevQYear; out.from_quarter = prevQ;
       out.to_year = curYear;     out.to_quarter = curQ;
     } else if (preset.params === "last_quarter") {
-      // v0.21.9 — previous quarter only (rolls into prev year for Q1).
+      // Previous quarter only (rolls into prev year for Q1).
       const prevQYear = curQ === 1 ? curYear - 1 : curYear;
       const prevQ     = curQ === 1 ? 4           : curQ - 1;
       out.from_year = prevQYear; out.from_quarter = prevQ;
@@ -486,7 +486,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
     const cfgToday = this._response.config || {};
     const rows = this._response.rows || [];
-    // v0.21.0 — active config follows the SELECTED period (not always today's).
+    // Active config follows the SELECTED period (not always today's).
     // Look for a row matching the chosen year+quarter; fall back to today's
     // config block if no row found (e.g., quarter not yet imported).
     const detailPeriod = `${this._year}Q${this._quarter}`;
@@ -515,10 +515,9 @@ class BfeTariffAnalysisCard extends HTMLElement {
     if (cfg.fixed_ht_rp_kwh != null) {
       html += this._configRow("HT/NT", `HT ${this._fmt(cfg.fixed_ht_rp_kwh, 2)} · NT ${this._fmt(cfg.fixed_nt_rp_kwh, 2)} Rp/kWh`);
     }
-    // v0.21.9 — Boni inline in the Konfiguration table (was its own section).
-    // Only renders when the chosen period actually had Boni; the at-period
-    // fallback fix above (line ~654) ensures past quarters without Boni
-    // don't leak today's list.
+    // Boni inline — only renders when the chosen period actually had Boni
+    // (the at-period fallback in _buildEffectiveConfig prevents today's
+    // list from leaking into past quarters that had none).
     const advertised = cfg.bonuses_active || [];
     if (advertised.length > 0) {
       const parts = advertised.map((b) => {
@@ -583,7 +582,6 @@ class BfeTariffAnalysisCard extends HTMLElement {
     html += `</select></label>`;
     html += `<button class="refresh chart-refresh">Aktualisieren</button>`;
     html += `</div>`;
-    // v0.21.9 — three labelled chip rows (Aktuell / Letzte / Andere).
     html += `<div class="chip-groups">`;
     for (const group of PRESET_GROUPS) {
       const groupPresets = RANGE_PRESETS.filter((p) => p.group === group.id);
@@ -599,9 +597,9 @@ class BfeTariffAnalysisCard extends HTMLElement {
     }
     html += `</div>`;
     const customHidden = this._chartState.range_preset === "custom" ? "" : " hidden";
-    // v0.21.8 — Custom uses HTML5 date pickers (was: Year+Quarter number
-    // inputs). Picking dates lets the user view Month/Week/Day windows.
-    // Service still receives quarter range; client filter trims to exact days.
+    // Custom uses HTML5 date pickers — lets the user view Month/Week/Day
+    // windows. Service still receives quarter range; client filter trims
+    // to exact days.
     const fromDateVal = this._chartState.range_from_date || "";
     const toDateVal   = this._chartState.range_to_date   || "";
     html += `<div class="custom-range${customHidden}">`;
@@ -610,7 +608,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
     html += `</div>`;
     html += `</section>`;
 
-    // History charts (v0.20.0)
+    // History charts
     const historyRows = this._history?.rows || [];
     const truncatedTo = this._history?.truncated_to_quarters;
     const originalReq = this._history?.original_quarters_requested;
@@ -624,11 +622,11 @@ class BfeTariffAnalysisCard extends HTMLElement {
       html += `<section><h3>Verlauf — Aufschlüsselung pro Periode</h3>`;
       html += `<div class="chart-host tall" id="chart-stack"></div>`;
       html += `</section>`;
-      // v0.21.11 — visible only when at least one displayed period was
-      // computed from the federal Mindestvergütung floor (running quarter,
-      // BFE not yet published). Shown beneath the charts as a single
-      // footnote rather than per-bar markers — keeps the visual signal
-      // unobtrusive while still being honest about the estimate.
+      // Visible only when at least one displayed period was computed from
+      // the federal Mindestvergütung floor (running quarter, BFE not yet
+      // published). Shown beneath the charts as a single footnote rather
+      // than per-bar markers — keeps the visual signal unobtrusive while
+      // still being honest about the estimate.
       html += `<div class="chart-estimate-footnote" hidden></div>`;
     } else if (this._history) {
       html += `<section><h3>Verlauf</h3><div class="empty">Keine Daten für gewählten Zeitraum.</div></section>`;
@@ -648,10 +646,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
     // Mount charts after innerHTML is set
     if (historyRows.length > 0) {
       this._renderCharts(historyRows);
-      // v0.21.11 — surface the running-quarter estimate hint when any of
-      // the displayed history rows was computed from the federal floor.
-      // Same wording as the existing detail-table footnote so users get a
-      // single shared explanation across both surfaces.
+      // Surface the running-quarter estimate hint when any of the displayed
+      // history rows was computed from the federal floor. Same wording as
+      // the detail-table footnote so users get a single shared explanation
+      // across both surfaces.
       const hasEst = historyRows.some((r) => r.is_current_estimate === true);
       const footEl = this.shadowRoot.querySelector(".chart-estimate-footnote");
       if (footEl) {
@@ -681,11 +679,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
       chip.addEventListener("click", () => {
         const presetId = chip.dataset.preset;
         this._chartState.range_preset = presetId;
-        // v0.21.8 — auto-set granularity to the preset's natural value
-        // (Heute → Stunde, Woche/Monat → Tag, Quartal → Monat). Quarter-
-        // aligned presets have no `gran` so the user's manual choice is
-        // preserved. Re-fetch because both granularity and quarter range
-        // likely changed.
+        // Auto-set granularity to the preset's natural value (Heute → Stunde,
+        // Woche/Monat → Tag, Quartal → Monat). Quarter-aligned presets have
+        // no `gran` so the user's manual choice is preserved. Re-fetch
+        // because both granularity and quarter range likely changed.
         const preset = RANGE_PRESETS.find((p) => p.id === presetId);
         if (preset?.gran) {
           this._chartState.granularity = preset.gran;
@@ -693,8 +690,8 @@ class BfeTariffAnalysisCard extends HTMLElement {
         this._fetch();
       });
     });
-    // v0.21.8 — Custom date pickers. Re-fetch on change because the chosen
-    // dates may need a different quarter range from the service.
+    // Custom date pickers. Re-fetch on change because the chosen dates may
+    // need a different quarter range from the service.
     fromDate?.addEventListener("change", (e) => {
       this._chartState.range_from_date = e.target.value || null;
       if (this._chartState.range_to_date) this._fetch();
@@ -725,8 +722,8 @@ class BfeTariffAnalysisCard extends HTMLElement {
       fixed_rp_kwh: row.fixed_rp_kwh_at_period ?? fallback.fixed_rp_kwh,
       fixed_ht_rp_kwh: row.fixed_ht_rp_kwh_at_period ?? fallback.fixed_ht_rp_kwh,
       fixed_nt_rp_kwh: row.fixed_nt_rp_kwh_at_period ?? fallback.fixed_nt_rp_kwh,
-      // v0.21.9 — when a historical row is missing this field (older imports
-      // that pre-date the at_period bonus snapshot), assume "no boni at that
+      // When a historical row is missing this field (older imports that
+      // pre-date the at_period bonus snapshot), assume "no boni at that
       // time" rather than leaking today's array into the past quarter's view.
       bonuses_active: row.bonuses_active_at_period ?? [],
       user_inputs: row.user_inputs_at_period ?? fallback.user_inputs,
@@ -765,10 +762,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
     });
     const sorted = this._filterHistoryToWindow(sortedAll, this._chartState);
     if (sorted.length === 0) {
-      // v0.21.10 — for current_* windows the most likely cause is that BFE
-      // hasn't published the in-progress quarter yet (publication lags ~6
-      // weeks after quarter end). Hint at it so the user doesn't think the
-      // chart is broken.
+      // For current_* windows the most likely cause is that BFE hasn't
+      // published the in-progress quarter yet (publication lags ~6 weeks
+      // after quarter end). Hint at it so the user doesn't think the chart
+      // is broken.
       const presetId = this._chartState.range_preset;
       const isCurrent = presetId && presetId.startsWith("current_");
       const hint = isCurrent
@@ -860,12 +857,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
           },
           dataLabels: { enabled: false },
           tooltip: {
-            // v0.21.0 — shared:true now works because intersect:false is set
-            // (was the missing piece in v0.20.2 that caused the API throw).
-            // v0.21.8 — custom HTML so we can show a combined Total row at
-            // the bottom (the effective Rückliefertarif for that period).
-            // Apex renders the tooltip outside our shadow root, so styles
-            // must be inline.
+            // Custom HTML so we can show a combined Total row at the bottom
+            // (the effective Rückliefertarif for that period). Apex renders
+            // the tooltip outside our shadow root, so styles must be inline.
+            // shared:true requires intersect:false to avoid an API throw.
             shared: true,
             intersect: false,
             custom: ({ series, dataPointIndex, w }) => {
@@ -947,11 +942,11 @@ class BfeTariffAnalysisCard extends HTMLElement {
     return Number.isFinite(n) ? n : null;
   }
 
-  // v0.21.8 — trim already-sorted rows to the calendar window implied by
-  // the active preset (or by the Custom date pickers). Quarter-aligned
-  // presets and an unset Custom (no dates picked) pass through unchanged.
-  // Day-aligned windows; sub-day skew (DST, UTC vs local) is invisible at
-  // this granularity.
+  // Trim already-sorted rows to the calendar window implied by the active
+  // preset (or by the Custom date pickers). Quarter-aligned presets and an
+  // unset Custom (no dates picked) pass through unchanged. Day-aligned
+  // windows; sub-day skew (DST, UTC vs local) is invisible at this
+  // granularity.
   _filterHistoryToWindow(rows, cs) {
     const presetId = cs.range_preset;
     const isCustomDated =
@@ -996,9 +991,9 @@ class BfeTariffAnalysisCard extends HTMLElement {
       from = new Date(now.getFullYear(), qStartMonth,     1);
       to   = new Date(now.getFullYear(), qStartMonth + 3, 1);
     } else if (presetId === "last_quarter") {
-      // v0.21.9 — previous quarter. JS Date constructor rolls negative
-      // months back into the previous year automatically (curQStartMonth - 3
-      // → -3 in Q1 → resolves to October of the previous year).
+      // Previous quarter. JS Date constructor rolls negative months back
+      // into the previous year automatically (curQStartMonth - 3 → -3 in
+      // Q1 → resolves to October of the previous year).
       const curQStartMonth = Math.floor(now.getMonth() / 3) * 3;
       from = new Date(now.getFullYear(), curQStartMonth - 3, 1);
       to   = new Date(now.getFullYear(), curQStartMonth,     1);
@@ -1033,14 +1028,12 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 
   getCardSize() {
-    // v0.21.0 — card grew with the new chart-controls section.
     return 26;
   }
 
   getLayoutOptions() {
-    // v0.21.8 — was 'static' through v0.21.7, which made HA's instance-method
-    // call invisible. The card fell back to the 1-column default and could
-    // not be resized. Adding grid_max_* exposes drag handles in Sections view.
+    // Must be an instance method (not static) for HA to find it; grid_max_*
+    // exposes drag handles in Sections view.
     return {
       grid_columns: 12,
       grid_rows: "auto",
@@ -1060,9 +1053,9 @@ class BfeTariffAnalysisCard extends HTMLElement {
   }
 }
 
-// v0.21.8 — minimal editor element so HA's edit-card panel renders cleanly
-// instead of the red "Visual editor not supported" notification. The card
-// has no editable options today; resize/position is handled by Sections.
+// Minimal editor element so HA's edit-card panel renders cleanly instead
+// of the red "Visual editor not supported" notification. The card has no
+// editable options today; resize/position is handled by Sections.
 class BfeTariffAnalysisCardEditor extends HTMLElement {
   setConfig(_config) { /* no editable options */ }
   set hass(_hass) {
@@ -1083,29 +1076,8 @@ if (!customElements.get("bfe-tariff-analysis-card-editor")) {
   customElements.define("bfe-tariff-analysis-card-editor", BfeTariffAnalysisCardEditor);
 }
 
-// v0.21.6 — continuous registration monitor (workaround for HA frontend bug).
-//
-// TODO(remove-when-ha-fixes-registry-wipe): when a future HA frontend
-// release stops wiping the customElements registry between our script's
-// register and the picker's query, drop this entire monitor + setInterval
-// + _bfeRecover and use a single customElements.define() at module top
-// (matching the standard HACS-card pattern). Test by removing the
-// setInterval call below; if the picker works on hard-refresh across
-// 5+ reloads with no "[BFE] registration was wiped" warnings, the HA
-// race is gone and this workaround can be retired. Confirmed against HA
-// 2026.4.4 — re-test on each major HA release.
-//
-// Diagnostics from v0.21.5 (DevTools after the picker's spinner-stuck error):
-//   customElements.get("bfe-tariff-analysis-card")          → undefined
-//   customElements.whenDefined("bfe-tariff-analysis-card")  → pending forever
-// even though our v0.21.5 verified-sync log fired immediately after define.
-// Conclusion: something wipes/replaces the customElements registry AFTER
-// our script registers but BEFORE the picker queries. v0.21.5's one-shot
-// polling stopped after first success and missed the wipe.
-//
-// Fix: monitor every 200ms forever. If our class is missing from the
-// registry, re-define. Cost is ~5 lookups/sec — negligible. First-success
-// fires once; subsequent wipes log so we can quantify the problem.
+// Continuous registration monitor — workaround for HA frontend bug where
+// lovelace-loader queries before our customElements.define() resolves.
 function _bfeDefine() {
   if (customElements.get("bfe-tariff-analysis-card") === BfeTariffAnalysisCard) {
     return false; // already present, no-op
@@ -1169,8 +1141,8 @@ console.info(
   "color: #4caf50; background: white; font-weight: 500;",
 );
 
-// v0.21.5 — recovery walk. Once registration actually sticks, walk the
-// DOM (incl. shadow roots) for:
+// Recovery walk — once registration actually sticks, walk the DOM (incl.
+// shadow roots) for:
 //   1. Dashboard error placeholders whose config references our card —
 //      dispatch ll-rebuild (HA's hui-card listens for this and rebuilds
 //      its slot, replacing the error with our newly-registered class).
@@ -1223,7 +1195,7 @@ function _loadApexScoped() {
     });
     // Wrap the UMD bundle in a Function() factory so its top-level scope
     // doesn't leak window.ApexCharts (which would conflict with
-    // RomRider/apexcharts-card's bundled copy — see v0.20.2 commit).
+    // RomRider/apexcharts-card's bundled copy).
     const factory = new Function(
       "module", "exports",
       code + "\nreturn (typeof module !== 'undefined' && module.exports) ? module.exports : (typeof ApexCharts !== 'undefined' ? ApexCharts : null);"
