@@ -40,8 +40,8 @@ class TariffConfig:
     plus the user's personal inputs (kW, Eigenverbrauch yes/no, HKN opt-in
     yes/no). The ``hkn_rp_kwh_resolved`` value is the JSON's HKN multiplied
     by 0 or 1 depending on whether the user opted in. ``user_inputs``
-    (Batch D) carries declared per-utility user toggles used by the
-    per-hour resolver to evaluate hkn_cases / bonuses[].when.
+    carries declared per-utility user toggles used by the per-hour resolver
+    to evaluate hkn_cases / bonuses[].when.
     """
 
     eigenverbrauch_aktiviert: bool
@@ -60,13 +60,13 @@ class HourRecord:
     compensation_chf: float  # kwh × rate / 100
     base_rp_kwh: float       # base after federal floor (and cap when binding)
     hkn_rp_kwh: float        # HKN bonus actually applied (0 if not opted in or cap-forfeited)
-    # v0.9.9 — stable bucket key when a quarter spans multiple
-    # (config × season) segments. ``None`` for legacy single-segment imports.
+    # Stable bucket key when a quarter spans multiple (config × season)
+    # segments. ``None`` for legacy single-segment imports.
     seg_id: str | None = None
-    # v0.11.0 (Batch D) — bonuses applied per hour (additive_rp_kwh +
-    # multiplier_pct deltas). Layered on top of the cap-binding (base + hkn);
-    # bonuses do not participate in cap-forfeit. 0.0 when the rate window
-    # has no bonuses or none match this hour.
+    # Bonuses applied per hour (additive_rp_kwh + multiplier_pct deltas).
+    # Layered on top of the cap-binding (base + hkn); bonuses do not
+    # participate in cap-forfeit. 0.0 when the rate window has no bonuses
+    # or none match this hour.
     bonus_rp_kwh: float = 0.0
 
 
@@ -128,8 +128,8 @@ def _apply_floor_cap_hkn_breakdown(
 
 def _resolve_hkn_for_hour(cfg: TariffConfig, season: str | None) -> float:
     """Per-hour HKN before cap. Honors ``hkn_aktiviert``, ``hkn_structure``,
-    and (Batch D) ``hkn_cases`` first-match-wins. Falls through to the
-    static ``rt.hkn_rp_kwh`` when no case matches.
+    and ``hkn_cases`` first-match-wins. Falls through to the static
+    ``rt.hkn_rp_kwh`` when no case matches.
     """
     if not cfg.hkn_aktiviert:
         return 0.0
@@ -154,9 +154,9 @@ def _resolve_bonuses_for_hour(
 ) -> float:
     """Sum the per-hour bonus rp/kWh contribution.
 
-    Batch D — applied additively on top of the cap-binding (base + hkn).
-    Bonuses are utility-discretionary extras outside BFE settlement, so
-    cap-forfeit semantics do not apply to them.
+    Applied additively on top of the cap-binding (base + hkn). Bonuses are
+    utility-discretionary extras outside BFE settlement, so cap-forfeit
+    semantics do not apply to them.
 
     Iterates ``rt.bonuses`` in declared order. For each:
     - ``applies_when="opt_in"`` with no ``when`` clause: skipped (no toggle
@@ -185,15 +185,9 @@ def _resolve_bonuses_for_hour_detailed(
     (skipped opt-in / when-clause-mismatched bonuses are omitted).
     """
     rt = cfg.resolved
-    # v0.22.0 — schema 1.5.0 supports tier-level bonuses as an additive
-    # extension. Iterate rate-level first, tier-level second; multiplier_pct
-    # stacking compounds in that order (rate's +5% applied first, tier's +3%
-    # multiplies the rate-modified base → +8.15% combined).
-    #
-    # Trap 3 (deferred): both lists' `when.season` evaluates against the
-    # SAME `season` argument. When a real utility ships divergent rate/tier
-    # seasonal month splits, this single-season call will need to fork
-    # (per-bonus scope). Currently no fixture exercises that.
+    # Iterate rate-level bonuses first, tier-level second; multiplier_pct
+    # stacking compounds in that order (rate's +5% applied first, tier's
+    # +3% multiplies the rate-modified base → +8.15% combined).
     all_bonuses = (rt.bonuses or ()) + (rt.tier_bonuses or ())
     if not all_bonuses:
         return 0.0, []
@@ -401,7 +395,7 @@ def _effective_rate_breakdown_at_hour(
 ) -> tuple[float, float, float, float]:
     """4-tuple ``(rate, base, applied_hkn, applied_bonus)`` for one hour.
 
-    Batch D: per-hour ``hkn_cases`` resolution, conditional ``bonuses[].when``
+    Per-hour ``hkn_cases`` resolution, conditional ``bonuses[].when``
     evaluation, and ``bonuses[].kind`` math (additive / multiplier) all
     happen here. ``rate == base + applied_hkn + applied_bonus``.
     """
@@ -412,8 +406,8 @@ def _effective_rate_breakdown_at_hour(
 
     if rt.base_model == "fixed_ht_nt":
         is_ht = classify_ht(hour_utc, rt.ht_window)
-        # Batch D: classify-only seasonal blocks (months but no rate keys)
-        # don't override the per-season HT/NT rates; fall back to the
+        # Classify-only seasonal blocks (months but no rate keys) don't
+        # override the per-season HT/NT rates; fall back to the
         # unconditional fixed_ht_rp_kwh / fixed_nt_rp_kwh.
         seasonal_rate_key = (
             f"{season}_{'ht' if is_ht else 'nt'}_rp_kwh" if season else None
@@ -433,7 +427,7 @@ def _effective_rate_breakdown_at_hour(
                     f"fixed_ht_rp_kwh and fixed_nt_rp_kwh"
                 )
     elif rt.base_model == "fixed_flat":
-        # Batch D: classify-only seasonal blocks fall back to fixed_rp_kwh.
+        # Classify-only seasonal blocks fall back to fixed_rp_kwh.
         seasonal_rate_key = f"{season}_rp_kwh" if season else None
         if season is not None and seasonal_rate_key in (rt.seasonal or {}):
             base = rt.seasonal[seasonal_rate_key]
@@ -560,7 +554,7 @@ def compute_breakdown_at(
       requested period — typically quarter midpoint)
 
     Includes all classic breakdown keys (utility, tariff_source, floor_label,
-    base_input_rp_kwh, effective_rp_kwh, etc.) plus v0.19.0 additions:
+    base_input_rp_kwh, effective_rp_kwh, etc.) plus applied-factor breakdown:
     ``season_now``, ``ht_nt_now``, ``applied_bonus_rp_kwh``,
     ``bonuses_applied`` (per-bonus contribution detail), ``bonuses_advertised``
     (informational list of all rate-window bonuses regardless of opt-in).
@@ -572,8 +566,8 @@ def compute_breakdown_at(
 
     floor = _effective_floor(rt)
     floor_value = floor if floor is not None else 0.0
-    # v0.22.0 — schema 1.5.0: cap activation = `cap_rp_kwh` set
-    # (resolver derived from non-empty `cap_rules` array).
+    # Cap activation = `cap_rp_kwh` set (resolver derived from non-empty
+    # `cap_rules` array).
     cap = rt.cap_rp_kwh
 
     per_hkn = _resolve_hkn_for_hour(cfg, season)
@@ -584,9 +578,9 @@ def compute_breakdown_at(
         cfg, season, base_after_floor, applied_hkn
     )
 
-    # v0.22.0 — display-side: advertise rate-level + tier-level bonuses
-    # together. Iteration order matches `_resolve_bonuses_for_hour_detailed`
-    # so per-bonus contributions in `bonuses_applied` align by index.
+    # Display-side: advertise rate-level + tier-level bonuses together.
+    # Iteration order matches `_resolve_bonuses_for_hour_detailed` so
+    # per-bonus contributions in `bonuses_applied` align by index.
     bonuses_advertised: list[dict] = []
     for b in (rt.bonuses or ()) + (rt.tier_bonuses or ()):
         kind = b.get("kind", "additive_rp_kwh")
@@ -645,7 +639,7 @@ def compute_breakdown_at(
             if hkn_gekuerzt_auf is not None
             else None
         ),
-        # v0.19.0 — additional applied-factor breakdown
+        # Additional applied-factor breakdown
         "season_now": season,
         "ht_nt_now": ("ht" if is_ht else "nt") if is_ht is not None else None,
         "applied_bonus_rp_kwh": round(applied_bonus, 4),
@@ -669,8 +663,8 @@ def _rate_rp_kwh_at_hour(
     Monthly mode: M1/M2 use monthly prices directly; M3 uses a derived rate
     such that the quarter total equals Q_kWh × Q_rate exactly. The closure
     invariant operates on ``rate_billing == base + applied_hkn`` — bonuses
-    (Batch D) sit on top per-hour and are computed separately, since they
-    are utility-discretionary extras outside BFE settlement.
+    sit on top per-hour and are computed separately, since they are
+    utility-discretionary extras outside BFE settlement.
     """
     q_rp = chf_per_mwh_to_rp_per_kwh(quarterly_price.chf_per_mwh)
 
@@ -740,8 +734,8 @@ def _rate_rp_kwh_at_hour(
 class QuarterSegment:
     """One contiguous (config × season) slice of a quarter.
 
-    v0.9.9 — splits a quarter into segments so OPT_CONFIG_HISTORY transitions
-    that fall mid-quarter, and seasonal-month boundaries that fall mid-quarter,
+    Splits a quarter into segments so OPT_CONFIG_HISTORY transitions that
+    fall mid-quarter, and seasonal-month boundaries that fall mid-quarter,
     each yield their own per-hour rate rather than rounding to quarter-start.
 
     ``seg_id`` is a stable bucketing key (used by ``_aggregate_by_period`` to
