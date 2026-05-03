@@ -12,3 +12,4 @@ build/
 *.log
 .claude/settings.local.json
 SIMPLIFY_NOTES.md
+SECURITY-REVIEW_NOTES.md
