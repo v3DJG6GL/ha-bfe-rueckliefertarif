@@ -804,7 +804,7 @@ class TestBonusesConfigBlock:
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
         assert "- **Bonuses:**" in body
-        assert "Eco: 1.50 Rp/kWh (always)" in body
+        assert "Eco: 1.50 Rp/kWh (immer)" in body
         assert "Winter+: 0.80 Rp/kWh (opt-in)" in body
 
     def test_config_block_omits_bonuses_when_none(self):
@@ -835,7 +835,7 @@ class TestBonusesConfigBlock:
         )
         report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=cfg)
         _, body = _format_recompute_notification(report)
-        assert "Snow: 2.00 Rp/kWh (always)" in body
+        assert "Snow: 2.00 Rp/kWh (immer)" in body
         assert "winter only" not in body
 
 
@@ -1684,7 +1684,7 @@ class TestBonusPercentFormatting:
             {"kind": "multiplier_pct", "name": "Curtail-15",
              "multiplier_pct": 85.0, "applies_when": "always"},
         ])
-        assert any("Curtail-15: −15.00% (always)" in line for line in lines)
+        assert any("Curtail-15: −15.00% (immer)" in line for line in lines)
 
     def test_bonus_note_is_dropped(self):
         lines = _render_bonuses_lines([
@@ -1693,7 +1693,7 @@ class TestBonusPercentFormatting:
              "note": "long German note that should not appear"},
         ])
         rendered = "\n".join(lines)
-        assert "Snow: 2.00 Rp/kWh (always)" in rendered
+        assert "Snow: 2.00 Rp/kWh (immer)" in rendered
         assert "long German note" not in rendered
 
     def test_bonus_when_clause_dropped_v0_17_0(self):
@@ -1717,6 +1717,57 @@ class TestBonusPercentFormatting:
         # No when-clause leak.
         assert "when " not in rendered
         assert "Wahltarif TOP-40 abonniert" not in rendered
+
+    def test_season_winter_only_renders_winter_label(self):
+        # v0.23.3 — season-gated bonus without applies_when (e.g. AEW
+        # Spezialbonus) renders ``(Winter)``, matching the JS card.
+        lines = _render_bonuses_lines([
+            {"kind": "additive_rp_kwh", "name": "Spezialbonus",
+             "rate_rp_kwh": 15.00,
+             "when": {"season": "winter"}},
+        ])
+        assert any("Spezialbonus: 15.00 Rp/kWh (Winter)" in line for line in lines)
+
+    def test_season_summer_only_renders_summer_label(self):
+        lines = _render_bonuses_lines([
+            {"kind": "additive_rp_kwh", "name": "SommerPlus",
+             "rate_rp_kwh": 3.00,
+             "when": {"season": "summer"}},
+        ])
+        assert any("SommerPlus: 3.00 Rp/kWh (Sommer)" in line for line in lines)
+
+    def test_user_inputs_only_renders_bedingt_label(self):
+        # User-input-gated bonus without ``applies_when`` renders
+        # ``(bedingt)`` — surfaces that the bonus is conditional without
+        # leaking the user_inputs values themselves.
+        lines = _render_bonuses_lines([
+            {"kind": "additive_rp_kwh", "name": "Cond",
+             "rate_rp_kwh": 1.00,
+             "when": {"user_inputs": {"foo": "bar"}}},
+        ])
+        assert any("Cond: 1.00 Rp/kWh (bedingt)" in line for line in lines)
+
+    def test_always_with_winter_renders_winter_label_only(self):
+        # ``applies_when=always`` + season-gating: just ``(Winter)``.
+        # Old behavior was ``(always)``; the season tag is more accurate.
+        lines = _render_bonuses_lines([
+            {"kind": "additive_rp_kwh", "name": "AutoWinter",
+             "rate_rp_kwh": 5.00, "applies_when": "always",
+             "when": {"season": "winter"}},
+        ])
+        assert any("AutoWinter: 5.00 Rp/kWh (Winter)" in line for line in lines)
+
+    def test_opt_in_with_winter_combines_labels(self):
+        # Opt-in + season → combined ``(opt-in, Winter)``. ``bedingt`` is
+        # suppressed when ``opt-in`` is set (opt-in already implies a
+        # user-input gate; doubling reads as noise).
+        lines = _render_bonuses_lines([
+            {"kind": "additive_rp_kwh", "name": "OptWinter",
+             "rate_rp_kwh": 4.00, "applies_when": "opt_in",
+             "when": {"season": "winter",
+                      "user_inputs": {"foo": "bar"}}},
+        ])
+        assert any("OptWinter: 4.00 Rp/kWh (opt-in, Winter)" in line for line in lines)
 
     def test_when_summary_label_translates_enum_value(self):
         s = _render_when_summary(

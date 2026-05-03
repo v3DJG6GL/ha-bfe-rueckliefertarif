@@ -690,12 +690,16 @@ def _render_bonuses_lines(
 ) -> list[str]:
     """Render rate-window-level bonuses as recompute-block bullets.
 
-    Multiplier_pct rendered as ``+8.00%`` / ``−15.00%``. Renders kind +
-    rate value plus ``(opt-in)`` / ``(always)`` ``applies_when``
-    annotation. The when-clause is intentionally not rendered: it
-    duplicated the ``Active user inputs:`` line above and read as current
-    state (e.g. ``when ...=Ja`` while the user actually has Nein), which
-    confused users.
+    Multiplier_pct rendered as ``+8.00%`` / ``−15.00%``. Annotation
+    reflects both ``applies_when`` and the abstract category of
+    ``when`` (season → ``(Sommer)``/``(Winter)``; user_inputs →
+    ``(bedingt)``), alone or combined. The *content* of
+    ``when.user_inputs`` is intentionally not rendered: that would
+    duplicate the ``Active user inputs:`` line above and read as
+    current state (e.g. ``when ...=Ja`` while the user actually has
+    Nein), which confused users in v0.16.x. Mirrors the JS card's
+    logic in ``bfe-tariff-analysis-card.js`` so notification and
+    card agree.
 
     Returns ``[]`` when ``bonuses`` is empty / None.
     """
@@ -722,13 +726,28 @@ def _render_bonuses_lines(
                 if isinstance(rate, (int, float)) and not isinstance(rate, bool)
                 else "—"
             )
+        # Mirror the JS card's annotation logic: surface season-gating
+        # (`Sommer`/`Winter`), user-input-gating (`bedingt`), and opt-in,
+        # alone or combined. Keeps the v0.17.0 contract — the *content*
+        # of `when.user_inputs` is never rendered (that would duplicate
+        # the "Active user inputs" line above and contradict it under
+        # Nein/Ja state); only the abstract category tag `(bedingt)`.
+        when = b.get("when") or {}
+        season = when.get("season") if isinstance(when, dict) else None
+        has_user_inputs = isinstance(when, dict) and bool(when.get("user_inputs"))
         applies = b.get("applies_when")
-        if applies == "always":
-            applies_part = " (always)"
-        elif applies == "opt_in":
-            applies_part = " (opt-in)"
-        else:
-            applies_part = ""
+        labels: list[str] = []
+        if applies == "opt_in":
+            labels.append("opt-in")
+        if season == "summer":
+            labels.append("Sommer")
+        elif season == "winter":
+            labels.append("Winter")
+        if has_user_inputs and applies != "opt_in":
+            labels.append("bedingt")
+        if not labels:
+            labels.append("immer")
+        applies_part = f" ({', '.join(labels)})"
         lines.append(f"  - {name}: {value_str}{applies_part}")
     return lines
 
