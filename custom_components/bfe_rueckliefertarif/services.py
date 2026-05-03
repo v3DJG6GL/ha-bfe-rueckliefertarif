@@ -2215,6 +2215,17 @@ _RATE_SUBLABELS: dict[str, dict[str, str]] = {
 }
 
 
+def _render_hkn_optin_line(hkn_optin, hkn_rp_kwh) -> str:
+    """Single bullet for HKN opt-in state (Yes / No / —, with rate when set)."""
+    if hkn_optin:
+        if hkn_rp_kwh is not None:
+            return f"    - **HKN opt-in:** Yes ({hkn_rp_kwh:.2f} Rp/kWh additive)"
+        return "    - **HKN opt-in:** Yes"
+    if hkn_optin is False:
+        return "    - **HKN opt-in:** No"
+    return "    - **HKN opt-in:** —"
+
+
 def _render_tariff_model_lines(c: dict) -> list[str]:
     """Render the Tariff-model bullet plus localised sub-bullets for rates
     and settlement period. Returns ``[]`` when ``base_model`` is missing.
@@ -2361,18 +2372,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     hkn_structure = c.get("hkn_structure")
     hkn_optin = c.get("hkn_optin")
     if hkn_structure == "additive_optin":
-        if hkn_optin:
-            hkn_rp = c.get("hkn_rp_kwh")
-            if hkn_rp is not None:
-                config_subs.append(
-                    f"    - **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
-                )
-            else:
-                config_subs.append("    - **HKN opt-in:** Yes")
-        elif hkn_optin is False:
-            config_subs.append("    - **HKN opt-in:** No")
-        else:
-            config_subs.append("    - **HKN opt-in:** —")
+        config_subs.append(_render_hkn_optin_line(hkn_optin, c.get("hkn_rp_kwh")))
     elif hkn_structure == "bundled":
         config_subs.append(
             "    - **HKN:** bundled in base rate (no opt-in available)"
@@ -2381,18 +2381,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
         config_subs.append("    - **HKN:** not paid by utility")
     else:
         # Legacy snapshot without hkn_structure.
-        if hkn_optin:
-            hkn_rp = c.get("hkn_rp_kwh")
-            if hkn_rp is not None:
-                config_subs.append(
-                    f"    - **HKN opt-in:** Yes ({hkn_rp:.2f} Rp/kWh additive)"
-                )
-            else:
-                config_subs.append("    - **HKN opt-in:** Yes")
-        elif hkn_optin is False:
-            config_subs.append("    - **HKN opt-in:** No")
-        else:
-            config_subs.append("    - **HKN opt-in:** —")
+        config_subs.append(_render_hkn_optin_line(hkn_optin, c.get("hkn_rp_kwh")))
 
     # Each user_input becomes its own sub-bullet under
     # Configuration. Localised label via user_input_label; value via
