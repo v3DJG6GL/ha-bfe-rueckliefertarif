@@ -249,33 +249,20 @@ def _apply_floor_cap_hkn_bonus_breakdown(
     return rate_billing + applied_bonus, base_after, applied_hkn, applied_bonus
 
 
-def _season_at(
-    rt: ResolvedTariff,
-    hour_utc: datetime,
-    *,
-    prefer_tier_seasonal: bool = False,
-) -> str | None:
-    """Hour's season per ``rt.seasonal`` (or ``rt.tier_seasonal`` when
-    ``prefer_tier_seasonal=True`` and the tier has its own seasonal block).
+def _season_at(rt: ResolvedTariff, hour_utc: datetime) -> str | None:
+    """Hour's season per ``rt.seasonal``, or ``None`` when no seasonal block.
 
-    v0.22.0 (Decision 4) — base-rate resolution callers pass
-    ``prefer_tier_seasonal=True`` so a tier's seasonal override shifts the
-    base rate per-hour. All other callers (cap binding, HKN cases, bonus
-    when-clauses) leave the kwarg False so they pivot on the rate-level
-    season — keeping the cap calculation a global utility constraint.
-    Returns ``None`` when no seasonal overlay applies (or only one of
-    rate/tier is set and the other is the chosen scope).
+    For ``base_model == "fixed_seasonal"`` the resolver writes the tier's
+    seasonal block into ``rt.seasonal``, so the same lookup transparently
+    yields the tier-level calendar for those tiers.
     """
-    seasonal = (
-        rt.tier_seasonal if (prefer_tier_seasonal and rt.tier_seasonal) else rt.seasonal
-    )
-    if seasonal is None:
+    if rt.seasonal is None:
         return None
     from .tariff import classify_season
     return classify_season(
         hour_utc,
-        seasonal["summer_months"],
-        seasonal["winter_months"],
+        rt.seasonal["summer_months"],
+        rt.seasonal["winter_months"],
     )
 
 
@@ -392,6 +379,20 @@ def _effective_rate_at_hour(
             )
         return _apply_floor_cap_hkn(base, cfg)
 
+    if rt.base_model == "fixed_seasonal":
+        if season is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_seasonal requires a tier-level "
+                f"seasonal block with summer_months/winter_months"
+            )
+        key = f"{season}_rp_kwh"
+        base = (rt.seasonal or {}).get(key)
+        if base is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_seasonal × {season} missing {key}"
+            )
+        return _apply_floor_cap_hkn(base, cfg)
+
     return _effective_rate(cfg, reference_rp_kwh)
 
 
@@ -407,13 +408,7 @@ def _effective_rate_breakdown_at_hour(
     from .tariff import classify_ht
 
     rt = cfg.resolved
-    # v0.22.0 — base-rate resolution honors `tier_seasonal` override
-    # (Decision 4 half: tier-level seasonal can shift the base rate
-    # per-hour). Per Trap 3 (deferred), the same `season` flows downstream
-    # into HKN cases / bonus when-clauses; splitting that into rate-level
-    # season for cap-binding evaluation is left for a future release —
-    # no real utility today has divergent rate/tier seasonal splits.
-    season = _season_at(rt, hour_utc, prefer_tier_seasonal=True)
+    season = _season_at(rt, hour_utc)
 
     if rt.base_model == "fixed_ht_nt":
         is_ht = classify_ht(hour_utc, rt.ht_window)
@@ -453,6 +448,18 @@ def _effective_rate_breakdown_at_hour(
                     f"{rt.utility_key}: fixed_flat requires fixed_rp_kwh"
                 )
             base = rt.fixed_rp_kwh
+    elif rt.base_model == "fixed_seasonal":
+        if season is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_seasonal requires a tier-level "
+                f"seasonal block with summer_months/winter_months"
+            )
+        key = f"{season}_rp_kwh"
+        base = (rt.seasonal or {}).get(key)
+        if base is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_seasonal × {season} missing {key}"
+            )
     elif rt.base_model in ("rmp_quartal", "rmp_monat"):
         base = reference_rp_kwh
     else:
@@ -479,8 +486,7 @@ def _resolve_base_at_hour(
     from .tariff import classify_ht
 
     rt = cfg.resolved
-    # v0.22.0 — base-rate path; honor tier_seasonal override.
-    season = _season_at(rt, hour_utc, prefer_tier_seasonal=True)
+    season = _season_at(rt, hour_utc)
     is_ht: bool | None = None
 
     if rt.base_model == "fixed_ht_nt":
@@ -521,6 +527,19 @@ def _resolve_base_at_hour(
                 )
             base = rt.fixed_rp_kwh
             label = "fixed_flat"
+    elif rt.base_model == "fixed_seasonal":
+        if season is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_seasonal requires a tier-level "
+                f"seasonal block with summer_months/winter_months"
+            )
+        key = f"{season}_rp_kwh"
+        base = (rt.seasonal or {}).get(key)
+        if base is None:
+            raise ValueError(
+                f"{rt.utility_key}: fixed_seasonal × {season} missing {key}"
+            )
+        label = f"fixed_seasonal_{season}"
     elif rt.base_model in ("rmp_quartal", "rmp_monat"):
         base = reference_rp_kwh
         label = rt.base_model
@@ -659,7 +678,7 @@ def _rate_rp_kwh_at_hour(
     # truly flat (fixed_flat) or per-hour HT/NT (fixed_ht_nt, switched on
     # local time inside _effective_rate_at_hour). Only RMP-based base_models
     # need the M1/M2/M3 monthly-price decomposition.
-    is_fixed_base = cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt")
+    is_fixed_base = cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt", "fixed_seasonal")
     if is_fixed_base or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
         return _effective_rate_breakdown_at_hour(cfg, q_rp, hour_utc)
 
@@ -792,7 +811,7 @@ def compute_quarter_plan_segmented(
             # invariant only holds within each segment's hours, not across
             # the whole quarter (different cfgs → different effective rates).
             q_rp = chf_per_mwh_to_rp_per_kwh(quarterly_price.chf_per_mwh)
-            is_fixed_base = seg.cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt")
+            is_fixed_base = seg.cfg.resolved.base_model in ("fixed_flat", "fixed_ht_nt", "fixed_seasonal")
             if is_fixed_base or billing_mode != ABRECHNUNGS_RHYTHMUS_MONAT:
                 rate_rp, base_rp, hkn_rp, bonus_rp = _effective_rate_breakdown_at_hour(
                     seg.cfg, q_rp, h

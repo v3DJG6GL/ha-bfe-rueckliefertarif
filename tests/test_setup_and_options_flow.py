@@ -1355,10 +1355,11 @@ class TestFirstTimeSetupSplitFlow:
         assert result["step_id"] == "tariff_details"
 
     @pytest.mark.asyncio
-    async def test_details_aew_kw50_filters_enum_to_rmp_only(self):
-        # AEW kW=50: tier 1 covers (kw 30–3000) gated on
-        # "rmp"; tier 0 (kw 0–30) doesn't cover. Page 2's
-        # fixpreis_rmp dropdown should show only "rmp".
+    async def test_details_aew_kw50_excludes_fixpreis_only(self):
+        # v1.6.0 AEW: at kW=50 the fixed_flat fixpreis tier (2..30) is OUT,
+        # but rmp_quartal (2..3000) AND both fixed_seasonal tiers (0..∞)
+        # remain valid. The fixpreis_rmp dropdown should expose three
+        # options — everything except "fixpreis".
         flow = self._make_flow("aew")
         flow._setup_pick = {
             CONF_ENERGIEVERSORGER: "aew",
@@ -1367,20 +1368,19 @@ class TestFirstTimeSetupSplitFlow:
         }
         result = await flow.async_step_tariff_details(None)
         assert result["step_id"] == "tariff_details"
-        # Schema's fixpreis_rmp options: only "rmp".
         for k, v in result["data_schema"].schema.items():
             if str(k) == "fixpreis_rmp":
                 opts = [opt["value"] for opt in v.config["options"]]
-                assert opts == ["rmp"]
+                assert sorted(opts) == sorted(["rmp", "spezial", "spezialmitbonus"])
                 break
         else:
             raise AssertionError("fixpreis_rmp not in schema")
 
     @pytest.mark.asyncio
-    async def test_details_aew_kw15_offers_both_enum_options(self):
-        # v1.5.0 AEW data: at kW=15 BOTH tiers cover (fixed_flat 2..30 AND
-        # rmp_quartal 2..3000), so the kw-aware filter should expose BOTH
-        # enum options.
+    async def test_details_aew_kw15_offers_all_four_options(self):
+        # v1.6.0 AEW data: at kW=15 all four tiers cover
+        # (fixed_flat 2..30, rmp_quartal 2..3000, fixed_seasonal 0..∞ ×2),
+        # so the kw-aware filter should expose all four enum options.
         flow = self._make_flow("aew")
         flow._setup_pick = {
             CONF_ENERGIEVERSORGER: "aew",
@@ -1391,7 +1391,9 @@ class TestFirstTimeSetupSplitFlow:
         for k, v in result["data_schema"].schema.items():
             if str(k) == "fixpreis_rmp":
                 opts = [opt["value"] for opt in v.config["options"]]
-                assert sorted(opts) == ["fixpreis", "rmp"]
+                assert sorted(opts) == sorted([
+                    "fixpreis", "rmp", "spezial", "spezialmitbonus"
+                ])
                 break
         else:
             raise AssertionError("fixpreis_rmp not in schema")

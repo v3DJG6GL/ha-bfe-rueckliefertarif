@@ -314,16 +314,17 @@ class TestResolveTariffAt:
         assert rt.cap_rp_kwh == 5.40
 
     def test_aew_fixpreis_via_user_inputs(self, db):
-        # AEW unified user_input gates fixed_flat vs rmp_quartal tiers.
-        # v1.5.0 bundled data: key "fixpreis_rmp" with enum values
-        # "fixpreis"/"rmp"; the fixed_flat tier covers 2..30 kW.
+        # AEW unified user_input gates fixed_flat vs rmp_quartal vs
+        # fixed_seasonal tiers. v1.6.0 bundled data: key "fixpreis_rmp"
+        # with four enum values; the fixed_flat tier covers 2..30 kW
+        # and carries an additive HKN bonus.
         rt = resolve_tariff_at(
             "aew", date(2026, 4, 1), kw=10.0, eigenverbrauch=True,
             user_inputs={"fixpreis_rmp": "fixpreis"}, data=db,
         )
         assert rt.base_model == "fixed_flat"
         assert rt.fixed_rp_kwh == 8.20
-        assert rt.hkn_structure == "bundled"
+        assert rt.hkn_structure == "additive_optin"
         assert rt.notes is not None and len(rt.notes) >= 1
         assert rt.notes[0]["severity"] == "info"
         assert "fix" in rt.notes[0]["text"]["de"].lower()
@@ -1714,36 +1715,11 @@ class TestSchema150HknDefaultsInheritance:
         assert rt.hkn_rp_kwh == 0.0
 
 
-class TestSchema150TierLevelOverrides:
-    """v0.22.0 — schema 1.5.0 optional tier-level ``seasonal`` and
-    ``bonuses`` overrides. Both are additive: tier_seasonal overrides
-    rate-level seasonal for base-rate resolution; tier_bonuses concatenate
-    after rate-level bonuses at evaluation time."""
-
-    def test_resolve_loads_tier_seasonal(self):
-        tier_seasonal = {
-            "summer_months": [4, 5, 6, 7, 8, 9],
-            "winter_months": [10, 11, 12, 1, 2, 3],
-            "summer_rp_kwh": 6.0,
-            "winter_rp_kwh": 9.0,
-        }
-        synthetic = _synthetic_db("synth", [{
-            "valid_from": "2026-01-01", "valid_to": None,
-            "settlement_period": "quartal",
-            "power_tiers": [{
-                "kw_min": 0, "kw_max": None,
-                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
-                "hkn_structure": "none",
-                "seasonal": tier_seasonal,
-            }],
-        }])
-        rt = resolve_tariff_at(
-            "synth", date(2026, 4, 1), kw=10.0,
-            eigenverbrauch=True, data=synthetic,
-        )
-        assert rt.tier_seasonal == tier_seasonal
-        # Rate-level seasonal stays untouched (None in this fixture).
-        assert rt.seasonal is None
+class TestSchema160TierLevelBonuses:
+    """v0.23.0 — schema 1.6.0 optional tier-level ``bonuses`` overlay.
+    Concatenated after rate-level bonuses at evaluation time. (The v0.22.0
+    ``tier_seasonal`` companion was dropped — see TestFixedSeasonalResolver
+    for the new dispatch model.)"""
 
     def test_resolve_loads_tier_bonuses_as_tuple(self):
         tier_bonus = {
@@ -1768,7 +1744,7 @@ class TestSchema150TierLevelOverrides:
         # Rate-level bonuses untouched.
         assert rt.bonuses is None
 
-    def test_tier_overrides_default_to_none_when_absent(self):
+    def test_tier_bonuses_default_to_none_when_absent(self):
         synthetic = _synthetic_db("synth", [{
             "valid_from": "2026-01-01", "valid_to": None,
             "settlement_period": "quartal",
@@ -1782,7 +1758,6 @@ class TestSchema150TierLevelOverrides:
             "synth", date(2026, 4, 1), kw=10.0,
             eigenverbrauch=True, data=synthetic,
         )
-        assert rt.tier_seasonal is None
         assert rt.tier_bonuses is None
 
     def test_tier_bonuses_empty_list_collapses_to_none(self):
@@ -1801,3 +1776,106 @@ class TestSchema150TierLevelOverrides:
             eigenverbrauch=True, data=synthetic,
         )
         assert rt.tier_bonuses is None
+
+
+class TestFixedSeasonalResolver:
+    """v0.23.0 — schema 1.6.0 ``base_model: "fixed_seasonal"`` makes the
+    tier-level seasonal block authoritative for both prices AND the
+    summer/winter calendar (Q1 decision). Rate-level seasonal is
+    irrelevant for these tiers."""
+
+    _SEASONAL = {
+        "summer_months": [4, 5, 6, 7, 8, 9],
+        "winter_months": [10, 11, 12, 1, 2, 3],
+        "summer_rp_kwh": 20.0,
+        "winter_rp_kwh": 30.0,
+    }
+
+    def test_fixed_seasonal_writes_tier_seasonal_into_rt_seasonal(self):
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_seasonal",
+                "hkn_structure": "none",
+                "seasonal": self._SEASONAL,
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.base_model == "fixed_seasonal"
+        assert rt.seasonal == self._SEASONAL
+
+    def test_fixed_seasonal_ignores_rate_level_seasonal(self):
+        # Even when the rate carries its own seasonal block, fixed_seasonal
+        # tier overrides it for this resolution. (Rate-level seasonal would
+        # mean different summer/winter month splits — irrelevant here.)
+        rate_seasonal = {"summer_months": [7], "winter_months": [1]}
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "seasonal": rate_seasonal,
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_seasonal",
+                "hkn_structure": "none",
+                "seasonal": self._SEASONAL,
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.seasonal == self._SEASONAL
+        assert rt.seasonal != rate_seasonal
+
+    def test_non_fixed_seasonal_uses_rate_level_seasonal(self):
+        # Regression guard: tier-level seasonal on non-fixed_seasonal tiers
+        # MUST be ignored (the v0.22.0 overlay convention is gone).
+        rate_seasonal = {
+            "summer_months": [4, 5, 6, 7, 8, 9],
+            "winter_months": [10, 11, 12, 1, 2, 3],
+        }
+        synthetic = _synthetic_db("synth", [{
+            "valid_from": "2026-01-01", "valid_to": None,
+            "settlement_period": "quartal",
+            "seasonal": rate_seasonal,
+            "power_tiers": [{
+                "kw_min": 0, "kw_max": None,
+                "base_model": "fixed_flat", "fixed_rp_kwh": 8.0,
+                "hkn_structure": "none",
+            }],
+        }])
+        rt = resolve_tariff_at(
+            "synth", date(2026, 4, 1), kw=10.0,
+            eigenverbrauch=True, data=synthetic,
+        )
+        assert rt.base_model == "fixed_flat"
+        assert rt.seasonal == rate_seasonal
+
+    def test_aew_2026_spezial_resolves_to_fixed_seasonal(self, db):
+        rt = resolve_tariff_at(
+            "aew", date(2026, 4, 1), kw=15.0, eigenverbrauch=True,
+            user_inputs={"fixpreis_rmp": "spezial"}, data=db,
+        )
+        assert rt.base_model == "fixed_seasonal"
+        assert rt.seasonal["summer_rp_kwh"] == 20.0
+        assert rt.seasonal["winter_rp_kwh"] == 30.0
+        assert rt.hkn_rp_kwh == 15.0
+        assert rt.hkn_structure == "additive_optin"
+
+    def test_aew_2026_spezialmitbonus_carries_winter_bonus(self, db):
+        rt = resolve_tariff_at(
+            "aew", date(2026, 4, 1), kw=15.0, eigenverbrauch=True,
+            user_inputs={"fixpreis_rmp": "spezialmitbonus"}, data=db,
+        )
+        assert rt.base_model == "fixed_seasonal"
+        assert rt.tier_bonuses is not None
+        assert len(rt.tier_bonuses) == 1
+        bonus = rt.tier_bonuses[0]
+        assert bonus["kind"] == "additive_rp_kwh"
+        assert bonus["rate_rp_kwh"] == 15.0
+        assert bonus["when"]["season"] == "winter"

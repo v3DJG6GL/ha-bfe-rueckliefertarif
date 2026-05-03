@@ -125,13 +125,13 @@ class ResolvedTariff:
     hkn_structure_default: str = "none"
     hkn_rp_kwh_default: float | None = None
 
-    # v0.22.0 — schema 1.5.0 tier-level overrides for seasonal classification
-    # and bonuses (both additive). Tier-level seasonal only affects BASE-RATE
-    # resolution per-hour (Decision 4); cap-binding still pivots on rate-level
-    # ``seasonal``. Tier-level bonuses concatenate AFTER rate-level bonuses;
-    # ``multiplier_pct`` stacking is multiplicative (rate first, then tier
-    # compounds on the rate-modified base).
-    tier_seasonal: dict | None = None
+    # v0.23.0 — schema 1.6.0 tier-level bonuses (additive). Concatenated
+    # AFTER rate-level bonuses; ``multiplier_pct`` stacking is multiplicative
+    # (rate first, then tier compounds on the rate-modified base).
+    # Tier-level seasonal-as-overlay (v0.22.0 ``tier_seasonal``) was dropped:
+    # ``base_model == "fixed_seasonal"`` now signals tier-level seasonal as
+    # the authoritative base price, and the resolver writes that block into
+    # ``seasonal`` directly.
     tier_bonuses: tuple[dict, ...] | None = None
 
 
@@ -402,6 +402,7 @@ _TARIFF_MODEL_LABELS: dict[str, dict] = {
         ("fixed_flat", True): "Fixpreis (saisonal)",
         ("fixed_ht_nt", False): "Fixpreis (HT/NT)",
         ("fixed_ht_nt", True): "Fixpreis (HT/NT, saisonal)",
+        "fixed_seasonal": "Saisonal (Sommer/Winter)",
         "rmp_quartal": "Referenzmarktpreis (Quartal)",
         "rmp_monat": "Referenzmarktpreis (Monat)",
     },
@@ -410,6 +411,7 @@ _TARIFF_MODEL_LABELS: dict[str, dict] = {
         ("fixed_flat", True): "Fixed flat rate (seasonal)",
         ("fixed_ht_nt", False): "Fixed HT/NT rate",
         ("fixed_ht_nt", True): "Fixed HT/NT rate (seasonal)",
+        "fixed_seasonal": "Seasonal (summer/winter)",
         "rmp_quartal": "Reference market price (quarterly)",
         "rmp_monat": "Reference market price (monthly)",
     },
@@ -724,6 +726,13 @@ def resolve_tariff_at(
         )
 
     seasonal = rate.get("seasonal")
+    # v0.23.0 — schema 1.6.0: ``base_model == "fixed_seasonal"`` makes the
+    # tier-level seasonal block the authoritative source of both prices and
+    # the summer/winter calendar (per Q1 decision). Rate-level seasonal is
+    # ignored for these tiers. The schema's allOf rule guarantees the tier
+    # has a seasonal block when this base_model is selected.
+    if tier["base_model"] == "fixed_seasonal":
+        seasonal = tier["seasonal"]
     # Batch D: seasonal blocks now serve two purposes — (1) per-season rate
     # variation for fixed_flat / fixed_ht_nt (legacy), and (2) season
     # classification for ``hkn_cases[].when.season`` / ``bonuses[].when.season``
@@ -801,13 +810,11 @@ def resolve_tariff_at(
         raw_hkn = rate_hkn_rp_kwh_default
     hkn_rp_kwh_value = float(raw_hkn) if raw_hkn is not None else 0.0
 
-    # v0.22.0 — schema 1.5.0 tier-level seasonal + bonuses overrides.
-    # Both are optional and additive: ``tier_seasonal`` overrides
-    # rate-level ``seasonal`` for base-rate resolution only (cap binding
-    # still uses rate-level per Decision 4); ``tier_bonuses`` is
-    # concatenated after rate-level ``bonuses`` at evaluation time
-    # (multiplier_pct stacks multiplicatively in iteration order).
-    tier_seasonal = tier.get("seasonal")
+    # v0.23.0 — schema 1.6.0 tier-level bonuses (additive overlay).
+    # Concatenated after rate-level ``bonuses`` at evaluation time;
+    # ``multiplier_pct`` stacks multiplicatively in iteration order.
+    # The v0.22.0 ``tier_seasonal`` companion field was dropped: see
+    # the seasonal-routing block above.
     raw_tier_bonuses = tier.get("bonuses")
     tier_bonuses_loaded: tuple[dict, ...] | None = (
         tuple(raw_tier_bonuses) if raw_tier_bonuses else None
@@ -838,7 +845,6 @@ def resolve_tariff_at(
         tier_applies_when=tier_applies_when,
         hkn_structure_default=rate_hkn_struct_default,
         hkn_rp_kwh_default=rate_hkn_rp_kwh_default,
-        tier_seasonal=tier_seasonal,
         tier_bonuses=tier_bonuses_loaded,
     )
 

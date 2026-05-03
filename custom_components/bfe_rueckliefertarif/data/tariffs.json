@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/v3DJG6GL/bfe-tariffs-data/main/schemas/tariffs-v1.schema.json",
-  "schema_version": "1.5.0",
-  "data_version": "0.0.5",
-  "last_updated": "2026-05-02",
+  "schema_version": "1.6.0",
+  "data_version": "0.0.12",
+  "last_updated": "2026-05-03",
   "notes": "Bundled fallback. Source-of-truth (companion repo) lands in Phase 6. Schema 1.1.0 (Batch D) introduces user_inputs[] for parallel tariff variants (replaces the AEW two-entry hack), power_tier.hkn_cases[] for conditional HKN values, and bonuses[].kind/when for additive vs. multiplicative bonuses.",
   "federal_minimum": [
     {
@@ -61,6 +61,8 @@
               "url": "http://www.aew.ch/content/dam/aew/downloads/strom/produkte-2017/AEW-messung.pdf.res/AEW-messung.pdf"
             }
           ],
+          "hkn_structure_default": "none",
+          "hkn_rp_kwh_default": null,
           "power_tiers": [
             {
               "kw_min": 0.0,
@@ -93,9 +95,7 @@
           ],
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "none",
-          "hkn_rp_kwh_default": null
+          "cap_rules": null
         },
         {
           "valid_from": "2026-01-01",
@@ -118,8 +118,8 @@
               "kw_max": 30.0,
               "base_model": "fixed_flat",
               "fixed_rp_kwh": 8.2,
-              "hkn_rp_kwh": null,
-              "hkn_structure": "bundled",
+              "hkn_rp_kwh": 1.0,
+              "hkn_structure": "additive_optin",
               "applies_when": {
                 "fixpreis_rmp": "fixpreis"
               }
@@ -133,6 +133,77 @@
               "applies_when": {
                 "fixpreis_rmp": "rmp"
               }
+            },
+            {
+              "kw_min": 0.0,
+              "kw_max": null,
+              "base_model": "fixed_seasonal",
+              "hkn_rp_kwh": 15.0,
+              "hkn_structure": "additive_optin",
+              "applies_when": {
+                "fixpreis_rmp": "spezial"
+              },
+              "seasonal": {
+                "summer_months": [
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9
+                ],
+                "winter_months": [
+                  10,
+                  11,
+                  12,
+                  1,
+                  2,
+                  3
+                ],
+                "summer_rp_kwh": 20.0,
+                "winter_rp_kwh": 30.0
+              }
+            },
+            {
+              "kw_min": 0.0,
+              "kw_max": null,
+              "base_model": "fixed_seasonal",
+              "hkn_rp_kwh": 15.0,
+              "hkn_structure": "additive_optin",
+              "applies_when": {
+                "fixpreis_rmp": "spezialmitbonus"
+              },
+              "seasonal": {
+                "summer_months": [
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9
+                ],
+                "winter_months": [
+                  10,
+                  11,
+                  12,
+                  1,
+                  2,
+                  3
+                ],
+                "summer_rp_kwh": 20.0,
+                "winter_rp_kwh": 30.0
+              },
+              "bonuses": [
+                {
+                  "kind": "additive_rp_kwh",
+                  "name": "Spezialbonus",
+                  "rate_rp_kwh": 15.0,
+                  "when": {
+                    "season": "winter"
+                  },
+                  "note": "Winter-Spezialbonus"
+                }
+              ]
             }
           ],
           "user_inputs": [
@@ -141,13 +212,17 @@
               "type": "enum",
               "values": [
                 "fixpreis",
-                "rmp"
+                "rmp",
+                "spezial",
+                "spezialmitbonus"
               ],
               "default": "fixpreis",
               "label_de": "Vergütungsmodell Rücklieferung",
               "value_labels_de": {
                 "fixpreis": "Fixpreis",
-                "rmp": "Referenzmarktpreis"
+                "rmp": "Referenzmarktpreis",
+                "spezial": "Spezial",
+                "spezialmitbonus": "Spezial mit Bonus"
               }
             }
           ],
@@ -160,7 +235,6 @@
               }
             }
           ],
-          "bonuses": [],
           "seasonal": null,
           "cap_rules": null
         }
@@ -182,6 +256,8 @@
               "url": "https://www.bkw.ch/de/produkte/solar/einspeisung"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 2.0,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -202,9 +278,7 @@
           ],
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 2.0
+          "cap_rules": null
         }
       ]
     },
@@ -224,6 +298,8 @@
               "url": "https://www.ckw.ch/private/solar/einspeisung.html"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 3.0,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -234,9 +310,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 3.0
+          "cap_rules": null
         }
       ]
     },
@@ -256,6 +330,8 @@
               "url": "https://www.dkek.ch/_docn/171962/Strom_R%C3%BCckliefertarife_ab_01.01.2026.pdf"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 0.0,
           "power_tiers": [
             {
               "kw_min": 2,
@@ -332,9 +408,7 @@
               3
             ]
           },
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 0.0
+          "cap_rules": null
         }
       ]
     },
@@ -357,6 +431,8 @@
               "url": "https://www.ekz.ch/dam/ekz/privatkunden/strom/tarife-und-agb/Tarifdokumente/tarife-2025/ekz-rueckliefertarife-2025.pdf"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 3.0,
           "power_tiers": [
             {
               "kw_min": 0.0,
@@ -379,9 +455,7 @@
           "notes": [],
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 3.0
+          "cap_rules": null
         },
         {
           "valid_from": "2026-01-01",
@@ -392,6 +466,8 @@
               "url": "https://www.ekz.ch/de/private/solaranlagen/rueckliefertarife.html"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 3.0,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -427,9 +503,7 @@
               "self_consumption": false,
               "cap_rp_kwh": 5.4
             }
-          ],
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 3.0
+          ]
         }
       ]
     },
@@ -449,6 +523,8 @@
               "url": "https://www.ewn.ch/wp-content/uploads/2026/01/20260123_Vorl_Produktblatt_Einspeiseverguetung_web.pdf"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 2.0,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -511,9 +587,7 @@
           ],
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 2.0
+          "cap_rules": null
         }
       ]
     },
@@ -533,6 +607,8 @@
               "url": "https://www.ewz.ch/dam/ewz/meinewz/Dokumentencenter/verguetung-stromruecklieferung-eea-tarif-zh-gr-DE.pdf"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 3.0,
           "power_tiers": [
             {
               "kw_min": 0.0,
@@ -554,9 +630,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 3.0
+          "cap_rules": null
         }
       ]
     },
@@ -576,6 +650,8 @@
               "url": "https://www.groupe-e.ch/fr/energie/electricite/electricite-photovoltaique"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 4.0,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -611,9 +687,7 @@
               "self_consumption": false,
               "cap_rp_kwh": 5.4
             }
-          ],
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 4.0
+          ]
         }
       ]
     },
@@ -633,6 +707,8 @@
               "url": "https://www.iwb.ch/privatkunden/solarenergie"
             }
           ],
+          "hkn_structure_default": "bundled",
+          "hkn_rp_kwh_default": null,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -644,9 +720,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "bundled",
-          "hkn_rp_kwh_default": null
+          "cap_rules": null
         }
       ]
     },
@@ -666,6 +740,8 @@
               "url": "https://www.primeo-energie.ch/de/strom/eigenproduktion"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 2.0,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -701,9 +777,7 @@
               "self_consumption": false,
               "cap_rp_kwh": 5.4
             }
-          ],
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 2.0
+          ]
         }
       ]
     },
@@ -826,6 +900,8 @@
               "url": "https://www.romande-energie.ch/produire-mon-electricite"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 1.5,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -836,9 +912,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 1.5
+          "cap_rules": null
         }
       ]
     },
@@ -858,6 +932,8 @@
               "url": "https://www.sak.ch/privatkunden/solar/einspeisung"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 1.5,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -868,9 +944,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 1.5
+          "cap_rules": null
         }
       ]
     },
@@ -890,6 +964,8 @@
               "url": "https://www.sgsw.ch/privatkunden/solarenergie/einspeisung.html"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 4.6,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -900,9 +976,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 4.6
+          "cap_rules": null
         }
       ]
     },
@@ -922,6 +996,8 @@
               "url": "https://www.sig-ge.ch/electricite/produire-de-l-electricite"
             }
           ],
+          "hkn_structure_default": "additive_optin",
+          "hkn_rp_kwh_default": 2.8,
           "power_tiers": [
             {
               "kw_min": 0,
@@ -933,9 +1009,7 @@
           "price_floor_rp_kwh": null,
           "bonuses": [],
           "seasonal": null,
-          "cap_rules": null,
-          "hkn_structure_default": "additive_optin",
-          "hkn_rp_kwh_default": 2.8
+          "cap_rules": null
         }
       ]
     }

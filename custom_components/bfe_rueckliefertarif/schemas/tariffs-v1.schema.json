@@ -186,7 +186,7 @@
         },
         "base_model": {
           "type": "string",
-          "enum": ["fixed_flat", "fixed_ht_nt", "rmp_quartal", "rmp_monat"]
+          "enum": ["fixed_flat", "fixed_ht_nt", "rmp_quartal", "rmp_monat", "fixed_seasonal"]
         },
 
         "fixed_rp_kwh":           { "type": "number" },
@@ -239,6 +239,11 @@
           "comment": "fixed_ht_nt requires HT/NT pair.",
           "if":   { "properties": { "base_model": { "const": "fixed_ht_nt" } }, "required": ["base_model"] },
           "then": { "required": ["fixed_ht_rp_kwh", "fixed_nt_rp_kwh"] }
+        },
+        {
+          "comment": "fixed_seasonal requires tier-level seasonal block (summer/winter rp_kwh authoritative).",
+          "if":   { "properties": { "base_model": { "const": "fixed_seasonal" } }, "required": ["base_model"] },
+          "then": { "required": ["seasonal"] }
         }
       ]
     },

@@ -2338,6 +2338,13 @@ def _render_tariff_model_lines(c: dict) -> list[str]:
                 lines.append(f"    - {sub['ht']}: {ht:.2f} Rp/kWh")
             if nt is not None:
                 lines.append(f"    - {sub['nt']}: {nt:.2f} Rp/kWh")
+    elif base_model == "fixed_seasonal":
+        s_summer = seasonal.get("summer_rp_kwh") if seasonal else None
+        s_winter = seasonal.get("winter_rp_kwh") if seasonal else None
+        if s_summer is not None:
+            lines.append(f"    - {sub['summer']}: {s_summer:.2f} Rp/kWh")
+        if s_winter is not None:
+            lines.append(f"    - {sub['winter']}: {s_winter:.2f} Rp/kWh")
 
     # Settlement sub-bullet for fixed_* models only — for rmp_*, the
     # settlement period is encoded in the model name itself
