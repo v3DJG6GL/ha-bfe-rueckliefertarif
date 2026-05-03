@@ -52,6 +52,21 @@ from custom_components.bfe_rueckliefertarif.tariff import classify_ht
 from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
 
+def _freeze_date_to(monkeypatch, y: int, m: int, d: int) -> None:
+    """Pin ``services.date.today()`` to a fixed date — used by the autouse
+    ``_freeze_today`` fixture and by tests that need to override it."""
+    from datetime import date as _date
+
+    import custom_components.bfe_rueckliefertarif.services as _svc
+
+    class _Frozen(_date):
+        @classmethod
+        def today(cls):
+            return _date(y, m, d)
+
+    monkeypatch.setattr(_svc, "date", _Frozen, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def _freeze_today(monkeypatch):
     """v0.18.0 (Issue 8.6): _should_emit_today_block now suppresses the
@@ -60,17 +75,7 @@ def _freeze_today(monkeypatch):
     pin today to 2026-01-15 so the today block stays emitted (preserving
     historical assertions). Tests that specifically exercise the
     suppression rule override this fixture."""
-    from datetime import date as _date
-
-    real_date = _date
-
-    class _FrozenDate(_date):
-        @classmethod
-        def today(cls):
-            return real_date(2026, 1, 15)
-
-    import custom_components.bfe_rueckliefertarif.services as _svc
-    monkeypatch.setattr(_svc, "date", _FrozenDate, raising=False)
+    _freeze_date_to(monkeypatch, 2026, 1, 15)
 
 
 # ----- _aggregate_by_period --------------------------------------------------
@@ -1889,16 +1894,7 @@ class TestTodayBlockSuppression:
     ):
         # Override autouse fixture: today is well past the recomputed
         # range (user edited a past quarter; today is months later).
-        from datetime import date as _date
-        real_date = _date
-
-        class _Today(_date):
-            @classmethod
-            def today(cls):
-                return real_date(2026, 6, 15)
-
-        import custom_components.bfe_rueckliefertarif.services as _svc
-        monkeypatch.setattr(_svc, "date", _Today, raising=False)
+        _freeze_date_to(monkeypatch, 2026, 6, 15)
 
         rows = [_row("2026Q1", 10.0, 100.0, 10.0)]
         report = _RecomputeReport(
@@ -1922,16 +1918,7 @@ class TestTodayBlockSuppression:
         # User edits the running quarter's transition → recompute fires
         # for the running quarter only → today is inside that quarter
         # → today block emitted (running estimate is useful context).
-        from datetime import date as _date
-        real_date = _date
-
-        class _Today(_date):
-            @classmethod
-            def today(cls):
-                return real_date(2026, 5, 1)  # in 2026-Q2
-
-        import custom_components.bfe_rueckliefertarif.services as _svc
-        monkeypatch.setattr(_svc, "date", _Today, raising=False)
+        _freeze_date_to(monkeypatch, 2026, 5, 1)  # in 2026-Q2
 
         rows = [_row("2026Q2", 10.0, 100.0, 10.0)]
         report = _RecomputeReport(
