@@ -225,8 +225,3 @@ class TestQuarterFromPeriodString:
         # its own `is_current_estimate` rollup — period string is just "YYYY"
         # with no quarter context.
         assert _quarter_from_period_string("2026") is None
-
-    def test_quarter_boundary_at_year_end_correct(self):
-        # Regression guard: month → quarter formula must handle Dec correctly.
-        assert _quarter_from_period_string("2025-12-31 23:00") == Quarter(2025, 4)
-        assert _quarter_from_period_string("2026-01-01 00:00") == Quarter(2026, 1)

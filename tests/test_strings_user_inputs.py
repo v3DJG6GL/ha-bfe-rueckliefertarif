@@ -7,11 +7,6 @@ When bfe-tariffs-data introduces a new slug or config_flow.py adds a new
 form-bearing step, this test fails until strings entries are added —
 typically by running ``scripts/sync_user_input_slugs.py``, which the CI
 workflow does automatically on push.
-
-v0.18.0 (Issue 6.3 cont. + 6.4): the v0.17.1 sync script only walked
-``config.step.*``, leaving ``options.step.*`` (where Apply/Edit/Add
-transition flows live) populated only with legacy entries. This test
-now asserts coverage in BOTH trees.
 """
 
 from __future__ import annotations
