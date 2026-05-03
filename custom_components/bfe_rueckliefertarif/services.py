@@ -62,10 +62,6 @@ async def async_register_services(hass: HomeAssistant) -> None:
     from homeassistant.core import SupportsResponse
 
     if hass.services.has_service(DOMAIN, "reimport_all_history"):
-        # v0.9.6: drop the legacy ``refresh`` service if it survived from a
-        # pre-v0.9.6 install of the integration in the same HA process. The
-        # idempotency guard above means we're returning early on this code
-        # path, so we still want to clean up — only register what's current.
         if hass.services.has_service(DOMAIN, "refresh"):
             hass.services.async_remove(DOMAIN, "refresh")
         return
@@ -77,16 +73,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, "refresh_tariffs", _handle_refresh_tariffs
     )
-    # v0.19.0 — Tier 2 analytics service: returns the recompute report as a
-    # JSON dict for consumption by the BFE tariff analysis Lovelace card.
     hass.services.async_register(
         DOMAIN,
         "get_breakdown",
         _handle_get_breakdown,
         supports_response=SupportsResponse.ONLY,
     )
-    # v0.19.0 — Tier 1 diagnostic dump: same markdown report as
-    # `recompute_history` but without any LTS rewrites.
     hass.services.async_register(
         DOMAIN, "show_report", _handle_show_report
     )
@@ -95,18 +87,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
 def _first_entry_data(hass: HomeAssistant) -> dict:
     """Return the first config entry's storage dict, with live config/options.
 
-    ``hass.data[DOMAIN]`` carries one slot per config entry (keyed by
-    ``entry_id``) plus a shared ``_tariffs_data`` slot (the
-    TariffsDataCoordinator from Phase 6). Skip underscore-prefixed keys
-    so we always get an actual config entry.
-
-    v0.8.5: ``config`` and ``options`` keys are re-pulled from the live
-    ``ConfigEntry`` on every call. Earlier versions cached them at
-    ``async_setup_entry`` time and never refreshed, so any change made via
-    the OptionsFlow stayed invisible to recompute paths until the entry
-    was reloaded — and OptionsFlowWithReload silently skips the auto-
-    reload when ``_edit_row`` has pre-written options inline (its diff
-    check sees no change). Live reads make this class of bug structural.
+    Skip underscore-prefixed keys (``_tariffs_data`` etc.) so we only return
+    actual config-entry slots. ``config`` and ``options`` are re-pulled from
+    the live ``ConfigEntry`` on every call so OptionsFlow edits become
+    visible without an entry reload.
     """
     entries = hass.data.get(DOMAIN, {})
     for key, value in entries.items():
@@ -143,8 +127,8 @@ def _cfg_for_entry(
 def _cfg_for_entry_at_date(
     hass: HomeAssistant, at_date
 ) -> tuple[dict, TariffConfig]:
-    """v0.9.9 — like ``_cfg_for_entry`` but takes an arbitrary calendar date,
-    not just quarter starts. Used by ``_resolve_quarter_segments`` to build a
+    """Like ``_cfg_for_entry`` but takes an arbitrary calendar date, not just
+    quarter starts. Used by ``_resolve_quarter_segments`` to build a
     per-segment ``TariffConfig`` mid-quarter.
     """
     entry_data = _first_entry_data(hass)
@@ -158,9 +142,6 @@ def _cfg_for_entry_at_date(
     kw = float(resolved_cfg.get(CONF_INSTALLIERTE_LEISTUNG_KWP) or 0.0)
     eigenverbrauch = bool(resolved_cfg.get(CONF_EIGENVERBRAUCH_AKTIVIERT))
     hkn_aktiviert = bool(resolved_cfg.get(CONF_HKN_AKTIVIERT))
-    # v0.11.0 (Batch D) — declared user_inputs from the active history
-    # record. Empty dict when the rate window declares nothing or the
-    # record predates Batch D.
     user_inputs = dict(resolved_cfg.get("user_inputs") or {})
 
     resolved = resolve_tariff_at(
@@ -359,7 +340,7 @@ async def _reimport_quarter(
     a snapshot of the resolved values is recorded in
     `coordinator._imported[<quarter>]["snapshot"]`.
 
-    `anchor_override` (v0.9.11): when set, skip the LTS anchor read and use
+    `anchor_override`: when set, skip the LTS anchor read and use
     the provided value as the plan's ``anchor_sum_chf``. Used by
     ``_reimport_all_history`` to thread the cumulative chain sum through
     memory, sidestepping the recorder commit-timer race that otherwise
@@ -367,11 +348,6 @@ async def _reimport_quarter(
     observe a stale (pre-commit) anchor of 0. ``None`` preserves the
     original behavior (read anchor from LTS), which is correct for the
     coordinator's stale-detect path where the chain is quiescent.
-
-    `force_fresh` is reserved for v0.6: it will signal that the snapshot
-    should be ignored and the rate fully recomputed (used after correcting
-    a wrong tariff entry). For v0.5 the path is identical either way —
-    history-driven recompute is the default.
 
     Returns ``plan.final_sum_chf`` so callers chaining multiple quarters
     can pass it as the next quarter's ``anchor_override``. Returns the
@@ -464,13 +440,13 @@ def _aggregate_by_period(
     """Bucket per-hour records by Zurich-local period. Pure function.
 
     Bucket key by ``rhythm``:
-    - ``"quartal"``        → ``YYYYQN`` (e.g. ``2026Q1``)
-    - ``"jahr"`` (v0.21.0) → ``YYYY``
-    - ``"tag"``  (v0.21.0) → ``YYYY-MM-DD``
-    - ``"stunde"`` (v0.21) → ``YYYY-MM-DD HH:00``
+    - ``"quartal"`` → ``YYYYQN`` (e.g. ``2026Q1``)
+    - ``"jahr"``    → ``YYYY``
+    - ``"tag"``     → ``YYYY-MM-DD``
+    - ``"stunde"``  → ``YYYY-MM-DD HH:00``
     - anything else (incl. ``"monat"``, ``None``) → ``YYYY-MM``
 
-    The new (v0.21.0) granularities serve the chart-history view via
+    The finer granularities serve the chart-history view via
     ``get_breakdown`` and reuse the same kWh-weighted averaging math as
     the quarterly/monthly cases.
 
@@ -482,7 +458,7 @@ def _aggregate_by_period(
     the intended utility-published rate that was active when the records were
     computed.
 
-    v0.9.9 — when records carry distinct ``seg_id`` values, each period bucket
+    When records carry distinct ``seg_id`` values, each period bucket
     additionally accumulates per-segment kwh/CHF/base/hkn so downstream
     rendering can emit sub-rows. The top-level period totals always reflect
     the whole period (sum across all segments).
@@ -684,10 +660,9 @@ def _render_when_summary(
     """Compact one-line summary of a ``when_clause`` for display in the
     recompute config block. Returns ``""`` when the clause is empty/None.
 
-    Schema vocabulary (v1.1.0): ``season`` and/or ``user_inputs``. v0.16.1:
-    when ``decls`` is provided, ``user_inputs`` keys/values are
-    label-translated (e.g. ``regio_top40_opted_in=True`` →
-    ``Wahltarif TOP-40 abonniert=Ja``).
+    Schema vocabulary (v1.1.0): ``season`` and/or ``user_inputs``. When
+    ``decls`` is provided, ``user_inputs`` keys/values are label-translated
+    (e.g. ``regio_top40_opted_in=True`` → ``Wahltarif TOP-40 abonniert=Ja``).
     """
     if not clause:
         return ""
@@ -715,15 +690,12 @@ def _render_bonuses_lines(
 ) -> list[str]:
     """Render rate-window-level bonuses as recompute-block bullets.
 
-    v0.10.0 / Batch C — list of declared bonuses (display-only).
-    v0.11.0 / Batch D — adds the bonus ``kind`` and a ``when={…}`` summary.
-    v0.16.1 — multiplier_pct rendered as ``+8.00%`` / ``−15.00%``; ``note``
-    suffix dropped.
-    v0.17.0 — when-clause dropped. The condition under which a bonus applies
+    Multiplier_pct rendered as ``+8.00%`` / ``−15.00%``. Renders kind +
+    rate value plus ``(opt-in)`` / ``(always)`` ``applies_when``
+    annotation. The when-clause is intentionally not rendered: it
     duplicated the ``Active user inputs:`` line above and read as current
     state (e.g. ``when ...=Ja`` while the user actually has Nein), which
-    confused users. The ``(opt-in)`` / ``(always)`` ``applies_when``
-    annotation stays — compact and unambiguous.
+    confused users.
 
     Returns ``[]`` when ``bonuses`` is empty / None.
     """
@@ -822,8 +794,7 @@ def _record_snapshot(
 
     The snapshot makes past LTS values introspectable: a future user (or a
     sanity-check SQL) can compare implied per-quarter rate vs. "what was
-    the rate when we imported?". v0.6 will additionally use this to
-    short-circuit recompute when force_fresh=False.
+    the rate when we imported?".
     """
     try:
         entry_data = _first_entry_data(hass)
@@ -848,7 +819,7 @@ def _record_snapshot(
         # the importer would have applied (first record's rate).
         rate_rp_kwh = plan.records[0].rate_rp_kwh if plan.records else 0.0
 
-    # v0.22.0 — schema 1.5.0: cap activation = `cap_rp_kwh` set.
+    # Schema 1.5.0: cap activation = `cap_rp_kwh` set.
     cap_applied = (
         rt.cap_rp_kwh is not None
         and rate_rp_kwh >= rt.cap_rp_kwh - 1e-6
@@ -879,14 +850,11 @@ def _record_snapshot(
         "floor_source": _floor_source(rt),
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
-        # v0.9.9 — captured at import time so the recompute notification
+        # Captured at import time so the recompute notification
         # can render rate-window context (seasonal label, contextual notes)
         # for past quarters even after the rate window has rolled forward.
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
-        # v0.16.0 — fields needed to render Tariff-model rate values,
-        # EV-relevance annotation, and Active-user-inputs/Bonuses lines
-        # in the recompute notification per-period block.
         "settlement_period": rt.settlement_period,
         "valid_from": rt.valid_from,
         "fixed_rp_kwh": rt.fixed_rp_kwh,
@@ -894,15 +862,13 @@ def _record_snapshot(
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
         "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
-        # v0.16.1 — gating for HKN-line annotation and label-translation
-        # of user_inputs in the recompute notification's per-period block.
         "hkn_structure": rt.hkn_structure,
         "user_inputs_decl": list(
             resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
         ),
     }
 
-    # v0.9.9 — segment metadata for sub-row rendering. Only persisted when
+    # Segment metadata for sub-row rendering. Only persisted when
     # the quarter actually spans >1 segment (single-segment quarters render
     # as today's flat shape).
     if segments and len(segments) > 1:
@@ -947,7 +913,7 @@ def _one_hour() -> timedelta:
 async def _reimport_all_history(hass: HomeAssistant) -> dict:
     """Re-import every quarter BFE has published, then estimate the running quarter.
 
-    v0.9.2 changes:
+    Behaviour:
     - **Clear-then-rewrite**: wipes the compensation LTS chain and the
       in-memory ``coordinator._imported`` snapshot map at the top, so the
       first run after a fresh install is idempotent (no leftover rows from
@@ -986,7 +952,7 @@ async def _reimport_all_history(hass: HomeAssistant) -> dict:
     # `Recorder.async_clear_statistics` is the @callback API that queues a
     # ClearStatisticsTask onto that thread (same mechanism
     # `async_import_statistics` uses for our writes — which is why imports
-    # always worked while the v0.9.2/v0.9.3 clear path didn't).
+    # always worked while the earlier direct clear path didn't).
     #
     # `async_block_till_done` then drains the recorder's task queue, so the
     # clear is fully committed before the per-quarter loop starts. Without
@@ -1020,7 +986,7 @@ async def _reimport_all_history(hass: HomeAssistant) -> dict:
     skipped: list = []
     failed: list = []
     before_active: list = []
-    # v0.9.11: thread the cumulative LTS sum through memory rather than
+    # Thread the cumulative LTS sum through memory rather than
     # re-reading it between quarters. The recorder's commit timer is
     # asynchronous (default 1 s), so back-to-back anchor reads can observe
     # pre-commit state and write the next quarter from anchor=0 — yielding
@@ -1089,8 +1055,7 @@ async def _import_running_quarter_estimate(
     hours from quarter_start up to the last completed hour and writes
     ``kWh × effective_rate(hour)`` to the compensation LTS.
 
-    v0.9.5: per-hour rate resolution (was: one flat ``effective_rp_kwh``
-    for every hour). For ``fixed_ht_nt`` utilities this means the right
+    Per-hour rate resolution: for ``fixed_ht_nt`` utilities the right
     rate is applied to each hour based on its Zurich-local time / day —
     HT during workday daytime, NT overnight/weekends. For ``fixed_flat``
     the per-hour rate is constant; for RMP utilities lacking BFE data we
@@ -1148,7 +1113,7 @@ async def _import_running_quarter_estimate(
 
     hourly_kwh = await read_hourly_export(hass, export_id, q_start_utc, last_full_hour)
     if anchor_override is not None:
-        # v0.9.11: skip the LTS read; caller passed the prior quarter's
+        # Skip the LTS read; caller passed the prior quarter's
         # final cumulative sum directly. Avoids the recorder commit-timer
         # race that otherwise lets a stale 0 anchor through when the
         # estimate runs back-to-back with the prior quarter's import.
@@ -1230,14 +1195,11 @@ async def _import_running_quarter_estimate(
         "tariffs_json_version": rt.tariffs_json_version,
         "tariffs_json_source": rt.tariffs_json_source,
         "is_current_estimate": True,
-        # v0.9.9 — same rate-window context fields as the published-quarter
+        # Same rate-window context fields as the published-quarter
         # snapshot so the running-quarter row in the recompute notification
         # gets the same Seasonal/Notes treatment.
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
-        # v0.16.0 — same set of new fields as published-quarter snapshot
-        # (see _reimport_quarter for context). Keeps per-period rendering
-        # uniform between running-quarter and closed-quarter rows.
         "settlement_period": rt.settlement_period,
         "valid_from": rt.valid_from,
         "fixed_rp_kwh": rt.fixed_rp_kwh,
@@ -1245,7 +1207,6 @@ async def _import_running_quarter_estimate(
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
         "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
-        # v0.16.1 — same as published-quarter snapshot.
         "hkn_structure": rt.hkn_structure,
         "user_inputs_decl": list(
             resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
@@ -1275,7 +1236,7 @@ async def _import_running_quarter_estimate(
 
 
 async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
-    """Trigger a fresh fetch from BOTH upstream sources (v0.9.6).
+    """Trigger a fresh fetch from BOTH upstream sources.
 
     Two independent network operations:
     1. **BFE poll** — ``BfeCoordinator.async_refresh()`` fetches the BFE
@@ -1315,7 +1276,7 @@ async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
     tariffs_version: str | None = None
     tariffs_error: str | None = None
 
-    # v0.17.0 — snapshot the parsed tariffs.json before & after the refresh
+    # Snapshot the parsed tariffs.json before & after the refresh
     # so we can diff added / modified rate windows per utility for the
     # notification body. ``load_tariffs()`` is mtime-cached; the post-refresh
     # call returns the freshly-rewritten file. Wrapped defensively so a
@@ -1368,7 +1329,7 @@ async def _refresh_upstream_data(hass: HomeAssistant) -> dict:
 async def _handle_reimport_all_history(call: ServiceCall) -> None:
     """Service handler for `bfe_rueckliefertarif.reimport_all_history`.
 
-    v0.9.2: also emits the same recompute summary notification the OptionsFlow
+    Emits the same recompute summary notification the OptionsFlow
     `recompute_history` step does, so calling the service via the YAML/Python
     API gives the same user-visible output.
     """
@@ -1407,8 +1368,7 @@ async def _handle_reimport_all_history(call: ServiceCall) -> None:
 async def _handle_refresh_data(call: ServiceCall) -> None:
     """Refresh both BFE prices AND companion-repo tariffs.json.
 
-    v0.9.6: combined service (was: ``refresh`` doing BFE only). The
-    tariffs-only ``refresh_tariffs`` service stays for power users.
+    The tariffs-only ``refresh_tariffs`` service stays for power users.
     """
     await _refresh_upstream_data(call.hass)
 
@@ -1418,7 +1378,7 @@ def _resolve_quarters(data: dict | None) -> list[Quarter]:
 
     Precedence (first match wins):
     - ``last_n_quarters: N``                      → most recent N quarters (oldest first)
-    - ``from_year`` + ``from_quarter``/``to_year``/``to_quarter``  → explicit range (v0.21.0)
+    - ``from_year`` + ``from_quarter``/``to_year``/``to_quarter``  → explicit range
     - ``from_year`` only                          → from that year through current
     - both year + quarter                          → ``[Quarter(year, quarter)]``
     - year only                                    → all 4 quarters of that year
@@ -1473,7 +1433,7 @@ def _resolve_quarters(data: dict | None) -> list[Quarter]:
     return [quarter_of(_dt.now(UTC))]
 
 
-# v0.21.0 — chart granularity caps. Limits the number of quarters fetched
+# Chart granularity caps. Limits the number of quarters fetched
 # from the recorder per service call to keep response payloads bounded.
 # When user requests more, we truncate to the most-recent N quarters and
 # set ``truncated_to_quarters`` in the response so the card can show a hint.
@@ -1527,7 +1487,7 @@ def _synthesize_fallback_prices(
     monthly: dict[Month, BfePrice] | None,
     billing_mode: str,
 ) -> tuple[dict[Quarter, BfePrice], dict[Month, BfePrice] | None, bool]:
-    """v0.21.11 — running-quarter floor fallback for the chart history path.
+    """Running-quarter floor fallback for the chart history path.
 
     Returns ``(quarterly, monthly, used_floor)`` ready to hand to
     ``compute_quarter_plan_segmented``. For unpublished pieces, synthesizes
@@ -1614,8 +1574,8 @@ async def _compute_hour_records_for_quarters(
     - ``compute_quarter_plan_segmented`` with anchor=0 (we don't need
       cumulative sums — just per-hour rate × kWh contributions)
 
-    v0.21.11: quarters where BFE hasn't published the price yet are no
-    longer silently skipped — instead the floor is substituted via
+    Quarters where BFE hasn't published the price yet are
+    not silently skipped — instead the floor is substituted via
     ``_synthesize_fallback_prices`` and the affected quarter is reported
     in ``estimated_quarters`` so downstream callers can mark rows as
     ``is_current_estimate``. Quarters with no recorder data still produce
@@ -1758,7 +1718,7 @@ def _aggregate_to_yearly(report) -> _RecomputeReport:
 async def _build_history_response(
     hass: HomeAssistant, quarters: list[Quarter], granularity: str
 ) -> _RecomputeReport:
-    """v0.21.0 — chart-history report builder. Dispatches by granularity:
+    """Chart-history report builder. Dispatches by granularity:
 
     - ``jahr``    → roll up snapshot's quarterly rows to yearly
     - ``quartal`` → snapshot's quarterly rows as-is
@@ -1790,7 +1750,7 @@ async def _build_history_response(
 
     rows: list[_RecomputeReportRow] = []
     for p in period_dicts:
-        # v0.21.11 — mark rows that fall inside a quarter where the federal
+        # Mark rows that fall inside a quarter where the federal
         # floor was substituted for a missing BFE price. Card surfaces this
         # via the chart-adjacent footnote (and the existing detail-table
         # asterisk for snapshot-path rows).
@@ -1839,14 +1799,14 @@ def _report_to_dict(report) -> dict:
 
 
 async def _handle_get_breakdown(call: ServiceCall):
-    """v0.19.0 — Tier 2 analytics service. Returns the recompute report as
+    """Tier 2 analytics service. Returns the recompute report as
     a JSON dict for the BFE tariff analysis Lovelace card.
 
     Read-only: no LTS rewrites, no auto-import. Missing quarters surface
     as empty rows in the response — the card displays a "Run Recompute
     history first" hint to the user.
 
-    v0.21.0 — accepts an optional ``granularity`` parameter for the chart
+    Accepts an optional ``granularity`` parameter for the chart
     history view (jahr/quartal/monat/tag/stunde). When set, dispatches
     to ``_build_history_response`` which may re-aggregate from
     HourRecord on-demand for granularities finer than the snapshot
@@ -1878,7 +1838,7 @@ async def _handle_get_breakdown(call: ServiceCall):
 
 
 async def _handle_show_report(call: ServiceCall) -> None:
-    """v0.19.0 — Tier 1 diagnostic dump. Builds the same markdown report
+    """Tier 1 diagnostic dump. Builds the same markdown report
     as ``recompute_history`` and emits it as a persistent notification —
     no LTS rewrites.
     """
@@ -1906,12 +1866,12 @@ async def _handle_refresh_tariffs(call: ServiceCall) -> None:
     await tdc.async_refresh()
 
 
-# ----- Recompute report + notification (v0.7.0) ----------------------------
+# ----- Recompute report + notification --------------------------------------
 
 
 @dataclass(frozen=True)
 class _PeriodSubRow:
-    """One sub-row beneath a main period row (v0.9.9).
+    """One sub-row beneath a main period row.
 
     Emitted when a period spans more than one (config × season) segment.
     ``label`` is a human-readable segment description like
@@ -1924,7 +1884,7 @@ class _PeriodSubRow:
     rate_rp_kwh_avg: float | None
     total_kwh: float | None
     total_chf: float | None
-    # v0.11.0 (Batch D) — applied bonus per kWh (kWh-weighted) within this
+    # Applied bonus per kWh (kWh-weighted) within this
     # segment. ``None`` for legacy snapshots predating the field.
     bonus_rp_kwh_avg: float | None = None
 
@@ -1938,7 +1898,7 @@ class _RecomputeReportRow:
     sums to ``rate_rp_kwh_avg`` within rounding (HKN may be 0 if the user
     didn't opt in or the cap forfeited it).
 
-    v0.8.6: per-period config metadata (utility, kw, EV, HKN, billing, cap,
+    Per-period config metadata (utility, kw, EV, HKN, billing, cap,
     floor, tariffs version) is carried alongside so multi-utility recompute
     notifications can group rows by config and render per-group headings.
     Fields are nullable to keep legacy snapshots renderable (group falls
@@ -1966,21 +1926,20 @@ class _RecomputeReportRow:
     floor_source_at_period: str | None = None
     tariffs_version_at_period: str | None = None
     tariffs_source_at_period: str | None = None
-    # v0.9.0: marks rows from the running-quarter estimate (BFE not yet
-    # published; rate is the active utility's effective floor).
-    # v0.9.2: ``estimate_basis`` dropped — the renderer just appends a "*"
-    # to the period cell + a single footnote line. The basis label is still
-    # exposed on the live BasisVerguetungSensor's attributes.
+    # Marks rows from the running-quarter estimate (BFE not yet
+    # published; rate is the active utility's effective floor). The renderer
+    # appends a "*" to the period cell + a single footnote line. The basis
+    # label is still exposed on the live BasisVerguetungSensor's attributes.
     is_current_estimate: bool = False
-    # v0.9.9 — rate-window-derived metadata captured per period so per-group
+    # Rate-window-derived metadata captured per period so per-group
     # config blocks can render seasonal labels + contextual notes.
     seasonal_at_period: dict | None = None
     notes_active_at_period: list | None = None
-    # v0.9.9 — per-period sub-rows for seasonal / mid-period config splits.
+    # Per-period sub-rows for seasonal / mid-period config splits.
     # ``None`` keeps legacy single-row rendering; populated when a period
     # spans more than one (config × season) segment.
     sub_rows: tuple = ()
-    # v0.16.0 — extra rate-window context threaded through so per-group
+    # Extra rate-window context threaded through so per-group
     # blocks can render Tariff-model rate values, EV-relevance annotation,
     # Active-user-inputs/Bonuses lines, and a settlement-period suffix.
     settlement_period_at_period: str | None = None
@@ -1990,11 +1949,11 @@ class _RecomputeReportRow:
     fixed_nt_rp_kwh_at_period: float | None = None
     user_inputs_at_period: dict | None = None
     bonuses_active_at_period: list | None = None
-    # v0.16.1 — HKN-structure gating + user_inputs declaration list (used
+    # HKN-structure gating + user_inputs declaration list (used
     # for label-translation of user-input keys/values in per-group blocks).
     hkn_structure_at_period: str | None = None
     user_inputs_decl_at_period: list | None = None
-    # v0.11.0 (Batch D) — applied bonus per kWh (kWh-weighted) for the
+    # Applied bonus per kWh (kWh-weighted) for the
     # period. ``None`` for legacy snapshots predating the field.
     bonus_rp_kwh_avg: float | None = None
 
@@ -2004,7 +1963,7 @@ class _RecomputeReport:
     rows: list[_RecomputeReportRow]   # newest-first
     quarters_recomputed: int
     config: dict
-    # v0.9.2: how many BFE-published quarters were skipped because they
+    # How many BFE-published quarters were skipped because they
     # predate OPT_CONFIG_HISTORY[0].valid_from (the plant install date).
     # When non-zero, the renderer emits a single footer line so the user
     # knows older quarters exist but were intentionally not imported.
@@ -2021,9 +1980,9 @@ def _build_recompute_report(
 ) -> _RecomputeReport:
     """Pull current config + per-quarter snapshots into a render-ready report.
 
-    Each quarter's snapshot carries a 3-element ``monthly`` list (added in
-    v0.7); we flatten across quarters and sort newest-first. Old snapshots
-    that pre-date the ``monthly`` field render as empty rows ("—" cells).
+    Each quarter's snapshot carries a 3-element ``monthly`` list; we flatten
+    across quarters and sort newest-first. Old snapshots that pre-date the
+    ``monthly`` field render as empty rows ("—" cells).
     """
     from .tariffs_db import load_tariffs
 
@@ -2051,23 +2010,15 @@ def _build_recompute_report(
         "cap_rp_kwh": rt.cap_rp_kwh,
         "tariffs_version": rt.tariffs_json_version,
         "tariffs_source": rt.tariffs_json_source,
-        # v0.9.9 — seasonal applied + rate-window notes.
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
         "notes_lang": user_lang,
-        # v0.10.0 — Batch C / Phase 1: display-only bonuses for the
-        # active-today block. v0.16.0 also threads them per-period via
-        # the snapshot so per-group blocks can render the same.
         "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
-        # v0.16.0 — fields used by Tariff-model rate rendering, EV-line
-        # relevance gating, and Active-user-inputs line.
         "valid_from": rt.valid_from,
         "fixed_rp_kwh": rt.fixed_rp_kwh,
         "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
-        # v0.16.1 — HKN-line gating (additive_optin / bundled / none) and
-        # label-translation of user_inputs (label_de / value_labels_de).
         "hkn_structure": rt.hkn_structure,
         "user_inputs_decl": list(
             resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
@@ -2080,7 +2031,7 @@ def _build_recompute_report(
             snap = (coordinator._imported.get(str(q)) or {}).get("snapshot") or {}
             # Per-period config metadata — pulled from the snapshot so each
             # row carries the utility/cap/floor that was active at import
-            # time. Defaults are None for legacy snapshots predating v0.8.6.
+            # time. Defaults are None for legacy snapshots.
             snap_utility_key = snap.get("utility_key")
             snap_utility_name = (
                 db["utilities"].get(snap_utility_key, {}).get("name_de")
@@ -2104,9 +2055,6 @@ def _build_recompute_report(
                 "is_current_estimate": bool(snap.get("is_current_estimate", False)),
                 "seasonal_at_period": snap.get("seasonal"),
                 "notes_active_at_period": snap.get("notes_active"),
-                # v0.16.0 — per-period rate-window context for richer
-                # per-group rendering. .get() defaults to None for
-                # legacy snapshots predating these fields.
                 "settlement_period_at_period": snap.get("settlement_period"),
                 "valid_from_at_period": snap.get("valid_from"),
                 "fixed_rp_kwh_at_period": snap.get("fixed_rp_kwh"),
@@ -2114,12 +2062,10 @@ def _build_recompute_report(
                 "fixed_nt_rp_kwh_at_period": snap.get("fixed_nt_rp_kwh"),
                 "user_inputs_at_period": snap.get("user_inputs"),
                 "bonuses_active_at_period": snap.get("bonuses_active"),
-                # v0.16.1 — HKN-structure gating + user_inputs declaration
-                # list for label translation. Default None on legacy.
                 "hkn_structure_at_period": snap.get("hkn_structure"),
                 "user_inputs_decl_at_period": snap.get("user_inputs_decl"),
             }
-            # Prefer v0.7.5+ "periods" key; fall back to legacy "monthly" so
+            # Prefer the "periods" key; fall back to legacy "monthly" so
             # snapshots from older imports still render (Base/HKN cells = —).
             periods = snap.get("periods") or [
                 {**m, "period": m.get("month")} for m in (snap.get("monthly") or [])
@@ -2175,11 +2121,11 @@ def _canon_fingerprint(
 ) -> tuple:
     """Canonicalize a config fingerprint so int-vs-float / bool-vs-int /
     None-vs-missing variations don't break equality between the
-    active-today block and per-period rows. v0.16.0.
+    active-today block and per-period rows.
 
-    v0.17.0 — adds user_inputs (sorted tuple of (key,value) pairs) so that
+    Includes user_inputs (sorted tuple of (key,value) pairs) so that
     rate-window-specific toggles like ``regio_top40_opted_in`` participate
-    in row grouping and active-today equality. Pre-v0.16.0 snapshots that
+    in row grouping and active-today equality. Legacy snapshots that
     lack user_inputs canonicalize to ``()`` and remain equal to today's
     config when today also has no user_inputs declared.
     """
@@ -2202,13 +2148,11 @@ def _canon_fingerprint(
 def _row_config_fingerprint(r: _RecomputeReportRow) -> tuple:
     """Group key — rows sharing this fingerprint render under one heading.
 
-    v0.8.6: covers the rate-affecting fields (utility, kw, EV, HKN opt-in,
+    Covers the rate-affecting fields (utility, kw, EV, HKN opt-in,
     billing). Cap mode / floor / tariffs version are presentation-only and
-    don't change the group identity.
-
-    v0.16.0: routed through ``_canon_fingerprint`` so type drifts (e.g.
-    snapshot ``kw=8`` int vs live config ``kw=8.0`` float) collapse to
-    the same key.
+    don't change the group identity. Routed through ``_canon_fingerprint``
+    so type drifts (e.g. snapshot ``kw=8`` int vs live config ``kw=8.0``
+    float) collapse to the same key.
     """
     return _canon_fingerprint(
         r.utility_key_at_period,
@@ -2240,7 +2184,7 @@ def _group_rows_by_config(
     return [(key, buckets[key]) for key in order]
 
 
-# v0.17.0 — sub-bullet labels for the tariff-model section. French falls
+# Sub-bullet labels for the tariff-model section. French falls
 # back to English (no French rate-tariff vocabulary in the recompute body
 # yet; consistent with existing notification chrome).
 _RATE_SUBLABELS: dict[str, dict[str, str]] = {
@@ -2275,8 +2219,7 @@ def _render_tariff_model_lines(c: dict) -> list[str]:
     """Render the Tariff-model bullet plus localised sub-bullets for rates
     and settlement period. Returns ``[]`` when ``base_model`` is missing.
 
-    v0.17.0 — replaces the old ``_format_tariff_model`` one-liner. Localised
-    model labels (DE: Fixpreis / Fixpreis (HT/NT) / Referenzmarktpreis;
+    Localised model labels (DE: Fixpreis / Fixpreis (HT/NT) / Referenzmarktpreis;
     EN: Fixed flat rate / Fixed HT/NT rate / Reference market price);
     sub-bullets break out summer/winter and HT/NT rates, plus settlement.
 
@@ -2355,7 +2298,7 @@ def _render_tariff_model_lines(c: dict) -> list[str]:
 
 def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     """Shared bullet-list renderer used by both the active-today block and
-    each per-group "Configuration in effect" block (v0.9.2).
+    each per-group "Configuration in effect" block.
 
     Expected dict keys (any may be missing — None-guarded throughout):
     - ``utility_key`` (str), ``utility_name`` (str)
@@ -2367,8 +2310,8 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     - ``cap_rp_kwh`` (float | None) — schema 1.5.0 cap activation;
       ``None`` means no cap rule covered (kw, ev) or no ``cap_rules`` array
     - ``tariffs_version`` (str), ``tariffs_source`` (str)
-    - ``bonuses_active`` (list[dict] | None) — v0.10.0 display-only
-    - v0.16.0: ``valid_from`` (str), ``fixed_rp_kwh`` / ``fixed_ht_rp_kwh``
+    - ``bonuses_active`` (list[dict] | None) — display-only
+    - ``valid_from`` (str), ``fixed_rp_kwh`` / ``fixed_ht_rp_kwh``
       / ``fixed_nt_rp_kwh`` (float | None), ``user_inputs`` (dict | None)
 
     ``is_today=True`` causes the cap line to read "Active — current cap …"
@@ -2378,7 +2321,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     notes_lang = c.get("notes_lang") or "en"
     lines: list[str] = []
 
-    # v0.17.1 — Pass 1: user-defined Configuration sub-bullets at the top.
+    # Pass 1: user-defined Configuration sub-bullets at the top.
     # Groups Installed power + Self-consumption + HKN opt-in + each
     # user_input under a single Configuration parent so user-controllable
     # values aren't interleaved with utility-defined descriptors.
@@ -2390,9 +2333,9 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     else:
         config_subs.append("    - **Installed power:** —")
 
-    # v0.17.1 — Issue 8.1: suppress Self-consumption line entirely when
+    # Suppress Self-consumption line entirely when
     # the user's choice has no effect on rates for this (utility, valid_from,
-    # kWp). Pre-v0.16.0 snapshots lack `valid_from` → relevance can't be
+    # kWp). Legacy snapshots lack `valid_from` → relevance can't be
     # determined → permissive default keeps the line (no regression).
     ev = c.get("eigenverbrauch")
     if ev is not None:
@@ -2413,8 +2356,8 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
                 f"    - **Self-consumption:** {'Yes' if ev else 'No'}"
             )
 
-    # v0.16.1/v0.17.1 — gate HKN line on hkn_structure. Same 3-way split
-    # as v0.16.1, just reparented under Configuration.
+    # Gate HKN line on hkn_structure (3-way split), reparented under
+    # Configuration.
     hkn_structure = c.get("hkn_structure")
     hkn_optin = c.get("hkn_optin")
     if hkn_structure == "additive_optin":
@@ -2437,7 +2380,7 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     elif hkn_structure == "none":
         config_subs.append("    - **HKN:** not paid by utility")
     else:
-        # Legacy snapshot pre-v0.16.1.
+        # Legacy snapshot without hkn_structure.
         if hkn_optin:
             hkn_rp = c.get("hkn_rp_kwh")
             if hkn_rp is not None:
@@ -2451,9 +2394,8 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
         else:
             config_subs.append("    - **HKN opt-in:** —")
 
-    # v0.17.1 — each user_input becomes its own sub-bullet under
-    # Configuration (replaces the pre-0.17.1 collated "Active user inputs:"
-    # one-liner). Localised label via user_input_label; value via
+    # Each user_input becomes its own sub-bullet under
+    # Configuration. Localised label via user_input_label; value via
     # _format_user_input_value.
     ui = c.get("user_inputs")
     if isinstance(ui, dict) and ui:
@@ -2472,7 +2414,6 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     # Pass 2: utility/tariff descriptors below.
     utility_key = c.get("utility_key") or "(unknown)"
     utility_name = c.get("utility_name") or utility_key
-    # v0.17.0 — drop the slug; only show the human-readable name.
     lines.append(f"- **Utility:** {utility_name}")
 
     lines.extend(_render_tariff_model_lines(c))
@@ -2497,10 +2438,9 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
             f"- **Federal floor (Mindestvergütung):** {floor_label}{suffix}"
         )
 
-    # v0.17.1 — Issue 8.4: drop the "Off" branch. Cap is only emitted
-    # when actually active. Mirrors HKN: don't echo state with no impact.
-    # v0.22.0 — schema 1.5.0: cap activation = cap_rp_kwh present
-    # (resolver derives it from a non-empty `cap_rules` array).
+    # Cap is only emitted when actually active. Mirrors HKN: don't echo
+    # state with no impact. Schema 1.5.0: cap activation = cap_rp_kwh
+    # present (resolver derives it from a non-empty `cap_rules` array).
     cap_v = c.get("cap_rp_kwh")
     if cap_v is not None:
         cap_str = f"{cap_v:.2f} Rp/kWh"
@@ -2517,12 +2457,6 @@ def _render_config_block(c: dict, *, is_today: bool = False) -> list[str]:
     if tv:
         src = f" ({ts})" if ts else ""
         lines.append(f"- **Tariff data:** v{tv}{src}")
-
-    # v0.17.1 — Issues 8.2 + 8.3: dropped "Billing period:" + "Seasonal rates:"
-    # main bullets. Period is encoded in the tariff-model sub-bullet
-    # (Abrechnungsperiode for fixed_*; in the model name itself for rmp_*);
-    # seasonal info is encoded in the model name ("(saisonal)") + Sommer/Winter
-    # rate sub-bullets. Both main bullets duplicated this info.
 
     lines.extend(
         _render_bonuses_lines(
@@ -2547,10 +2481,10 @@ def _should_emit_today_block(report: _RecomputeReport) -> bool:
     """Emit the 'Active configuration (today)' block only when today's date
     falls within at least one recomputed period.
 
-    v0.18.0 (Issue 8.6): editing a past transition recomputes that quarter
-    only; today's config is irrelevant noise in the notification body.
-    Editing the running quarter still surfaces the today block (today's
-    date is inside the running quarter's bounds).
+    Editing a past transition recomputes that quarter only; today's
+    config is irrelevant noise in the notification body. Editing the
+    running quarter still surfaces the today block (today's date is
+    inside the running quarter's bounds).
     """
     if not report.rows:
         return False
@@ -2617,16 +2551,16 @@ def _render_group_heading(
     *,
     notes_lang: str = "en",
 ) -> list[str]:
-    """v0.9.2: date-bounded heading + the same bullet-list as the active-today
-    block. Replaces the prior horizontal one-liner.
+    """Date-bounded heading + the same bullet-list as the active-today
+    block.
 
     Date range is derived from the rows' period strings (the renderer is
     hass-free by design). When the group contains an ``is_current_estimate``
     row, the end-of-range is rendered as ``now`` instead of the period's
     last calendar day.
     """
-    # v0.17.0 — fingerprint extended with user_inputs (canonicalised tuple);
-    # not used here (sample_row carries the raw dict for rendering).
+    # Fingerprint includes user_inputs (canonicalised tuple); not used
+    # here (sample_row carries the raw dict for rendering).
     utility_key, kwp, ev, hkn_optin, billing, _user_inputs_canon = fingerprint
 
     # Earliest period start, latest period end (or "now" for open groups).
@@ -2647,14 +2581,13 @@ def _render_group_heading(
         end_str = "now" if has_estimate else max(ends)
         heading = f"## Configuration in effect: {start_str} → {end_str}"
     else:
-        # Defensive — shouldn't happen with v0.7.5+ snapshots.
+        # Defensive — shouldn't happen with current snapshots.
         heading = "## Configuration in effect: —"
 
     config_dict = {
         "utility_key": utility_key,
         "utility_name": sample_row.utility_name_at_period,
         "base_model": sample_row.base_model_at_period,
-        # v0.16.0 — settlement_period now carried per-row.
         "settlement_period": sample_row.settlement_period_at_period,
         "kwp": kwp,
         "eigenverbrauch": ev,
@@ -2673,15 +2606,12 @@ def _render_group_heading(
         "seasonal": sample_row.seasonal_at_period,
         "notes_active": sample_row.notes_active_at_period,
         "notes_lang": notes_lang,
-        # v0.16.0 — fields used by Tariff-model rate rendering, EV-line
-        # relevance gating, and Active-user-inputs/Bonuses lines.
         "valid_from": sample_row.valid_from_at_period,
         "fixed_rp_kwh": sample_row.fixed_rp_kwh_at_period,
         "fixed_ht_rp_kwh": sample_row.fixed_ht_rp_kwh_at_period,
         "fixed_nt_rp_kwh": sample_row.fixed_nt_rp_kwh_at_period,
         "user_inputs": sample_row.user_inputs_at_period,
         "bonuses_active": sample_row.bonuses_active_at_period,
-        # v0.16.1 — HKN-structure gating + user_inputs declaration list.
         "hkn_structure": sample_row.hkn_structure_at_period,
         "user_inputs_decl": sample_row.user_inputs_decl_at_period,
     }
@@ -2693,16 +2623,14 @@ def _render_period_table(
 ) -> tuple[list[str], list[_RecomputeReportRow]]:
     """The per-period markdown table for one group. Returns (lines, forfeit_rows).
 
-    v0.9.2: estimate rows render as ``YYYYQN *`` (compact asterisk anchor)
-    instead of the prior wide ``*(estimate · …)*`` decoration. When any row
-    in the table is ``is_current_estimate``, a single footnote line is
-    appended below the table explaining what the asterisk means.
+    Estimate rows render as ``YYYYQN *`` (compact asterisk anchor). When
+    any row in the table is ``is_current_estimate``, a single footnote
+    line is appended below the table explaining what the asterisk means.
 
-    v0.11.0 (Batch D): an optional Bonus column appears between HKN and
-    Total when any row in the table has a non-zero applied bonus. When
-    every row has zero/None bonus, the legacy 6-column layout is preserved
-    so notifications for utilities without bonus declarations look
-    bytewise-identical to v0.10.0.
+    An optional Bonus column appears between HKN and Total when any row
+    in the table has a non-zero applied bonus. When every row has
+    zero/None bonus, the 6-column layout is preserved so notifications
+    for utilities without bonus declarations stay compact.
     """
     # Pre-scan: emit the Bonus column only when at least one row or sub-row
     # in this group has a non-zero bonus. Threshold mirrors the cap-forfeit
@@ -2795,7 +2723,7 @@ def _render_period_table(
         lines.append(markdown)
         if is_forfeit:
             forfeit_rows.append(r)
-        # v0.9.9 — sub-rows under the main row when this period spans
+        # Sub-rows under the main row when this period spans
         # >1 (config × season) segment.
         for sub in r.sub_rows or ():
             sub_markdown, _ = _format_cell_block(
@@ -2824,12 +2752,11 @@ def _render_period_table(
 def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     """Pure function: report → ``(title, markdown_body)``. Easy to unit-test.
 
-    v0.8.6: groups rows by config fingerprint and renders one section per
+    Groups rows by config fingerprint and renders one section per
     distinct config used. The "Active configuration (today)" block always
     appears at the top; per-config sections follow in newest-first order.
     When the recompute spans only one config and that config matches
-    today's, the per-config heading is suppressed so single-utility output
-    looks identical to v0.8.5.
+    today's, the per-config heading is suppressed.
     """
     n_periods = len(report.rows)
     n_q = report.quarters_recomputed
@@ -2864,7 +2791,7 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
 
     # Suppress the redundant per-group heading when there's exactly one
     # group and it matches today's active config — the active-today block
-    # alone already says what's going on. v0.16.0: route through the same
+    # alone already says what's going on. Routes through the same
     # canonicalizer the row-fingerprint uses so int-vs-float / bool-vs-int
     # drift between live config and snapshot doesn't break equality.
     today_fingerprint = _canon_fingerprint(
@@ -2877,7 +2804,7 @@ def _format_recompute_notification(report: _RecomputeReport) -> tuple[str, str]:
     )
     notes_lang = report.config.get("notes_lang", "en")
 
-    # v0.16.1 — per-group suppression. The active-today block already
+    # Per-group suppression. The active-today block already
     # rendered today's config; for the group whose fingerprint matches, we
     # render only its data table (with a "Per-period results" delimiter so
     # the table is attributable). Other groups still get a full heading +
