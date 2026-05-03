@@ -11,6 +11,7 @@ plan verification scenarios 9 & 10).
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from aioresponses import aioresponses
@@ -142,8 +143,6 @@ class TestScanHistoryForDrift:
     pair."""
 
     def _make_entry(self, history):
-        from types import SimpleNamespace
-
         from custom_components.bfe_rueckliefertarif.const import OPT_CONFIG_HISTORY
         return SimpleNamespace(
             entry_id="test_entry_id",
@@ -337,7 +336,6 @@ class TestTariffDriftRepairFlow:
 
     @pytest.mark.asyncio
     async def test_save_appends_entry_with_patched_user_inputs(self, monkeypatch):
-        from types import SimpleNamespace
         from unittest.mock import MagicMock
 
         from custom_components.bfe_rueckliefertarif.const import (
@@ -482,8 +480,6 @@ class TestRemoteSchemaFetch:
 
     def _make_coordinator(self, tmp_path):
         """Build a TariffsDataCoordinator with a minimal stub HA-side."""
-        from types import SimpleNamespace
-
         async def _exec(func, *args, **kwargs):
             return func(*args, **kwargs)
 
