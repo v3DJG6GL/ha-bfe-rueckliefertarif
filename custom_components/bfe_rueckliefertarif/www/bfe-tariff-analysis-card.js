@@ -24,7 +24,7 @@
 const DOMAIN = "bfe_rueckliefertarif";
 const SERVICE = "get_breakdown";
 
-const CARD_VERSION = "0.23.1";
+const CARD_VERSION = "0.23.2";
 
 const HISTORY_QUARTERS_DEFAULT = 8;
 
@@ -523,9 +523,17 @@ class BfeTariffAnalysisCard extends HTMLElement {
         const value = b.kind === "multiplier_pct"
           ? `${b.multiplier_pct >= 100 ? "+" : "−"}${Math.abs(b.multiplier_pct - 100).toFixed(2)}%`
           : `${this._fmt(b.rate_rp_kwh, 2)} Rp/kWh`;
-        const annotation = b.applies_when === "always"
-          ? " (immer)"
-          : (b.applies_when === "opt_in" ? " (opt-in)" : "");
+        // Derive a human-readable annotation from both `applies_when` and
+        // the `when` clause. A bonus may be season-gated, user-input-gated,
+        // or unconditional — surface that so the card's "(immer)" never
+        // contradicts the importer's hourly evaluate_when() decision.
+        const labels = [];
+        if (b.applies_when === "opt_in") labels.push("opt-in");
+        if (b.when?.season === "summer") labels.push("Sommer");
+        if (b.when?.season === "winter") labels.push("Winter");
+        if (b.when?.user_inputs && b.applies_when !== "opt_in") labels.push("bedingt");
+        if (labels.length === 0) labels.push("immer");
+        const annotation = ` (${labels.join(", ")})`;
         return `${b.name || "—"}: ${value}${annotation}`;
       });
       html += this._configRow("Boni", parts.join(" · "));
@@ -717,10 +725,14 @@ class BfeTariffAnalysisCard extends HTMLElement {
       cap_rp_kwh: row.cap_rp_kwh_at_period ?? fallback.cap_rp_kwh,
       tariffs_version: row.tariffs_version_at_period ?? fallback.tariffs_version,
       tariffs_source: row.tariffs_source_at_period ?? fallback.tariffs_source,
-      seasonal: row.seasonal_at_period ?? fallback.seasonal,
-      fixed_rp_kwh: row.fixed_rp_kwh_at_period ?? fallback.fixed_rp_kwh,
-      fixed_ht_rp_kwh: row.fixed_ht_rp_kwh_at_period ?? fallback.fixed_ht_rp_kwh,
-      fixed_nt_rp_kwh: row.fixed_nt_rp_kwh_at_period ?? fallback.fixed_nt_rp_kwh,
+      // Mutually exclusive model-specific fields — never fall back to
+      // today's config, otherwise today's seasonal/HT-NT/fixed leaks
+      // into historical rows whose base_model differs (same rationale
+      // as bonuses_active below).
+      seasonal: row.seasonal_at_period ?? null,
+      fixed_rp_kwh: row.fixed_rp_kwh_at_period ?? null,
+      fixed_ht_rp_kwh: row.fixed_ht_rp_kwh_at_period ?? null,
+      fixed_nt_rp_kwh: row.fixed_nt_rp_kwh_at_period ?? null,
       // When a historical row is missing this field (older imports that
       // pre-date the at_period bonus snapshot), assume "no boni at that
       // time" rather than leaking today's array into the past quarter's view.

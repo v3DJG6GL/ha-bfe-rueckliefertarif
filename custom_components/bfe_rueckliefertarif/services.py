@@ -861,7 +861,7 @@ def _record_snapshot(
         "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
-        "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
+        "bonuses_active": list((rt.bonuses or ()) + (rt.tier_bonuses or ())) or None,
         "hkn_structure": rt.hkn_structure,
         "user_inputs_decl": list(
             resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
@@ -1200,7 +1200,7 @@ async def _import_running_quarter_estimate(
         "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
         "fixed_nt_rp_kwh": rt.fixed_nt_rp_kwh,
         "user_inputs": dict(tariff_cfg.user_inputs or {}),
-        "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
+        "bonuses_active": list((rt.bonuses or ()) + (rt.tier_bonuses or ())) or None,
         "hkn_structure": rt.hkn_structure,
         "user_inputs_decl": list(
             resolve_user_inputs_decl(rt.utility_key, rt.valid_from)
@@ -2007,7 +2007,7 @@ def _build_recompute_report(
         "seasonal": rt.seasonal,
         "notes_active": list(rt.notes) if rt.notes else None,
         "notes_lang": user_lang,
-        "bonuses_active": list(rt.bonuses) if rt.bonuses else None,
+        "bonuses_active": list((rt.bonuses or ()) + (rt.tier_bonuses or ())) or None,
         "valid_from": rt.valid_from,
         "fixed_rp_kwh": rt.fixed_rp_kwh,
         "fixed_ht_rp_kwh": rt.fixed_ht_rp_kwh,
