@@ -88,18 +88,8 @@ class TestSetupSentinelSynthesis:
             captured.update(kwargs)
 
         hass.config_entries.async_update_entry.side_effect = _record
-        # Stub out the platform-forward + service register so setup completes.
         hass.config_entries.async_forward_entry_setups.return_value = None
-        with patch(
-            "custom_components.bfe_rueckliefertarif.services.async_register_services",
-            new=_async_noop,
-        ), patch(
-            "custom_components.bfe_rueckliefertarif.data_coordinator."
-            "TariffsDataCoordinator"
-        ) as tdc_cls:
-            tdc_cls.return_value.async_load = _async_noop
-            hass.config_entries.async_forward_entry_setups = _async_noop
-            await async_setup_entry(hass, entry)
+        await _run_setup_entry_with_stubs(hass, entry)
 
         assert "options" in captured, "expected async_update_entry(options=...) call"
         history = captured["options"][OPT_CONFIG_HISTORY]
@@ -121,16 +111,7 @@ class TestSetupSentinelSynthesis:
         ]
         hass = _mock_hass()
         entry = _entry(options={OPT_CONFIG_HISTORY: existing_history})
-        with patch(
-            "custom_components.bfe_rueckliefertarif.services.async_register_services",
-            new=_async_noop,
-        ), patch(
-            "custom_components.bfe_rueckliefertarif.data_coordinator."
-            "TariffsDataCoordinator"
-        ) as tdc_cls:
-            tdc_cls.return_value.async_load = _async_noop
-            hass.config_entries.async_forward_entry_setups = _async_noop
-            await async_setup_entry(hass, entry)
+        await _run_setup_entry_with_stubs(hass, entry)
         # No options write should have happened.
         assert not hass.config_entries.async_update_entry.called
 
@@ -146,16 +127,8 @@ class TestSetupSentinelSynthesis:
         )
         with caplog.at_level(
             logging.ERROR, logger="custom_components.bfe_rueckliefertarif"
-        ), patch(
-            "custom_components.bfe_rueckliefertarif.services.async_register_services",
-            new=_async_noop,
-        ), patch(
-            "custom_components.bfe_rueckliefertarif.data_coordinator."
-            "TariffsDataCoordinator"
-        ) as tdc_cls:
-            tdc_cls.return_value.async_load = _async_noop
-            hass.config_entries.async_forward_entry_setups = _async_noop
-            await async_setup_entry(hass, entry)
+        ):
+            await _run_setup_entry_with_stubs(hass, entry)
         assert any("OPT_CONFIG_HISTORY is empty" in r.message for r in caplog.records)
         # No reseed write happened.
         assert not hass.config_entries.async_update_entry.called
@@ -341,6 +314,22 @@ def _close_coro(coro):
     ``hass.async_create_task``; close them so they don't leak as
     ``coroutine was never awaited`` warnings at test teardown."""
     coro.close()
+
+
+async def _run_setup_entry_with_stubs(hass, entry):
+    """Stub services.async_register_services + TariffsDataCoordinator + the
+    platform-forward call so ``async_setup_entry`` runs to completion against
+    a MagicMock hass."""
+    with patch(
+        "custom_components.bfe_rueckliefertarif.services.async_register_services",
+        new=_async_noop,
+    ), patch(
+        "custom_components.bfe_rueckliefertarif.data_coordinator."
+        "TariffsDataCoordinator"
+    ) as tdc_cls:
+        tdc_cls.return_value.async_load = _async_noop
+        hass.config_entries.async_forward_entry_setups = _async_noop
+        await async_setup_entry(hass, entry)
 
 
 class TestApplyChangeWizard:
@@ -1523,16 +1512,7 @@ class TestValidFromInitialFlow:
             captured.update(kwargs)
 
         hass.config_entries.async_update_entry.side_effect = _record
-        with patch(
-            "custom_components.bfe_rueckliefertarif.services.async_register_services",
-            new=_async_noop,
-        ), patch(
-            "custom_components.bfe_rueckliefertarif.data_coordinator."
-            "TariffsDataCoordinator"
-        ) as tdc_cls:
-            tdc_cls.return_value.async_load = _async_noop
-            hass.config_entries.async_forward_entry_setups = _async_noop
-            await async_setup_entry(hass, entry)
+        await _run_setup_entry_with_stubs(hass, entry)
 
         history = captured["options"][OPT_CONFIG_HISTORY]
         assert len(history) == 1
@@ -1554,16 +1534,7 @@ class TestValidFromInitialFlow:
         hass.config_entries.async_update_entry.side_effect = (
             lambda _e, **kw: captured.update(kw)
         )
-        with patch(
-            "custom_components.bfe_rueckliefertarif.services.async_register_services",
-            new=_async_noop,
-        ), patch(
-            "custom_components.bfe_rueckliefertarif.data_coordinator."
-            "TariffsDataCoordinator"
-        ) as tdc_cls:
-            tdc_cls.return_value.async_load = _async_noop
-            hass.config_entries.async_forward_entry_setups = _async_noop
-            await async_setup_entry(hass, entry)
+        await _run_setup_entry_with_stubs(hass, entry)
 
         history = captured["options"][OPT_CONFIG_HISTORY]
         assert history[0]["valid_from"] == "1970-01-01"
