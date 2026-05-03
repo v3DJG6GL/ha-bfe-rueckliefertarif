@@ -883,13 +883,10 @@ class TestBatchDPerHourBonusesAndHknCases:
     4-tuple (rate, base, hkn, bonus) where rate = base + hkn + bonus.
     """
 
-    def _hour_winter(self):
-        # 2026-01-15 14:00 UTC — January is winter under standard
-        # summer=[4..9]/winter=[10..3] split.
-        return datetime(2026, 1, 15, 14, tzinfo=UTC)
-
-    def _hour_summer(self):
-        return datetime(2026, 7, 15, 14, tzinfo=UTC)
+    # 2026-01-15 14:00 UTC — January is winter under standard
+    # summer=[4..9]/winter=[10..3] split.
+    _HOUR_WINTER = datetime(2026, 1, 15, 14, tzinfo=UTC)
+    _HOUR_SUMMER = datetime(2026, 7, 15, 14, tzinfo=UTC)
 
     def _seasonal_classify_only(self):
         # Seasonal block with NO rate keys — purely month classification
@@ -916,7 +913,7 @@ class TestBatchDPerHourBonusesAndHknCases:
         )
         cfg = self._cfg(rt=rt)
         rate, base, hkn, bonus = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_winter()
+            cfg, 0.0, self._HOUR_WINTER
         )
         assert hkn == pytest.approx(2.0)
         assert bonus == 0.0
@@ -936,11 +933,11 @@ class TestBatchDPerHourBonusesAndHknCases:
         cfg = self._cfg(rt=rt)
         # Winter hour → 4.0
         _, _, hkn_w, _ = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_winter()
+            cfg, 0.0, self._HOUR_WINTER
         )
         # Summer hour → 1.5
         _, _, hkn_s, _ = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_summer()
+            cfg, 0.0, self._HOUR_SUMMER
         )
         assert hkn_w == pytest.approx(4.0)
         assert hkn_s == pytest.approx(1.5)
@@ -956,7 +953,7 @@ class TestBatchDPerHourBonusesAndHknCases:
         ))
         cfg = self._cfg(rt=rt, user_inputs={"supply_product": False})
         _, _, hkn, _ = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_winter()
+            cfg, 0.0, self._HOUR_WINTER
         )
         # No case matched — falls through to static rt.hkn_rp_kwh = 1.0.
         assert hkn == pytest.approx(1.0)
@@ -974,7 +971,7 @@ class TestBatchDPerHourBonusesAndHknCases:
         ))
         cfg = self._cfg(rt=rt, hkn_aktiviert=False)
         rate, base, hkn, bonus = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_winter()
+            cfg, 0.0, self._HOUR_WINTER
         )
         assert bonus == pytest.approx(0.5)
         assert rate == pytest.approx(base + hkn + bonus)
@@ -993,7 +990,7 @@ class TestBatchDPerHourBonusesAndHknCases:
         ))
         cfg = self._cfg(rt=rt, hkn_aktiviert=False)
         rate, base, _, bonus = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_winter()
+            cfg, 0.0, self._HOUR_WINTER
         )
         # base after floor = 10.0; bonus delta = 10.0 * (0.85 - 1) = -1.5.
         assert base == pytest.approx(10.0)
@@ -1014,7 +1011,7 @@ class TestBatchDPerHourBonusesAndHknCases:
         ))
         cfg = self._cfg(rt=rt, hkn_aktiviert=False)
         _, _, _, bonus = _effective_rate_breakdown_at_hour(
-            cfg, 0.0, self._hour_winter()
+            cfg, 0.0, self._HOUR_WINTER
         )
         assert bonus == 0.0
 
@@ -1038,10 +1035,10 @@ class TestBatchDPerHourBonusesAndHknCases:
             rt=rt, hkn_aktiviert=False, user_inputs={"top40_enrolled": True}
         )
         _, _, _, b_off = _effective_rate_breakdown_at_hour(
-            cfg_off, 0.0, self._hour_winter()
+            cfg_off, 0.0, self._HOUR_WINTER
         )
         _, _, _, b_on = _effective_rate_breakdown_at_hour(
-            cfg_on, 0.0, self._hour_winter()
+            cfg_on, 0.0, self._HOUR_WINTER
         )
         assert b_off == 0.0
         assert b_on == pytest.approx(1.0)
