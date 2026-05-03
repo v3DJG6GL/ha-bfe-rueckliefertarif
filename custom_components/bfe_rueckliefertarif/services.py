@@ -463,7 +463,7 @@ def _aggregate_by_period(
     rendering can emit sub-rows. The top-level period totals always reflect
     the whole period (sum across all segments).
     """
-    from .quarters import ZURICH as z
+    from .quarters import ZURICH
 
     quarterly = rhythm == ABRECHNUNGS_RHYTHMUS_QUARTAL
     yearly = rhythm == "jahr"
@@ -483,7 +483,7 @@ def _aggregate_by_period(
     # appear in chronological-segment order.
     sub_buckets: dict[str, dict[str, dict[str, float]]] = defaultdict(dict)
     for r in records:
-        local = r.start.astimezone(z)
+        local = r.start.astimezone(ZURICH)
         if hourly:
             key = local.strftime("%Y-%m-%d %H:00")
         elif daily:
@@ -872,15 +872,15 @@ def _record_snapshot(
     # the quarter actually spans >1 segment (single-segment quarters render
     # as today's flat shape).
     if segments and len(segments) > 1:
-        from .quarters import ZURICH as z
+        from .quarters import ZURICH
 
         segments_meta: dict[str, dict] = {}
         db = load_tariffs()
         for seg in segments:
             srt = seg.cfg.resolved
             utility_meta = db["utilities"].get(srt.utility_key, {})
-            seg_local_start = seg.start_utc.astimezone(z)
-            seg_local_end = seg.end_utc.astimezone(z)
+            seg_local_start = seg.start_utc.astimezone(ZURICH)
+            seg_local_end = seg.end_utc.astimezone(ZURICH)
             segments_meta[seg.seg_id] = {
                 "valid_from": seg_local_start.date().isoformat(),
                 "valid_to": seg_local_end.date().isoformat(),
