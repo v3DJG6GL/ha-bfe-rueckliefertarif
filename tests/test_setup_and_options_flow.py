@@ -9,14 +9,17 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from custom_components.bfe_rueckliefertarif import async_setup_entry
+from custom_components.bfe_rueckliefertarif import services as svc
+from custom_components.bfe_rueckliefertarif.bfe import BfePrice
 from custom_components.bfe_rueckliefertarif.config_flow import (
     BfeRuecklieferTarifFlow,
     BfeRuecklieferTarifOptionsFlow,
@@ -36,6 +39,8 @@ from custom_components.bfe_rueckliefertarif.const import (
     DOMAIN,
     OPT_CONFIG_HISTORY,
 )
+from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
+from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
 
 
 def _entry_data(utility="ekz", kw=8.0):
@@ -153,12 +158,7 @@ class TestSetupSentinelSynthesis:
 
 
 class TestOptionsFlowPreservesOptions:
-    """Fix A verification — terminal returns carry current options through.
-
-    The four sites that previously returned ``data={}`` must now return
-    ``data=dict(self.config_entry.options or {})`` so HA's
-    ``OptionsFlowManager.async_finish_flow`` doesn't wipe ``entry.options``.
-    """
+    """Terminal returns carry current options so HA doesn't wipe entry.options."""
 
     def _make_flow(self, options):
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
@@ -237,7 +237,6 @@ class TestFirstEntryDataLiveReads:
 
     def _setup_hass_with_entry(self, entry_data, entry_options):
         """Build a hass mock + a stored entry slot + a live ConfigEntry."""
-        from custom_components.bfe_rueckliefertarif.const import DOMAIN
 
         hass = MagicMock()
         live_entry = SimpleNamespace(
@@ -304,16 +303,15 @@ class TestCoordinatorConfigLiveReads:
         }
 
     def test_config_property_reflects_live_history_open_record(self):
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
-            data={"stromnetzeinspeisung_kwh": "sensor.foo"},
+            data={CONF_STROMNETZEINSPEISUNG_KWH: "sensor.foo"},
             options={OPT_CONFIG_HISTORY: [self._open_record(utility="ekz")]},
         )
         assert coord._config[CONF_ENERGIEVERSORGER] == "ekz"
         # Entity wiring from entry.data merged in.
-        assert coord._config["stromnetzeinspeisung_kwh"] == "sensor.foo"
+        assert coord._config[CONF_STROMNETZEINSPEISUNG_KWH] == "sensor.foo"
 
         # Mutate live history (e.g. via OptionsFlow apply_change).
         coord.entry.options = {
@@ -324,7 +322,6 @@ class TestCoordinatorConfigLiveReads:
     def test_config_property_history_overrides_entry_data_versioned(self):
         # Pre-A+ entries may still carry versioned fields in entry.data.
         # Post-A+ those must be ignored — history wins.
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
@@ -340,11 +337,8 @@ async def _async_noop(*args, **kwargs):
 
 
 class TestApplyChangeWizard:
-    """v0.12.1 — the OptionsFlow ``apply_change`` wizard is now a two-step
-    flow: Step 1 picks utility + valid_from, Step 2 captures kW / EV / HKN
-    / declared user_inputs and saves. The split makes the utility-specific
-    Step 2 context (notes / tarif_urls / user_inputs) reflect Step 1's
-    pick instead of the form's stale defaults."""
+    """OptionsFlow ``apply_change`` two-step wizard (Step 1 picks utility/date/kW,
+    Step 2 captures EV/HKN/user_inputs)."""
 
     def _make_flow(self, options, data=None):
         from unittest.mock import AsyncMock
@@ -355,7 +349,7 @@ class TestApplyChangeWizard:
         flow.hass.async_add_executor_job = AsyncMock(return_value=None)
         flow_entry = SimpleNamespace(
             entry_id="test_entry_id",
-            data=data or {"stromnetzeinspeisung_kwh": "sensor.foo"},
+            data=data or {CONF_STROMNETZEINSPEISUNG_KWH: "sensor.foo"},
             options=MappingProxyType(options),
         )
         flow.handler = "test_entry_id"
@@ -649,7 +643,7 @@ class TestPerPeriodEditor:
         flow.hass.async_add_executor_job = AsyncMock(return_value=None)
         flow_entry = SimpleNamespace(
             entry_id="test_entry_id",
-            data=data or {"stromnetzeinspeisung_kwh": "sensor.foo"},
+            data=data or {CONF_STROMNETZEINSPEISUNG_KWH: "sensor.foo"},
             options=MappingProxyType(options),
         )
         flow.handler = "test_entry_id"
@@ -852,15 +846,11 @@ class TestPerPeriodEditor:
 
 
 class TestRecomputeHistoryEstimate:
-    """v0.9.0 — _reimport_all_history appends a running-quarter estimate row;
-    the recompute report propagates `is_current_estimate` to its rows; the
-    notification renderer marks them visually."""
+    """Recompute report flags estimate rows; notification renderer marks them."""
 
     def test_report_row_carries_is_current_estimate(self):
         # Simulate a coordinator with one estimate snapshot in _imported,
         # build the report, assert the row is flagged as estimate.
-        from custom_components.bfe_rueckliefertarif.const import DOMAIN
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
         from custom_components.bfe_rueckliefertarif.services import (
             _build_recompute_report,
         )
@@ -908,8 +898,8 @@ class TestRecomputeHistoryEstimate:
         live_entry = SimpleNamespace(
             entry_id="entry_xyz",
             data={
-                "stromnetzeinspeisung_kwh": "sensor.foo",
-                "rueckliefervergutung_chf": "sensor.bar",
+                CONF_STROMNETZEINSPEISUNG_KWH: "sensor.foo",
+                CONF_RUECKLIEFERVERGUETUNG_CHF: "sensor.bar",
             },
             options={
                 OPT_CONFIG_HISTORY: [
@@ -1004,8 +994,7 @@ class TestRecomputeHistoryEstimate:
 
 
 class TestRecomputeHistoryStep:
-    """v0.9.0 — the OptionsFlow ``recompute_history`` step delegates to
-    ``_reimport_all_history`` after confirmation."""
+    """OptionsFlow ``recompute_history`` step delegates to `_reimport_all_history`."""
 
     def _make_flow(self, options=None):
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
@@ -1047,10 +1036,7 @@ class TestRecomputeHistoryStep:
 
 
 class TestRefreshUpstreamDataHelper:
-    """v0.9.6 — `_refresh_upstream_data` runs both fetch operations: BFE
-    prices via `BfeCoordinator.async_refresh()` AND tariffs.json via
-    `TariffsDataCoordinator.async_refresh()`. Returns a dict that surfaces
-    both fetch statuses for the OptionsFlow renderer."""
+    """`_refresh_upstream_data` refreshes both BFE prices and tariffs.json."""
 
     def _make_hass(self, *, tdc_refresh_returns=True, tdc_last_error=None):
         from unittest.mock import AsyncMock
@@ -1089,7 +1075,6 @@ class TestRefreshUpstreamDataHelper:
 
     @pytest.mark.asyncio
     async def test_calls_both_coordinators_and_returns_tariffs_status(self):
-        from custom_components.bfe_rueckliefertarif import services as svc
 
         hass, coordinator, tdc = self._make_hass(tdc_refresh_returns=True)
         result = await svc._refresh_upstream_data(hass)
@@ -1102,7 +1087,6 @@ class TestRefreshUpstreamDataHelper:
 
     @pytest.mark.asyncio
     async def test_continues_when_tariffs_refresh_fails(self):
-        from custom_components.bfe_rueckliefertarif import services as svc
 
         hass, coordinator, tdc = self._make_hass(
             tdc_refresh_returns=False,
@@ -1295,7 +1279,6 @@ class TestFirstTimeSetupSplitFlow:
         flow.hass.async_add_executor_job = AsyncMock(return_value=None)
         # Pre-seed hass.data[DOMAIN]['_tariffs_data'] so _async_warm_cache
         # short-circuits past the TariffsDataCoordinator init.
-        from custom_components.bfe_rueckliefertarif.const import DOMAIN
         tdc_stub = MagicMock()
         tdc_stub.async_load = AsyncMock(return_value=None)
         flow.hass.data = {DOMAIN: {"_tariffs_data": tdc_stub}}
@@ -1604,10 +1587,7 @@ class TestValidFromInitialFlow:
 
 
 class TestReimportClearsFirst:
-    """v0.9.2 — _reimport_all_history wipes LTS + the in-memory snapshot map
-    BEFORE iterating quarters, so the first run after a fresh install is
-    idempotent (no stale rows from HA's energy-component auto-compensation
-    poisoning the cumulative sum chain)."""
+    """`_reimport_all_history` wipes LTS + snapshot map before iterating quarters."""
 
     @pytest.mark.asyncio
     async def test_clear_via_recorder_task_queue_then_block_till_done(self):
@@ -1618,7 +1598,6 @@ class TestReimportClearsFirst:
         # trips HA's `_assert_in_recorder_thread` guard. After queueing, we
         # `await instance.async_block_till_done()` so anchor reads in the
         # subsequent quarter loop don't race with the queued clear.
-        from custom_components.bfe_rueckliefertarif import services as svc
 
         hass = MagicMock()
         coordinator = MagicMock()
@@ -1716,9 +1695,6 @@ class TestReimportClearsFirst:
         # History anchor at 2025-04-01. Pretend BFE has 2024Q4 + 2025Q1 +
         # 2025Q2 + 2025Q3. Only 2025Q2 + 2025Q3 should be imported; 2024Q4
         # and 2025Q1 land in `before_active`.
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         hass = MagicMock()
         coordinator = MagicMock()
@@ -1787,7 +1763,6 @@ class TestReimportClearsFirst:
     async def test_result_dict_always_has_before_active_key(self):
         # Even when no history exists or no quarters predate, the key is
         # always present so callers can rely on it.
-        from custom_components.bfe_rueckliefertarif import services as svc
 
         hass = MagicMock()
         coordinator = MagicMock()
@@ -1826,20 +1801,12 @@ class TestReimportClearsFirst:
 
 
 class TestAnchorThreading:
-    """v0.9.11 — `_reimport_all_history` threads the cumulative LTS sum
-    through memory rather than re-reading from the recorder between
-    quarters. Eliminates a commit-timer race where a back-to-back
-    anchor read could observe pre-commit state and write the next
-    quarter from anchor=0.
-    """
+    """`_reimport_all_history` threads cumulative LTS sum through memory between quarters."""
 
     @pytest.mark.asyncio
     async def test_threads_returned_anchor_through_quarters(self):
         # Each `_reimport_quarter` mock returns a prescribed final sum.
         # The next call must receive that value via `anchor_override`.
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         hass = MagicMock()
         coordinator = MagicMock()
@@ -1911,9 +1878,6 @@ class TestAnchorThreading:
     async def test_failed_quarter_does_not_advance_cumulative(self):
         # If a quarter raises, the cumulative anchor should NOT advance,
         # so the next quarter still anchors at the prior good value.
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         hass = MagicMock()
         coordinator = MagicMock()
@@ -1983,15 +1947,10 @@ class TestAnchorThreading:
 
 
 class TestCoordinatorRefreshesRunningQuarter:
-    """v0.9.12 — `_auto_import_newly_published` (the 6h tick / reload /
-    refresh_data trigger) refreshes the running-quarter estimate so the
-    Energy Dashboard's 'this quarter' CHF rolls forward continuously
-    rather than freezing between manual recomputes.
-    """
+    """`_auto_import_newly_published` refreshes the running-quarter estimate."""
 
     def _make_coord(self, *, quarterly: dict, imported: dict | None = None,
                     history_valid_from: str = "2025-01-01"):
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
@@ -2012,7 +1971,6 @@ class TestCoordinatorRefreshesRunningQuarter:
         coord.hass = MagicMock()
         # v0.9.14 — `_auto_import_newly_published` wraps its body in this
         # lock; the BfeCoordinator(__new__) skip means we set it manually.
-        import asyncio
         coord._auto_import_lock = asyncio.Lock()
         # Sub-helpers that aren't relevant to these tests.
         coord._notify_skipped_quarters = _async_noop_factory()
@@ -2022,9 +1980,6 @@ class TestCoordinatorRefreshesRunningQuarter:
     async def test_refreshes_running_quarter_when_no_reimports(self):
         # No stale quarters → no `_reimport_quarter` calls → estimate
         # still runs (LTS-read path because no contiguous reimport).
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         # Q1 2026 already in `_imported` and considered fresh.
         q1_2026 = Quarter(2026, 1)
@@ -2062,9 +2017,6 @@ class TestCoordinatorRefreshesRunningQuarter:
     async def test_chains_anchor_when_prev_quarter_was_just_reimported(self):
         # Q1 2026 reimported in this tick → running Q2 2026 should chain
         # its anchor through memory using Q1's returned final sum.
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         q1_2026 = Quarter(2026, 1)
         coord = self._make_coord(
@@ -2097,9 +2049,6 @@ class TestCoordinatorRefreshesRunningQuarter:
         # Only Q3 2025 was reimported (e.g. utility change for that
         # quarter only). Running quarter Q2 2026 is NOT contiguous to
         # Q3 2025 → fall back to LTS-read path.
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         q3_2025 = Quarter(2025, 3)
         coord = self._make_coord(
@@ -2132,12 +2081,6 @@ class TestCoordinatorRefreshesRunningQuarter:
         # If BFE has published the running quarter, the published-quarter
         # loop handles it via `_reimport_quarter`. The estimate must NOT
         # then overwrite that with a floor-based estimate.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import quarter_of
-
         running_q = quarter_of(datetime.now(UTC))
         coord = self._make_coord(
             quarterly={
@@ -2166,13 +2109,9 @@ class TestCoordinatorRefreshesRunningQuarter:
 
 
 class TestFirstRefreshDefersAutoImport:
-    """v0.9.14 — `_async_update_data`'s first refresh schedules
-    `_auto_import_newly_published` as a background task instead of
-    blocking on it inline. This keeps sensor platform setup off the
-    recorder-drain critical path during HA startup."""
+    """First refresh schedules `_auto_import_newly_published` as a background task."""
 
     def _make_coord(self, *, data):
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
@@ -2201,8 +2140,6 @@ class TestFirstRefreshDefersAutoImport:
         # `self.data is None` → schedule auto-import as a background task,
         # don't await it inline.
         from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         coord = self._make_coord(data=None)
         background_tasks: list = []
@@ -2241,8 +2178,6 @@ class TestFirstRefreshDefersAutoImport:
         # `self.data` already populated → 6h tick path → run inline,
         # no background task.
         from custom_components.bfe_rueckliefertarif import coordinator as coord_mod
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter
 
         coord = self._make_coord(data={"already": "populated"})
 
@@ -2278,20 +2213,13 @@ class TestFirstRefreshDefersAutoImport:
 
 
 class TestAutoImportLock:
-    """v0.9.14 — `_auto_import_newly_published` is single-flight: a 6h
-    tick that fires while the first-refresh-deferred background task
-    is still running waits for it instead of interleaving."""
+    """`_auto_import_newly_published` serializes concurrent invocations via lock."""
 
     @pytest.mark.asyncio
     async def test_lock_serializes_concurrent_invocations(self):
         # Two concurrent invocations of `_auto_import_newly_published`
         # must not interleave; the second waits until the first
         # releases the lock.
-        import asyncio
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
-
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -2350,20 +2278,10 @@ class TestAutoImportLock:
 
 
 class TestApplyChangeNotificationIncludesRunningQuarter:
-    """v0.9.14 — when the auto-import path fires the recompute
-    notification (because something published was reimported), the
-    running quarter rides along so apply_change recomputes show e.g.
-    2026Q1 + 2026Q2, not just 2026Q1."""
+    """Auto-import recompute notifications include the running quarter."""
 
     @pytest.mark.asyncio
     async def test_running_quarter_appended_to_report_quarters(self):
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
-
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
             entry_id="entry_xyz",
@@ -2389,7 +2307,6 @@ class TestApplyChangeNotificationIncludesRunningQuarter:
         }
         coord._imported = {}
         coord.hass = MagicMock()
-        import asyncio
         coord._auto_import_lock = asyncio.Lock()
         coord._notify_skipped_quarters = _async_noop_factory()
         coord._snapshot_is_stale = MagicMock(return_value=True)
@@ -2421,14 +2338,10 @@ class TestApplyChangeNotificationIncludesRunningQuarter:
 
 
 class TestRunningQuarterStalenessGate:
-    """v0.9.15 — apply_change reload (and cold startup) only re-runs the
-    running-quarter estimate when the running quarter's resolved config
-    actually changed. Mirrors `_snapshot_is_stale` for published quarters.
-    Other triggers (6h tick, refresh_data) keep unconditional behavior."""
+    """apply_change reload re-runs the running-quarter estimate only when its config changed."""
 
     def _make_coord(self, *, quarterly: dict, imported: dict | None = None,
                     history_valid_from: str = "2025-01-01"):
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
@@ -2447,41 +2360,61 @@ class TestRunningQuarterStalenessGate:
         coord.quarterly = quarterly
         coord._imported = imported or {}
         coord.hass = MagicMock()
-        import asyncio
         coord._auto_import_lock = asyncio.Lock()
         coord._notify_skipped_quarters = _async_noop_factory()
         return coord
 
+    @pytest.mark.parametrize(
+        ("is_user_reload", "config_changed", "with_prior_snapshot",
+         "expected_estimate_calls", "running_q_in_report"),
+        [
+            # apply_change reload, running config unchanged → estimate skipped.
+            pytest.param(
+                True, False, True, 0, False,
+                id="apply_change_skips_when_running_q_unchanged",
+            ),
+            # apply_change reload, running config changed → estimate runs.
+            pytest.param(
+                True, True, True, 1, True,
+                id="apply_change_runs_when_running_q_changed",
+            ),
+            # 6h tick (is_user_reload=False) → estimate runs unconditionally,
+            # but running_q excluded from notification when config unchanged.
+            pytest.param(
+                False, False, True, 1, False,
+                id="six_hour_tick_runs_estimate_unconditionally",
+            ),
+            # First-ever run (no prior snapshot) → estimate runs AND running_q
+            # listed; let real `_running_q_config_changed` fire (returns True
+            # for no-prior).
+            pytest.param(
+                True, None, False, 1, True,
+                id="first_ever_estimate_runs_and_lists_running_quarter",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_apply_change_skips_estimate_when_running_q_config_unchanged(self):
-        # User edits a HISTORICAL closed record that doesn't touch the
-        # running quarter's resolved config (e.g. the 2025-01-01 →
-        # 2025-12-31 record). Expected: estimate skipped, running_q NOT
-        # in notification. Reproduces the user's v0.9.14 regression.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
-
+    async def test_running_quarter_estimate_gating(
+        self, is_user_reload, config_changed, with_prior_snapshot,
+        expected_estimate_calls, running_q_in_report,
+    ):
         running_q = quarter_of(datetime.now(UTC))
-        stale_q = Quarter(running_q.year - 1, 1)  # Q1 of last year
+        stale_q = Quarter(running_q.year - 1, 1)
+        imported = (
+            {str(running_q): {
+                "q_price_chf_mwh": None,
+                "snapshot": {"is_current_estimate": True},
+            }}
+            if with_prior_snapshot else {}
+        )
         coord = self._make_coord(
-            quarterly={
-                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
-            },
-            imported={
-                # Running quarter has a prior snapshot — won't touch it
-                # since `_running_q_config_changed` will be mocked False.
-                str(running_q): {
-                    "q_price_chf_mwh": None,
-                    "snapshot": {"is_current_estimate": True},
-                },
-            },
+            quarterly={stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0)},
+            imported=imported,
         )
         coord._snapshot_is_stale = MagicMock(return_value=True)
-        # Simulate "running quarter's config did NOT change".
-        coord._running_q_config_changed = MagicMock(return_value=False)
+        if config_changed is not None:
+            coord._running_q_config_changed = MagicMock(return_value=config_changed)
+        # else: real impl returns True for no-prior-snapshot.
 
         estimate_calls: list = []
         captured_quarters: list = []
@@ -2501,175 +2434,18 @@ class TestRunningQuarterStalenessGate:
              patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
              patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
              patch.object(svc, "_notify_recompute", new=MagicMock()):
-            await coord._auto_import_newly_published(is_user_reload=True)
+            await coord._auto_import_newly_published(is_user_reload=is_user_reload)
 
-        # Estimate was NOT called.
-        assert estimate_calls == []
-        # Notification fired (a published quarter was reimported)…
+        assert len(estimate_calls) == expected_estimate_calls
         assert len(captured_quarters) == 1
-        # …but it does NOT include the running quarter.
         assert stale_q in captured_quarters[0]
-        assert running_q not in captured_quarters[0]
-
-    @pytest.mark.asyncio
-    async def test_apply_change_runs_estimate_when_running_q_config_changed(self):
-        # User edits the OPEN record (covers running quarter), so
-        # `_running_q_config_changed` returns True. Expected: estimate
-        # runs, running_q IS in notification.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
-
-        running_q = quarter_of(datetime.now(UTC))
-        stale_q = Quarter(running_q.year, running_q.q - 1) if running_q.q > 1 \
-            else Quarter(running_q.year - 1, 4)
-        coord = self._make_coord(
-            quarterly={
-                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
-            },
-            imported={
-                str(running_q): {
-                    "q_price_chf_mwh": None,
-                    "snapshot": {"is_current_estimate": True, "hkn_optin": False},
-                },
-            },
-        )
-        coord._snapshot_is_stale = MagicMock(return_value=True)
-        coord._running_q_config_changed = MagicMock(return_value=True)
-
-        estimate_calls: list = []
-        captured_quarters: list = []
-
-        async def _fake_reimport_quarter(_hass, q):
-            return 100.0
-
-        async def _fake_estimate(_hass, *, anchor_override=None):
-            estimate_calls.append(anchor_override)
-            return {}
-
-        def _capture_report(_hass, quarters, **_kw):
-            captured_quarters.append(list(quarters))
-            return MagicMock()
-
-        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
-             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
-             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
-             patch.object(svc, "_notify_recompute", new=MagicMock()):
-            await coord._auto_import_newly_published(is_user_reload=True)
-
-        # Estimate ran AND running_q is in notification.
-        assert len(estimate_calls) == 1
-        assert running_q in captured_quarters[0]
-
-    @pytest.mark.asyncio
-    async def test_six_hour_tick_runs_estimate_unconditionally(self):
-        # 6h tick (`is_user_reload=False`) keeps the v0.9.12 behavior:
-        # estimate always runs to roll kWh forward — even when
-        # `_running_q_config_changed` is False. But the notification
-        # gate still excludes running_q because config is unchanged.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
-
-        running_q = quarter_of(datetime.now(UTC))
-        stale_q = Quarter(running_q.year - 1, 1)
-        coord = self._make_coord(
-            quarterly={
-                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
-            },
-            imported={
-                str(running_q): {
-                    "q_price_chf_mwh": None,
-                    "snapshot": {"is_current_estimate": True},
-                },
-            },
-        )
-        coord._snapshot_is_stale = MagicMock(return_value=True)
-        coord._running_q_config_changed = MagicMock(return_value=False)
-
-        estimate_calls: list = []
-        captured_quarters: list = []
-
-        async def _fake_reimport_quarter(_hass, q):
-            return 100.0
-
-        async def _fake_estimate(_hass, *, anchor_override=None):
-            estimate_calls.append(anchor_override)
-            return {}
-
-        def _capture_report(_hass, quarters, **_kw):
-            captured_quarters.append(list(quarters))
-            return MagicMock()
-
-        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
-             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
-             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
-             patch.object(svc, "_notify_recompute", new=MagicMock()):
-            await coord._auto_import_newly_published(is_user_reload=False)
-
-        # Estimate DID run (kWh roll-forward semantics for 6h tick).
-        assert len(estimate_calls) == 1
-        # But running_q NOT in notification (config unchanged).
-        assert running_q not in captured_quarters[0]
-
-    @pytest.mark.asyncio
-    async def test_first_ever_estimate_runs_and_lists_running_quarter(self):
-        # Empty `_imported` (fresh install or first run after upgrade).
-        # `_running_q_config_changed` returns True for "no prior snapshot".
-        # Expected: estimate runs AND running_q IS in notification.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
-        from custom_components.bfe_rueckliefertarif.bfe import BfePrice
-        from custom_components.bfe_rueckliefertarif.quarters import Quarter, quarter_of
-
-        running_q = quarter_of(datetime.now(UTC))
-        stale_q = Quarter(running_q.year - 1, 1)
-        coord = self._make_coord(
-            quarterly={
-                stale_q: BfePrice(chf_per_mwh=80.0, days=90, volume_mwh=0.0),
-            },
-            imported={},  # no prior snapshot for running_q
-        )
-        coord._snapshot_is_stale = MagicMock(return_value=True)
-        # Don't mock `_running_q_config_changed` — let the real impl run.
-        # With prior_snapshot={}, it returns True (no prior).
-
-        estimate_calls: list = []
-        captured_quarters: list = []
-
-        async def _fake_reimport_quarter(_hass, q):
-            return 100.0
-
-        async def _fake_estimate(_hass, *, anchor_override=None):
-            estimate_calls.append(anchor_override)
-            return {}
-
-        def _capture_report(_hass, quarters, **_kw):
-            captured_quarters.append(list(quarters))
-            return MagicMock()
-
-        with patch.object(svc, "_reimport_quarter", new=_fake_reimport_quarter), \
-             patch.object(svc, "_import_running_quarter_estimate", new=_fake_estimate), \
-             patch.object(svc, "_build_recompute_report", side_effect=_capture_report), \
-             patch.object(svc, "_notify_recompute", new=MagicMock()):
-            await coord._auto_import_newly_published(is_user_reload=True)
-
-        assert len(estimate_calls) == 1
-        assert running_q in captured_quarters[0]
+        assert (running_q in captured_quarters[0]) is running_q_in_report
 
 
 class TestAsyncUpdateDataPassesIsUserReload:
-    """v0.9.15 — `_async_update_data` passes `is_user_reload=True` to the
-    background-task path (cold startup / apply_change reload) and `False`
-    to the inline path (6h tick / refresh_data)."""
+    """`_async_update_data` passes `is_user_reload` correctly to background vs inline path."""
 
     def _make_coord(self, *, data):
-        from custom_components.bfe_rueckliefertarif.coordinator import BfeCoordinator
 
         coord = BfeCoordinator.__new__(BfeCoordinator)
         coord.entry = SimpleNamespace(
@@ -2782,12 +2558,7 @@ def _async_noop_factory():
 
 
 class TestRunningQuarterEstimatePerHourRates:
-    """v0.9.5 — `_import_running_quarter_estimate` resolves the rate per hour
-    via `_effective_rate_breakdown_at_hour` (was: one flat rate for every
-    hour). For HT/NT utilities, the right rate is applied to each hour's
-    kWh based on its Zurich-local time / day. The snapshot's per-period
-    dict comes from `_aggregate_by_period` so Base / HKN / intended_hkn
-    columns are populated with kWh-weighted averages."""
+    """`_import_running_quarter_estimate` resolves rate per hour via the rate-breakdown helper."""
 
     @pytest.mark.asyncio
     async def test_ht_nt_utility_applies_correct_rate_per_hour(self):
@@ -2796,9 +2567,6 @@ class TestRunningQuarterEstimatePerHourRates:
         # export hours land in 2026Q2 — one in HT (Tue 2026-04-07 09:00
         # UTC = 11:00 CEST → HT mofr 06–22) and one in NT (Tue 2026-04-07
         # 21:00 UTC = 23:00 CEST → after 22:00 → NT). Both 2 kWh.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.importer import TariffConfig
         from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
@@ -2919,9 +2687,6 @@ class TestRunningQuarterEstimatePerHourRates:
         # Regression: a fixed_flat utility (no HT/NT split) should produce
         # constant per-hour rates equal to fixed_rp_kwh + HKN. Base/HKN
         # cells now light up but with the same value across all hours.
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.importer import TariffConfig
         from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
@@ -3011,20 +2776,10 @@ class TestRunningQuarterEstimatePerHourRates:
 
 
 class TestRunningEstimateDuringFirstRefresh:
-    """v0.9.13 — regression test for "Coordinator not ready" warning fired
-    during entry reload after `apply_change`.
-
-    `_async_update_data` runs while `coordinator.data` is still None (the
-    first refresh is what populates it). v0.9.12's auto-import call to
-    `_import_running_quarter_estimate` therefore tripped on the old
-    `not coordinator.data` gate. Fix: gate now only checks `coordinator
-    is None`."""
+    """Running-quarter estimate runs even when `coordinator.data` is still None."""
 
     @pytest.mark.asyncio
     async def test_runs_when_coordinator_data_is_none(self):
-        from datetime import datetime
-
-        from custom_components.bfe_rueckliefertarif import services as svc
         from custom_components.bfe_rueckliefertarif.importer import TariffConfig
         from custom_components.bfe_rueckliefertarif.tariffs_db import ResolvedTariff
 
@@ -3132,7 +2887,7 @@ class TestRenderConfigBlockShared:
             "eigenverbrauch": True,
             "hkn_optin": True,
             "hkn_rp_kwh": 3.0,
-            "billing": "quartal",
+            "billing": ABRECHNUNGS_RHYTHMUS_QUARTAL,
             "floor_label": "<30 kW",
             "floor_rp_kwh": 6.0,
             "cap_rp_kwh": 10.96,
@@ -3167,17 +2922,14 @@ class TestRenderConfigBlockShared:
 
 
 class TestManageHistoryLabels:
-    """v0.9.7 — the open-end marker in the Manage history menu distinguishes
-    currently-active records (``→ now``) from future-scheduled records
-    (``→ ...``). A record whose valid_from is later than today should not
-    pretend to be in effect."""
+    """Manage-history menu distinguishes active (`→ now`) vs future (`→ ...`) records."""
 
     def _make_flow(self, history):
         flow = BfeRuecklieferTarifOptionsFlow.__new__(BfeRuecklieferTarifOptionsFlow)
         flow.hass = MagicMock()
         flow_entry = SimpleNamespace(
             entry_id="test_entry_id",
-            data={"stromnetzeinspeisung_kwh": "sensor.foo"},
+            data={CONF_STROMNETZEINSPEISUNG_KWH: "sensor.foo"},
             options=MappingProxyType({OPT_CONFIG_HISTORY: history}),
         )
         flow.handler = "test_entry_id"
