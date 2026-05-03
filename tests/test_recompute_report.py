@@ -12,6 +12,7 @@ comparison into a pure helper, both deferred until the logic grows.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -28,18 +29,22 @@ from custom_components.bfe_rueckliefertarif.importer import (
     compute_quarter_plan,
 )
 from custom_components.bfe_rueckliefertarif.quarters import (
+    Month,
     Quarter,
     hours_in_range,
+    month_bounds_utc,
     quarter_bounds_utc,
 )
 from custom_components.bfe_rueckliefertarif.services import (
     _aggregate_by_period,
     _canon_fingerprint,
     _format_recompute_notification,
+    _PeriodSubRow,
     _RecomputeReport,
     _RecomputeReportRow,
     _render_bonuses_lines,
     _render_config_block,
+    _render_period_table,
     _render_tariff_model_lines,
     _render_when_summary,
 )
@@ -52,7 +57,7 @@ def _freeze_today(monkeypatch):
     """v0.18.0 (Issue 8.6): _should_emit_today_block now suppresses the
     'Active configuration (today)' block when today's date is outside all
     recomputed periods. Most existing tests use rows in 2026-Q1 / 2026-01..03;
-    pin today to 2026-02-15 so the today block stays emitted (preserving
+    pin today to 2026-01-15 so the today block stays emitted (preserving
     historical assertions). Tests that specifically exercise the
     suppression rule override this fixture."""
     from datetime import date as _date
@@ -172,7 +177,6 @@ class TestAggregateByPeriod:
         # mofr 7-20 = HT (12.60), everything else = NT (11.60).
         ekz_window = {"mofr": [7, 20], "sa": None, "su": None}
         # Only iterate the January slice
-        from custom_components.bfe_rueckliefertarif.quarters import Month, month_bounds_utc
         jan_s, jan_e = month_bounds_utc(Month(2025, 1))
         records = []
         for h in hours_in_range(jan_s, jan_e):
@@ -292,7 +296,6 @@ class TestPeriodAggregationViaPlan:
         rt = _make_resolved()
         # Override hkn_rp_kwh on a copy via dataclasses.replace would be cleaner;
         # since ResolvedTariff is frozen, build a fresh one with HKN.
-        from dataclasses import replace
         rt_with_hkn = replace(rt, hkn_rp_kwh=2.50, hkn_structure="additive_optin")
         q = Quarter(2026, 1)
         s, e = quarter_bounds_utc(q)
@@ -522,47 +525,53 @@ class TestFormatRecomputeNotification:
 
     # --- HKN forfeit / slash-format visualization ---------------------------
 
-    def test_hkn_forfeit_partial_renders_slash(self):
-        # EV=Yes EKZ scenario: applied 0.694 < intended 3.00 → "applied / intended".
-        rows = [_row("2026Q1", 10.96, 1000.0, 109.60,
-                     base=10.266, hkn=0.694, intended_hkn=3.00)]
-        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
-        _, body = _format_recompute_notification(report)
-        assert "0.694 / 3.00" in body
-        # Forfeit footnote present + period count.
-        assert "HKN was reduced or forfeited in 1 period" in body
-        assert "Published HKN: 3.00 Rp/kWh" in body
-
-    def test_hkn_forfeit_full_renders_slash_zero(self):
-        # EV=No EKZ scenario: applied 0.000 < intended 3.00.
-        rows = [_row("2026Q1", 10.266, 1000.0, 102.66,
-                     base=10.266, hkn=0.0, intended_hkn=3.00)]
-        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
-        _, body = _format_recompute_notification(report)
-        assert "0.000 / 3.00" in body
-        assert "HKN was reduced or forfeited" in body
-
-    def test_no_forfeit_renders_plain_hkn(self):
-        # Applied == intended → no slash, no footnote.
-        rows = [_row("2026Q1", 13.27, 1000.0, 132.70,
-                     base=10.27, hkn=3.00, intended_hkn=3.00)]
-        report = _RecomputeReport(rows=rows, quarters_recomputed=1, config=_config_dict())
-        _, body = _format_recompute_notification(report)
-        assert " 3.000 " in body
-        assert " / 3.00" not in body
-        assert "forfeited" not in body
-
-    def test_hkn_optout_no_slash_no_footnote(self):
-        # User did not opt in → intended is None or 0 → no forfeit signal.
-        rows = [_row("2026Q1", 10.27, 1000.0, 102.70,
-                     base=10.27, hkn=0.0, intended_hkn=0.0)]
+    @pytest.mark.parametrize(
+        "rate, base, hkn, intended_hkn, hkn_optin, expected_substrings, "
+        "forbidden_substrings",
+        [
+            pytest.param(
+                10.96, 10.266, 0.694, 3.00, True,
+                ["0.694 / 3.00",
+                 "HKN was reduced or forfeited in 1 period",
+                 "Published HKN: 3.00 Rp/kWh"],
+                [],
+                id="forfeit_partial",
+            ),
+            pytest.param(
+                10.266, 10.266, 0.0, 3.00, True,
+                ["0.000 / 3.00", "HKN was reduced or forfeited"],
+                [],
+                id="forfeit_full",
+            ),
+            pytest.param(
+                13.27, 10.27, 3.00, 3.00, True,
+                [" 3.000 "],
+                [" / 3.00", "forfeited"],
+                id="no_forfeit_plain",
+            ),
+            pytest.param(
+                10.27, 10.27, 0.0, 0.0, False,
+                [],
+                [" / ", "forfeited"],
+                id="optout_no_slash",
+            ),
+        ],
+    )
+    def test_hkn_forfeit_rendering(
+        self, rate, base, hkn, intended_hkn, hkn_optin,
+        expected_substrings, forbidden_substrings,
+    ):
+        rows = [_row("2026Q1", rate, 1000.0, rate * 1000.0 / 100.0,
+                     base=base, hkn=hkn, intended_hkn=intended_hkn)]
         report = _RecomputeReport(
             rows=rows, quarters_recomputed=1,
-            config=_config_dict(hkn_optin=False),
+            config=_config_dict(hkn_optin=hkn_optin),
         )
         _, body = _format_recompute_notification(report)
-        assert " / " not in body
-        assert "forfeited" not in body
+        for sub in expected_substrings:
+            assert sub in body
+        for sub in forbidden_substrings:
+            assert sub not in body
 
 
 # ----- v0.8.6: per-config grouping --------------------------------------------
@@ -887,11 +896,6 @@ class TestPeriodTableSubRowRendering:
     """v0.9.9 — `_render_period_table` emits ↳-prefixed sub-rows when set."""
 
     def test_period_table_renders_sub_rows_when_set(self):
-        from custom_components.bfe_rueckliefertarif.services import (
-            _PeriodSubRow,
-            _render_period_table,
-        )
-
         row = _RecomputeReportRow(
             period="2026Q1",
             rate_rp_kwh_avg=9.0,
@@ -920,8 +924,6 @@ class TestPeriodTableSubRowRendering:
         assert any("↳ Feb 15 – Mar 31 (Utility B)" in line for line in lines)
 
     def test_period_table_no_sub_rows_when_unset(self):
-        from custom_components.bfe_rueckliefertarif.services import _render_period_table
-
         row = _row("2026Q1", 9.0, 100.0, 9.0)  # no sub_rows
         lines, _ = _render_period_table([row])
         # Header (3 lines) + one main row + nothing else (no estimate footer).
@@ -929,11 +931,6 @@ class TestPeriodTableSubRowRendering:
         assert non_meta == []
 
     def test_period_table_sub_row_handles_none_cells(self):
-        from custom_components.bfe_rueckliefertarif.services import (
-            _PeriodSubRow,
-            _render_period_table,
-        )
-
         row = _RecomputeReportRow(
             period="2026Q1",
             rate_rp_kwh_avg=9.0,
@@ -962,10 +959,6 @@ class TestPeriodTableBonusColumn:
     6-column layout is preserved bytewise."""
 
     def test_bonus_column_collapses_when_all_rows_zero(self):
-        from custom_components.bfe_rueckliefertarif.services import (
-            _render_period_table,
-        )
-
         # Default rows have bonus_rp_kwh_avg=None → column collapses.
         rows = [
             _row("2026-03", 13.27, 100.0, 13.27, base=10.27, hkn=3.00),
@@ -978,10 +971,6 @@ class TestPeriodTableBonusColumn:
         assert header.count("|") == 7  # leading + 6 separators + trailing
 
     def test_bonus_column_appears_when_any_row_nonzero(self):
-        from custom_components.bfe_rueckliefertarif.services import (
-            _render_period_table,
-        )
-
         rows = [
             _RecomputeReportRow(
                 period="2026-03",
@@ -1014,11 +1003,6 @@ class TestPeriodTableBonusColumn:
     def test_subrow_bonus_triggers_column(self):
         # When the main row has zero bonus but a sub-row has nonzero, the
         # column still appears.
-        from custom_components.bfe_rueckliefertarif.services import (
-            _PeriodSubRow,
-            _render_period_table,
-        )
-
         row = _RecomputeReportRow(
             period="2026-Q1",
             rate_rp_kwh_avg=13.27,
@@ -1047,7 +1031,6 @@ class TestPeriodTableBonusColumn:
 
     def test_bonus_aggregation_kwh_weighted(self):
         # Two records, kwh-weighted bonus average.
-        from dataclasses import replace
         records = [
             _hr(_hour(2026, 1, 15, 10), 10.0, 13.0, base_rp_kwh=10.0, hkn_rp_kwh=3.0),
             _hr(_hour(2026, 1, 15, 11), 10.0, 13.0, base_rp_kwh=10.0, hkn_rp_kwh=3.0),
@@ -1097,23 +1080,24 @@ class TestUserInputsRendering:
             line == "    - **regio_top40_opted_in:** True" for line in lines
         )
 
-    def test_config_block_omits_user_inputs_when_empty(self):
-        cfg = _config_dict(user_inputs={})
+    @pytest.mark.parametrize(
+        "user_inputs_value",
+        [
+            pytest.param({}, id="empty"),
+            pytest.param(None, id="missing_key"),  # cfg key absent (see body)
+            pytest.param(["broken"], id="not_a_dict"),
+        ],
+    )
+    def test_config_block_omits_user_inputs(self, user_inputs_value):
+        # ``None`` means "don't pass the key at all" (legacy snapshot path).
+        if user_inputs_value is None:
+            cfg = _config_dict()
+        else:
+            cfg = _config_dict(user_inputs=user_inputs_value)
         lines = _render_config_block(cfg)
-        # No user_input sub-bullets when the dict is empty.
-        assert not any("regio_top40" in line or "ekz_segment" in line for line in lines)
-
-    def test_config_block_omits_user_inputs_when_missing_key(self):
-        # Legacy snapshot — no `user_inputs` key at all.
-        cfg = _config_dict()
-        lines = _render_config_block(cfg)
-        assert not any("regio_top40" in line or "ekz_segment" in line for line in lines)
-
-    def test_config_block_omits_user_inputs_when_not_a_dict(self):
-        # Defensive — corrupted snapshot stored a list.
-        cfg = _config_dict(user_inputs=["broken"])
-        lines = _render_config_block(cfg)
-        assert not any("regio_top40" in line or "ekz_segment" in line for line in lines)
+        assert not any(
+            "regio_top40" in line or "ekz_segment" in line for line in lines
+        )
 
 
 # ----- v0.17.1 — Issue 8.5: grouped Configuration layout ----------------------
@@ -1423,100 +1407,88 @@ class TestTariffModelRateRendering:
     Localised model labels — ``Fixpreis`` / ``Fixed flat rate`` etc.
     """
 
-    def test_fixed_flat_plain_renders_rate_subbullet_de(self):
-        lines = _render_tariff_model_lines({
-            "base_model": "fixed_flat",
-            "fixed_rp_kwh": 6.20,
-            "settlement_period": "quartal",
-            "notes_lang": "de",
-        })
-        assert lines == [
-            "- **Tariff model:** Fixpreis",
-            "    - Tarif: 6.20 Rp/kWh",
-            "    - Abrechnungsperiode: Quartal",
-        ]
-
-    def test_fixed_flat_seasonal_renders_summer_winter_de(self):
-        lines = _render_tariff_model_lines({
-            "base_model": "fixed_flat",
-            "fixed_rp_kwh": 7.6,
-            "seasonal": {
-                "summer_rp_kwh": 6.20,
-                "winter_rp_kwh": 9.00,
-            },
-            "settlement_period": "quartal",
-            "notes_lang": "de",
-        })
-        assert lines == [
-            "- **Tariff model:** Fixpreis (saisonal)",
-            "    - Sommer: 6.20 Rp/kWh",
-            "    - Winter: 9.00 Rp/kWh",
-            "    - Abrechnungsperiode: Quartal",
-        ]
-
-    def test_fixed_ht_nt_plain_de(self):
-        lines = _render_tariff_model_lines({
-            "base_model": "fixed_ht_nt",
-            "fixed_ht_rp_kwh": 12.34,
-            "fixed_nt_rp_kwh": 5.67,
-            "settlement_period": "quartal",
-            "notes_lang": "de",
-        })
-        assert lines == [
-            "- **Tariff model:** Fixpreis (HT/NT)",
-            "    - HT: 12.34 Rp/kWh",
-            "    - NT: 5.67 Rp/kWh",
-            "    - Abrechnungsperiode: Quartal",
-        ]
-
-    def test_fixed_ht_nt_seasonal_4_subbullets(self):
-        lines = _render_tariff_model_lines({
-            "base_model": "fixed_ht_nt",
-            "fixed_ht_rp_kwh": 12.34,
-            "fixed_nt_rp_kwh": 5.67,
-            "seasonal": {
-                "summer_ht_rp_kwh": 12.34,
-                "winter_ht_rp_kwh": 14.00,
-                "summer_nt_rp_kwh": 5.67,
-                "winter_nt_rp_kwh": 6.50,
-            },
-            "settlement_period": "quartal",
-            "notes_lang": "de",
-        })
-        assert lines == [
-            "- **Tariff model:** Fixpreis (HT/NT, saisonal)",
-            "    - HT Sommer: 12.34 Rp/kWh",
-            "    - HT Winter: 14.00 Rp/kWh",
-            "    - NT Sommer: 5.67 Rp/kWh",
-            "    - NT Winter: 6.50 Rp/kWh",
-            "    - Abrechnungsperiode: Quartal",
-        ]
-
-    def test_rmp_quartal_renders_only_model_line_no_subbullets(self):
-        # rmp_*: settlement is encoded in the model name, no sub-bullets.
-        lines = _render_tariff_model_lines({
-            "base_model": "rmp_quartal",
-            "settlement_period": "quartal",
-            "notes_lang": "en",
-        })
-        assert lines == ["- **Tariff model:** Reference market price (quarterly)"]
-
-    def test_legacy_snapshot_no_fixed_fields(self):
-        # base_model known but no rate fields (pre-v0.16.0 cache) — should
-        # gracefully render model + settlement only, no crash.
-        lines = _render_tariff_model_lines({
-            "base_model": "fixed_flat",
-            "settlement_period": "stunde",
-            "notes_lang": "de",
-        })
-        assert lines == [
-            "- **Tariff model:** Fixpreis",
-            "    - Abrechnungsperiode: Stunde",
-        ]
-
-    def test_returns_empty_when_base_model_missing(self):
-        assert _render_tariff_model_lines({"settlement_period": "quartal"}) == []
-        assert _render_tariff_model_lines({}) == []
+    @pytest.mark.parametrize(
+        "input_dict, expected_lines",
+        [
+            pytest.param(
+                {"base_model": "fixed_flat", "fixed_rp_kwh": 6.20,
+                 "settlement_period": "quartal", "notes_lang": "de"},
+                [
+                    "- **Tariff model:** Fixpreis",
+                    "    - Tarif: 6.20 Rp/kWh",
+                    "    - Abrechnungsperiode: Quartal",
+                ],
+                id="fixed_flat_plain_de",
+            ),
+            pytest.param(
+                {"base_model": "fixed_flat", "fixed_rp_kwh": 7.6,
+                 "seasonal": {"summer_rp_kwh": 6.20, "winter_rp_kwh": 9.00},
+                 "settlement_period": "quartal", "notes_lang": "de"},
+                [
+                    "- **Tariff model:** Fixpreis (saisonal)",
+                    "    - Sommer: 6.20 Rp/kWh",
+                    "    - Winter: 9.00 Rp/kWh",
+                    "    - Abrechnungsperiode: Quartal",
+                ],
+                id="fixed_flat_seasonal_de",
+            ),
+            pytest.param(
+                {"base_model": "fixed_ht_nt",
+                 "fixed_ht_rp_kwh": 12.34, "fixed_nt_rp_kwh": 5.67,
+                 "settlement_period": "quartal", "notes_lang": "de"},
+                [
+                    "- **Tariff model:** Fixpreis (HT/NT)",
+                    "    - HT: 12.34 Rp/kWh",
+                    "    - NT: 5.67 Rp/kWh",
+                    "    - Abrechnungsperiode: Quartal",
+                ],
+                id="fixed_ht_nt_plain_de",
+            ),
+            pytest.param(
+                {"base_model": "fixed_ht_nt",
+                 "fixed_ht_rp_kwh": 12.34, "fixed_nt_rp_kwh": 5.67,
+                 "seasonal": {
+                     "summer_ht_rp_kwh": 12.34, "winter_ht_rp_kwh": 14.00,
+                     "summer_nt_rp_kwh": 5.67, "winter_nt_rp_kwh": 6.50,
+                 },
+                 "settlement_period": "quartal", "notes_lang": "de"},
+                [
+                    "- **Tariff model:** Fixpreis (HT/NT, saisonal)",
+                    "    - HT Sommer: 12.34 Rp/kWh",
+                    "    - HT Winter: 14.00 Rp/kWh",
+                    "    - NT Sommer: 5.67 Rp/kWh",
+                    "    - NT Winter: 6.50 Rp/kWh",
+                    "    - Abrechnungsperiode: Quartal",
+                ],
+                id="fixed_ht_nt_seasonal_de",
+            ),
+            pytest.param(
+                # rmp_*: settlement is encoded in the model name, no sub-bullets.
+                {"base_model": "rmp_quartal",
+                 "settlement_period": "quartal", "notes_lang": "en"},
+                ["- **Tariff model:** Reference market price (quarterly)"],
+                id="rmp_quartal_en",
+            ),
+            pytest.param(
+                # base_model known but no rate fields (pre-v0.16.0 cache) →
+                # gracefully render model + settlement only, no crash.
+                {"base_model": "fixed_flat",
+                 "settlement_period": "stunde", "notes_lang": "de"},
+                [
+                    "- **Tariff model:** Fixpreis",
+                    "    - Abrechnungsperiode: Stunde",
+                ],
+                id="legacy_no_fixed_fields_de",
+            ),
+            pytest.param(
+                {"settlement_period": "quartal"}, [],
+                id="missing_base_model_settlement_only",
+            ),
+            pytest.param({}, [], id="missing_base_model_empty"),
+        ],
+    )
+    def test_render_tariff_model_lines(self, input_dict, expected_lines):
+        assert _render_tariff_model_lines(input_dict) == expected_lines
 
     def test_unknown_lang_falls_back_to_english(self):
         lines = _render_tariff_model_lines({
@@ -1617,50 +1589,56 @@ class TestHknStructureGating:
     correct phrasing for utilities where opt-in isn't a user choice.
     """
 
-    def test_additive_optin_yes(self):
-        cfg = _config_dict(
-            hkn_structure="additive_optin", hkn_optin=True, hkn_rp_kwh=3.00,
-        )
+    @pytest.mark.parametrize(
+        "hkn_structure, hkn_optin, hkn_rp_kwh, expected_line_substr, "
+        "forbidden_substrs",
+        [
+            pytest.param(
+                "additive_optin", True, 3.00,
+                "HKN opt-in:** Yes (3.00 Rp/kWh additive)", [],
+                id="additive_optin_yes",
+            ),
+            pytest.param(
+                "additive_optin", False, 3.00,
+                "HKN opt-in:** No", [],
+                id="additive_optin_no",
+            ),
+            pytest.param(
+                "bundled", False, None,
+                "HKN:** bundled in base rate (no opt-in available)",
+                ["HKN opt-in:**"],
+                id="bundled",
+            ),
+            pytest.param(
+                "none", False, None,
+                "HKN:** not paid by utility",
+                ["HKN opt-in:**"],
+                id="none",
+            ),
+            pytest.param(
+                # Sentinel: no `hkn_structure` key (pre-v0.16.1 snapshot path).
+                None, True, 4.00,
+                "HKN opt-in:** Yes (4.00 Rp/kWh additive)", [],
+                id="legacy_no_structure",
+            ),
+        ],
+    )
+    def test_hkn_structure_gating(
+        self, hkn_structure, hkn_optin, hkn_rp_kwh,
+        expected_line_substr, forbidden_substrs,
+    ):
+        if hkn_structure is None:
+            cfg = _config_dict(hkn_optin=hkn_optin, hkn_rp_kwh=hkn_rp_kwh)
+            cfg.pop("hkn_structure", None)
+        else:
+            cfg = _config_dict(
+                hkn_structure=hkn_structure, hkn_optin=hkn_optin,
+                hkn_rp_kwh=hkn_rp_kwh,
+            )
         lines = _render_config_block(cfg)
-        assert any(
-            "HKN opt-in:** Yes (3.00 Rp/kWh additive)" in line
-            for line in lines
-        )
-
-    def test_additive_optin_no(self):
-        cfg = _config_dict(hkn_structure="additive_optin", hkn_optin=False)
-        lines = _render_config_block(cfg)
-        assert any("HKN opt-in:** No" in line for line in lines)
-
-    def test_bundled_renders_dedicated_line(self):
-        cfg = _config_dict(
-            hkn_structure="bundled", hkn_optin=False, hkn_rp_kwh=None,
-        )
-        lines = _render_config_block(cfg)
-        assert any(
-            "HKN:** bundled in base rate (no opt-in available)" in line
-            for line in lines
-        )
-        # The misleading "Yes/No" line must NOT appear for bundled.
-        assert not any("HKN opt-in:**" in line for line in lines)
-
-    def test_none_renders_dedicated_line(self):
-        cfg = _config_dict(
-            hkn_structure="none", hkn_optin=False, hkn_rp_kwh=None,
-        )
-        lines = _render_config_block(cfg)
-        assert any("HKN:** not paid by utility" in line for line in lines)
-        assert not any("HKN opt-in:**" in line for line in lines)
-
-    def test_legacy_snapshot_falls_back_to_yes_no(self):
-        # No `hkn_structure` key in cfg — pre-v0.16.1 snapshot path.
-        cfg = _config_dict(hkn_optin=True, hkn_rp_kwh=4.00)
-        cfg.pop("hkn_structure", None)
-        lines = _render_config_block(cfg)
-        assert any(
-            "HKN opt-in:** Yes (4.00 Rp/kWh additive)" in line
-            for line in lines
-        )
+        assert any(expected_line_substr in line for line in lines)
+        for forbidden in forbidden_substrs:
+            assert not any(forbidden in line for line in lines)
 
 
 # ----- v0.16.1 — Bonus % formatting + label-aware when-clause ----------------
@@ -1718,56 +1696,55 @@ class TestBonusPercentFormatting:
         assert "when " not in rendered
         assert "Wahltarif TOP-40 abonniert" not in rendered
 
-    def test_season_winter_only_renders_winter_label(self):
-        # v0.23.3 — season-gated bonus without applies_when (e.g. AEW
-        # Spezialbonus) renders ``(Winter)``, matching the JS card.
-        lines = _render_bonuses_lines([
-            {"kind": "additive_rp_kwh", "name": "Spezialbonus",
-             "rate_rp_kwh": 15.00,
-             "when": {"season": "winter"}},
-        ])
-        assert any("Spezialbonus: 15.00 Rp/kWh (Winter)" in line for line in lines)
-
-    def test_season_summer_only_renders_summer_label(self):
-        lines = _render_bonuses_lines([
-            {"kind": "additive_rp_kwh", "name": "SommerPlus",
-             "rate_rp_kwh": 3.00,
-             "when": {"season": "summer"}},
-        ])
-        assert any("SommerPlus: 3.00 Rp/kWh (Sommer)" in line for line in lines)
-
-    def test_user_inputs_only_renders_bedingt_label(self):
-        # User-input-gated bonus without ``applies_when`` renders
-        # ``(bedingt)`` — surfaces that the bonus is conditional without
-        # leaking the user_inputs values themselves.
-        lines = _render_bonuses_lines([
-            {"kind": "additive_rp_kwh", "name": "Cond",
-             "rate_rp_kwh": 1.00,
-             "when": {"user_inputs": {"foo": "bar"}}},
-        ])
-        assert any("Cond: 1.00 Rp/kWh (bedingt)" in line for line in lines)
-
-    def test_always_with_winter_renders_winter_label_only(self):
-        # ``applies_when=always`` + season-gating: just ``(Winter)``.
-        # Old behavior was ``(always)``; the season tag is more accurate.
-        lines = _render_bonuses_lines([
-            {"kind": "additive_rp_kwh", "name": "AutoWinter",
-             "rate_rp_kwh": 5.00, "applies_when": "always",
-             "when": {"season": "winter"}},
-        ])
-        assert any("AutoWinter: 5.00 Rp/kWh (Winter)" in line for line in lines)
-
-    def test_opt_in_with_winter_combines_labels(self):
-        # Opt-in + season → combined ``(opt-in, Winter)``. ``bedingt`` is
-        # suppressed when ``opt-in`` is set (opt-in already implies a
-        # user-input gate; doubling reads as noise).
-        lines = _render_bonuses_lines([
-            {"kind": "additive_rp_kwh", "name": "OptWinter",
-             "rate_rp_kwh": 4.00, "applies_when": "opt_in",
-             "when": {"season": "winter",
-                      "user_inputs": {"foo": "bar"}}},
-        ])
-        assert any("OptWinter: 4.00 Rp/kWh (opt-in, Winter)" in line for line in lines)
+    @pytest.mark.parametrize(
+        "bonus_dict_extra, expected_label_in_render",
+        [
+            # v0.23.3 — season-gated bonus without applies_when (e.g. AEW
+            # Spezialbonus) renders ``(Winter)``, matching the JS card.
+            pytest.param(
+                {"when": {"season": "winter"}},
+                "B: 1.00 Rp/kWh (Winter)",
+                id="season_winter_only",
+            ),
+            pytest.param(
+                {"when": {"season": "summer"}},
+                "B: 1.00 Rp/kWh (Sommer)",
+                id="season_summer_only",
+            ),
+            # User-input-gated bonus without ``applies_when`` renders
+            # ``(bedingt)`` — surfaces that the bonus is conditional without
+            # leaking the user_inputs values themselves.
+            pytest.param(
+                {"when": {"user_inputs": {"foo": "bar"}}},
+                "B: 1.00 Rp/kWh (bedingt)",
+                id="user_inputs_only_bedingt",
+            ),
+            # ``applies_when=always`` + season-gating: just ``(Winter)``.
+            # Old behavior was ``(always)``; the season tag is more accurate.
+            pytest.param(
+                {"applies_when": "always", "when": {"season": "winter"}},
+                "B: 1.00 Rp/kWh (Winter)",
+                id="always_with_winter",
+            ),
+            # Opt-in + season → combined ``(opt-in, Winter)``. ``bedingt`` is
+            # suppressed when ``opt-in`` is set (opt-in already implies a
+            # user-input gate; doubling reads as noise).
+            pytest.param(
+                {"applies_when": "opt_in",
+                 "when": {"season": "winter",
+                          "user_inputs": {"foo": "bar"}}},
+                "B: 1.00 Rp/kWh (opt-in, Winter)",
+                id="opt_in_with_winter_combined",
+            ),
+        ],
+    )
+    def test_season_and_when_label_rendering(
+        self, bonus_dict_extra, expected_label_in_render,
+    ):
+        bonus = {"kind": "additive_rp_kwh", "name": "B", "rate_rp_kwh": 1.00,
+                 **bonus_dict_extra}
+        lines = _render_bonuses_lines([bonus])
+        assert any(expected_label_in_render in line for line in lines)
 
     def test_when_summary_label_translates_enum_value(self):
         s = _render_when_summary(
