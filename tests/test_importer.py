@@ -954,13 +954,13 @@ class TestBatchDPerHourBonusesAndHknCases:
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
+            bonuses=(
+                {
+                    "kind": "additive_rp_kwh", "name": "TestBonus",
+                    "applies_when": "always", "rate_rp_kwh": 0.5,
+                },
+            ),
         )
-        rt = replace(rt, bonuses=(
-            {
-                "kind": "additive_rp_kwh", "name": "TestBonus",
-                "applies_when": "always", "rate_rp_kwh": 0.5,
-            },
-        ))
         cfg = self._cfg(rt=rt, hkn_aktiviert=False)
         rate, base, hkn, bonus = _effective_rate_breakdown_at_hour(
             cfg, 0.0, self._HOUR_WINTER
@@ -973,13 +973,13 @@ class TestBatchDPerHourBonusesAndHknCases:
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=10.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=0.0,
+            bonuses=(
+                {
+                    "kind": "multiplier_pct", "name": "TOP-40 curtailment",
+                    "applies_when": "always", "multiplier_pct": 85.0,
+                },
+            ),
         )
-        rt = replace(rt, bonuses=(
-            {
-                "kind": "multiplier_pct", "name": "TOP-40 curtailment",
-                "applies_when": "always", "multiplier_pct": 85.0,
-            },
-        ))
         cfg = self._cfg(rt=rt, hkn_aktiviert=False)
         rate, base, _, bonus = _effective_rate_breakdown_at_hour(
             cfg, 0.0, self._HOUR_WINTER
@@ -994,13 +994,13 @@ class TestBatchDPerHourBonusesAndHknCases:
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
+            bonuses=(
+                {
+                    "kind": "additive_rp_kwh", "name": "OptIn no clause",
+                    "applies_when": "opt_in", "rate_rp_kwh": 0.5,
+                },
+            ),
         )
-        rt = replace(rt, bonuses=(
-            {
-                "kind": "additive_rp_kwh", "name": "OptIn no clause",
-                "applies_when": "opt_in", "rate_rp_kwh": 0.5,
-            },
-        ))
         cfg = self._cfg(rt=rt, hkn_aktiviert=False)
         _, _, _, bonus = _effective_rate_breakdown_at_hour(
             cfg, 0.0, self._HOUR_WINTER
@@ -1011,15 +1011,15 @@ class TestBatchDPerHourBonusesAndHknCases:
         rt = _make_resolved(
             base_model="fixed_flat", fixed_rp_kwh=8.0,
             hkn_rp_kwh=0.0, federal_floor_rp_kwh=6.0,
+            bonuses=(
+                {
+                    "kind": "additive_rp_kwh", "name": "OptIn with toggle",
+                    "applies_when": "opt_in",
+                    "when": {"user_inputs": {"top40_enrolled": True}},
+                    "rate_rp_kwh": 1.0,
+                },
+            ),
         )
-        rt = replace(rt, bonuses=(
-            {
-                "kind": "additive_rp_kwh", "name": "OptIn with toggle",
-                "applies_when": "opt_in",
-                "when": {"user_inputs": {"top40_enrolled": True}},
-                "rate_rp_kwh": 1.0,
-            },
-        ))
         cfg_off = self._cfg(
             rt=rt, hkn_aktiviert=False, user_inputs={"top40_enrolled": False}
         )
