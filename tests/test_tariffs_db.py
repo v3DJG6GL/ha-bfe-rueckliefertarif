@@ -9,10 +9,12 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
 from custom_components.bfe_rueckliefertarif.tariffs_db import (
     _BUNDLED_DATA_PATH,
     ResolvedTariff,
     compute_user_inputs_periods,
+    diff_tariffs_data,
     evaluate_federal_floor,
     evaluate_when,
     find_active,
@@ -24,7 +26,12 @@ from custom_components.bfe_rueckliefertarif.tariffs_db import (
     list_utility_keys,
     load_tariffs,
     match_applies_when,
+    pick_localised_label,
+    pick_value_label,
     resolve_tariff_at,
+    settlement_period_label,
+    tariff_model_label,
+    user_input_label,
     user_inputs_decl_signature,
 )
 
@@ -69,10 +76,7 @@ class TestSchemaConformance:
         assert "aew_rmp" not in keys
 
     def test_cap_rules_truthy_or_absent(self, db):
-        """v0.22.0 — schema 1.5.0 dropped cap_mode. Cap activation is now
-        signaled solely by a non-empty ``cap_rules`` array. Verify every
-        rate either has a non-empty cap_rules array or omits the field
-        entirely; ``cap_rules: []`` (empty) is also valid (= no cap)."""
+        """v0.22.0 — schema 1.5.0 dropped cap_mode."""
         for ukey, u in db["utilities"].items():
             for rate in u["rates"]:
                 cap_rules = rate.get("cap_rules")
@@ -279,39 +283,35 @@ class TestFloorLabel:
 
 
 class TestResolveTariffAt:
-    def test_ekz_small_with_ev(self, db):
+    @pytest.mark.parametrize(
+        "kw,ev,expected_floor,expected_label,expected_cap",
+        [
+            # v0.22.0 — cap activation = `cap_rp_kwh` set (resolver derived
+            # from a non-empty `cap_rules` array). Small-band: 6.00 floor,
+            # 10.96 cap.
+            (25.0, True, 6.00, "<30 kW", 10.96),
+            # Mid-band with EV uses the degressive formula 180/kw.
+            # cap stays at the small-band 10.96 (cap_rules use kw≤100 = 10.96 with EV).
+            (35.0, True, round(180.0 / 35.0, 4),
+             "30–<150 kW mit Eigenverbrauch", 10.96),
+            # cap_rules pin ≥100 kW + ohne EV → 5.40.
+            (200.0, False, None, "≥150 kW", 5.40),
+        ],
+    )
+    def test_ekz_resolution_across_kw_bands(
+        self, db, kw, ev, expected_floor, expected_label, expected_cap
+    ):
         rt = resolve_tariff_at(
-            "ekz", date(2026, 4, 1), kw=25.0, eigenverbrauch=True, data=db
+            "ekz", date(2026, 4, 1), kw=kw, eigenverbrauch=ev, data=db
         )
         assert isinstance(rt, ResolvedTariff)
         assert rt.utility_key == "ekz"
         assert rt.base_model == "rmp_quartal"
         assert rt.hkn_rp_kwh == 3.00
-        # v0.22.0 — cap activation = `cap_rp_kwh` set (resolver derived
-        # from a non-empty `cap_rules` array).
-        assert rt.cap_rp_kwh == 10.96
-        assert rt.federal_floor_rp_kwh == 6.00
-        assert rt.federal_floor_label == "<30 kW"
         assert rt.tariffs_json_source == "bundled"
-
-    def test_ekz_mid_with_ev_uses_degressive_formula(self, db):
-        rt = resolve_tariff_at(
-            "ekz", date(2026, 4, 1), kw=35.0, eigenverbrauch=True, data=db
-        )
-        assert rt.federal_floor_rp_kwh == round(180.0 / 35.0, 4)
-        assert rt.federal_floor_label == "30–<150 kW mit Eigenverbrauch"
-        # cap stays at the small-band 10.96 (cap_rules use kw≤100 = 10.96 with EV).
-        assert rt.cap_rp_kwh == 10.96
-
-    def test_ekz_large_without_ev(self, db):
-        rt = resolve_tariff_at(
-            "ekz", date(2026, 4, 1), kw=200.0, eigenverbrauch=False, data=db
-        )
-        # ≥150 kW: no federal floor.
-        assert rt.federal_floor_rp_kwh is None
-        assert rt.federal_floor_label == "≥150 kW"
-        # cap_rules pin ≥100 kW + ohne EV → 5.40.
-        assert rt.cap_rp_kwh == 5.40
+        assert rt.federal_floor_rp_kwh == expected_floor
+        assert rt.federal_floor_label == expected_label
+        assert rt.cap_rp_kwh == expected_cap
 
     def test_aew_fixpreis_via_user_inputs(self, db):
         # AEW unified user_input gates fixed_flat vs rmp_quartal vs
@@ -1008,7 +1008,6 @@ class TestComputeUserInputsPeriods:
     def _patch_db(self, monkeypatch, utility_rates):
         """Install a synthetic db with one utility ('syn') and the given
         rate-window list."""
-        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
         synthetic = {
             "schema_version": "1.2.0",
             "last_updated": "2026-01-01",
@@ -1173,13 +1172,9 @@ class TestComputeUserInputsPeriods:
 
 
 class TestSelfConsumptionRelevantPublicExport:
-    """v0.16.0 — Issue 3: helper moved from config_flow to tariffs_db so
-    services can import it without a circular dependency. Smoke-test the
-    public re-export with one relevant + one irrelevant case.
-    """
+    """v0.16.0 — Issue 3: helper moved from config_flow to tariffs_db."""
 
     def test_relevant_case_returns_true(self, monkeypatch):
-        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
         synthetic = {
             "schema_version": "1.2.0",
             "last_updated": "2026-01-01",
@@ -1198,7 +1193,6 @@ class TestSelfConsumptionRelevantPublicExport:
         assert tdb.self_consumption_relevant("syn", "2026-04-01", 10.0) is True
 
     def test_irrelevant_case_returns_false(self, monkeypatch):
-        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
         synthetic = {
             "schema_version": "1.2.0",
             "last_updated": "2026-01-01",
@@ -1224,24 +1218,15 @@ class TestSelfConsumptionRelevantPublicExport:
 
 
 class TestUserInputLabelHelpers:
-    """v0.16.1 — helpers moved from config_flow to tariffs_db so the
-    recompute renderer can label-translate user_inputs without a
-    circular import.
-    """
+    """v0.16.1 — helpers moved from config_flow to tariffs_db."""
 
     def test_pick_localised_label_picks_lang_then_de_then_en(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            pick_localised_label,
-        )
         d = {"label_de": "Wahltarif", "label_en": "Choice tariff"}
         assert pick_localised_label(d, "label", "de", "—") == "Wahltarif"
         assert pick_localised_label(d, "label", "fr", "—") == "Wahltarif"  # de fallback
         assert pick_localised_label({}, "label", "de", "fb") == "fb"
 
     def test_user_input_label_falls_back_to_key(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            user_input_label,
-        )
         assert (
             user_input_label({"key": "regio_top40_opted_in"}, "de")
             == "regio_top40_opted_in"
@@ -1252,9 +1237,6 @@ class TestUserInputLabelHelpers:
         )
 
     def test_pick_value_label_falls_back_to_value(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            pick_value_label,
-        )
         decl = {"value_labels_de": {"a": "Alpha"}}
         assert pick_value_label(decl, "a", "de") == "Alpha"
         assert pick_value_label(decl, "z", "de") == "z"
@@ -1263,7 +1245,6 @@ class TestUserInputLabelHelpers:
     def test_resolve_user_inputs_decl_returns_active_window_decls(
         self, monkeypatch
     ):
-        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
         synthetic = {
             "schema_version": "1.2.0",
             "last_updated": "2026-01-01",
@@ -1292,7 +1273,6 @@ class TestUserInputLabelHelpers:
     def test_resolve_user_inputs_decl_returns_empty_when_no_window(
         self, monkeypatch
     ):
-        from custom_components.bfe_rueckliefertarif import tariffs_db as tdb
         synthetic = {
             "schema_version": "1.2.0",
             "last_updated": "2026-01-01",
@@ -1310,55 +1290,34 @@ class TestTariffModelLabel:
     """v0.17.0 — localised display labels for tariff-model enums."""
 
     def test_de_fixed_flat_plain(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         assert tariff_model_label("fixed_flat", None, "de") == "Fixpreis"
 
     def test_de_fixed_flat_seasonal(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         assert (
             tariff_model_label("fixed_flat", {"summer_rp_kwh": 6}, "de")
             == "Fixpreis (saisonal)"
         )
 
     def test_de_fixed_ht_nt_seasonal(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         assert (
             tariff_model_label("fixed_ht_nt", {"summer_ht_rp_kwh": 1}, "de")
             == "Fixpreis (HT/NT, saisonal)"
         )
 
     def test_en_rmp_quartal(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         assert (
             tariff_model_label("rmp_quartal", None, "en")
             == "Reference market price (quarterly)"
         )
 
     def test_unknown_model_falls_back_to_raw(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         assert tariff_model_label("foo_bar_xyz", None, "de") == "foo_bar_xyz"
 
     def test_missing_model_returns_dash(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         assert tariff_model_label(None, None, "de") == "—"
         assert tariff_model_label("", None, "de") == "—"
 
     def test_unknown_lang_falls_back_to_english(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            tariff_model_label,
-        )
         # fr falls back to en table (no French entries yet).
         assert (
             tariff_model_label("fixed_flat", None, "fr")
@@ -1370,31 +1329,19 @@ class TestSettlementPeriodLabel:
     """v0.17.0 — localised display labels for settlement_period enums."""
 
     def test_de_quartal_monat_stunde(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            settlement_period_label,
-        )
         assert settlement_period_label("quartal", "de") == "Quartal"
         assert settlement_period_label("monat", "de") == "Monat"
         assert settlement_period_label("stunde", "de") == "Stunde"
 
     def test_en_quartal_monat_stunde(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            settlement_period_label,
-        )
         assert settlement_period_label("quartal", "en") == "Quarterly"
         assert settlement_period_label("monat", "en") == "Monthly"
         assert settlement_period_label("stunde", "en") == "Hourly"
 
     def test_unknown_period_falls_back_to_raw(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            settlement_period_label,
-        )
         assert settlement_period_label("woche", "de") == "woche"
 
     def test_missing_period_returns_dash(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            settlement_period_label,
-        )
         assert settlement_period_label(None, "de") == "—"
         assert settlement_period_label("", "de") == "—"
 
@@ -1416,9 +1363,6 @@ class TestDiffTariffsData:
     """
 
     def test_no_changes_returns_no_changes_true(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {
             "data_version": "1.0.0",
             "utilities": {
@@ -1437,9 +1381,6 @@ class TestDiffTariffsData:
         assert diff["modified_rate_windows"] == []
 
     def test_added_utility_listed(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {"utilities": {"ekz": _utility_dict("EKZ", [_rate("2026-01-01")])}}
         new = {
             "utilities": {
@@ -1455,9 +1396,6 @@ class TestDiffTariffsData:
         assert diff["added_utilities"][0]["rate_window_dates"] == ["2026-01-01"]
 
     def test_removed_utility_listed(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {
             "utilities": {
                 "ekz": _utility_dict("EKZ", [_rate("2026-01-01")]),
@@ -1470,9 +1408,6 @@ class TestDiffTariffsData:
         assert diff["removed_utilities"][0]["key"] == "ewz"
 
     def test_added_rate_window_for_existing_utility(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {"utilities": {"ekz": _utility_dict("EKZ", [_rate("2024-01-01")])}}
         new = {
             "utilities": {
@@ -1490,9 +1425,6 @@ class TestDiffTariffsData:
         ]
 
     def test_modified_rate_window_detected_by_deep_equality(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {
             "utilities": {
                 "ekz": _utility_dict(
@@ -1516,9 +1448,6 @@ class TestDiffTariffsData:
         )
 
     def test_unchanged_rate_window_not_listed(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {
             "utilities": {
                 "ekz": _utility_dict(
@@ -1538,9 +1467,6 @@ class TestDiffTariffsData:
         assert diff["no_changes"] is True
 
     def test_data_version_change_recorded(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         old = {"data_version": "1.0.0", "utilities": {}}
         new = {"data_version": "1.1.0", "utilities": {}}
         diff = diff_tariffs_data(old, new)
@@ -1548,9 +1474,6 @@ class TestDiffTariffsData:
         assert diff["no_changes"] is False
 
     def test_handles_none_inputs_safely(self):
-        from custom_components.bfe_rueckliefertarif.tariffs_db import (
-            diff_tariffs_data,
-        )
         diff = diff_tariffs_data(None, None)
         assert diff["no_changes"] is True
         assert diff["added_utilities"] == []
