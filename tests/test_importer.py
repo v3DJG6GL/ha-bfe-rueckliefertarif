@@ -25,6 +25,7 @@ from custom_components.bfe_rueckliefertarif.importer import (
     _effective_rate,
     _effective_rate_at_hour,
     _effective_rate_breakdown_at_hour,
+    _resolve_bonuses_for_hour_detailed,
     compute_breakdown_at,
     compute_quarter_plan,
     compute_quarter_plan_segmented,
@@ -1066,9 +1067,6 @@ class TestBonusConcatRateThenTier:
         )
 
     def test_rate_only_bonuses_apply(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _resolve_bonuses_for_hour_detailed,
-        )
         cfg = self._cfg(
             bonuses=({"kind": "additive_rp_kwh", "name": "R", "rate_rp_kwh": 0.5},),
             tier_bonuses=None,
@@ -1079,9 +1077,6 @@ class TestBonusConcatRateThenTier:
         assert detail[0]["name"] == "R"
 
     def test_tier_only_bonuses_apply(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _resolve_bonuses_for_hour_detailed,
-        )
         cfg = self._cfg(
             bonuses=None,
             tier_bonuses=({"kind": "additive_rp_kwh", "name": "T", "rate_rp_kwh": 0.3},),
@@ -1091,9 +1086,6 @@ class TestBonusConcatRateThenTier:
         assert detail[0]["name"] == "T"
 
     def test_rate_and_tier_concat_in_order(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _resolve_bonuses_for_hour_detailed,
-        )
         cfg = self._cfg(
             bonuses=({"kind": "additive_rp_kwh", "name": "R", "rate_rp_kwh": 0.5},),
             tier_bonuses=({"kind": "additive_rp_kwh", "name": "T", "rate_rp_kwh": 0.3},),
@@ -1106,9 +1098,6 @@ class TestBonusConcatRateThenTier:
         # Rate +5% then Tier +3% on a base of (10 + 0): expect ~+8.15%.
         # Iteration 1 (rate, mp=105): current=10, contribution=10*0.05=0.5; acc=0.5
         # Iteration 2 (tier, mp=103): current=10+0.5=10.5, contribution=10.5*0.03=0.315; acc=0.815
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _resolve_bonuses_for_hour_detailed,
-        )
         cfg = self._cfg(
             bonuses=({"kind": "multiplier_pct", "name": "R", "multiplier_pct": 105.0},),
             tier_bonuses=({"kind": "multiplier_pct", "name": "T", "multiplier_pct": 103.0},),
@@ -1117,9 +1106,6 @@ class TestBonusConcatRateThenTier:
         assert total == pytest.approx(0.815, rel=1e-6)
 
     def test_tier_bonuses_empty_handled(self):
-        from custom_components.bfe_rueckliefertarif.importer import (
-            _resolve_bonuses_for_hour_detailed,
-        )
         cfg = self._cfg(
             bonuses=({"kind": "additive_rp_kwh", "name": "R", "rate_rp_kwh": 0.5},),
             tier_bonuses=(),
