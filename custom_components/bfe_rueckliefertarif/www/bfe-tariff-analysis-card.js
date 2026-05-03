@@ -98,7 +98,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
 
     const now = new Date();
     this._year = now.getFullYear();
-    this._quarter = Math.floor(now.getMonth() / 3) + 1;
+    this._quarter = this._quarterOfDate(now);
 
     // Chart-side state — independent of detail-view selectors.
     // Custom preset uses range_from_date/range_to_date (HTML5 date pickers);
@@ -136,7 +136,7 @@ class BfeTariffAnalysisCard extends HTMLElement {
     const out = { granularity: cs.granularity };
     const now = new Date();
     const curYear = now.getFullYear();
-    const curQ = Math.floor(now.getMonth() / 3) + 1;
+    const curQ = this._quarterOfDate(now);
 
     if (cs.range_preset === "custom") {
       // Derive quarter range from date pickers; client filter trims rows
@@ -148,9 +148,8 @@ class BfeTariffAnalysisCard extends HTMLElement {
         out.from_year = curYear; out.from_quarter = curQ;
         out.to_year = curYear;   out.to_quarter = curQ;
       } else {
-        const qOf = (d) => Math.floor(d.getMonth() / 3) + 1;
-        out.from_year = from.getFullYear(); out.from_quarter = qOf(from);
-        out.to_year   = to.getFullYear();   out.to_quarter   = qOf(to);
+        out.from_year = from.getFullYear(); out.from_quarter = this._quarterOfDate(from);
+        out.to_year   = to.getFullYear();   out.to_quarter   = this._quarterOfDate(to);
       }
       return out;
     }
@@ -939,6 +938,10 @@ class BfeTariffAnalysisCard extends HTMLElement {
     const s = this.shadowRoot.querySelector("#chart-stack");
     if (r) r.innerHTML = html;
     if (s) s.innerHTML = html;
+  }
+
+  _quarterOfDate(d) {
+    return Math.floor(d.getMonth() / 3) + 1;
   }
 
   // Trim already-sorted rows to the calendar window implied by the active
