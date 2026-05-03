@@ -39,6 +39,10 @@ def _make_coordinator(statistic_id: str | None = "sensor.power_meter_exported"):
     return coord
 
 
+async def _async_noop(*args, **kwargs):
+    return None
+
+
 _ZERO_ROWS = {datetime(2025, 9, 1, h, tzinfo=UTC): 0.0 for h in range(3)}
 _REAL_ROWS = {
     datetime(2025, 9, 1, 12, tzinfo=UTC): 1.5,
@@ -143,10 +147,7 @@ class TestCoordinatorAutoImportSkipsPreValidFrom:
         }
         coord._imported = {}
 
-        async def _fake_notify(*args, **kwargs):
-            return None
-
-        coord._notify_skipped_quarters = _fake_notify
+        coord._notify_skipped_quarters = _async_noop
 
         called: list[Quarter] = []
 
@@ -183,10 +184,7 @@ class TestCoordinatorAutoImportSkipsPreValidFrom:
         }
         coord._imported = {}
 
-        async def _fake_notify(*args, **kwargs):
-            return None
-
-        coord._notify_skipped_quarters = _fake_notify
+        coord._notify_skipped_quarters = _async_noop
 
         called: list[Quarter] = []
 
@@ -229,10 +227,7 @@ class TestRecomputeNotificationGate:
         coord.quarterly = {}  # No past quarters published.
         coord._imported = {}
 
-        async def _fake_notify(*args, **kwargs):
-            return None
-
-        coord._notify_skipped_quarters = _fake_notify
+        coord._notify_skipped_quarters = _async_noop
         # Force "config changed" so the running-quarter estimate runs and
         # the new gate condition fires.
         coord._running_q_config_changed = MagicMock(return_value=True)
@@ -278,10 +273,7 @@ class TestRecomputeNotificationGate:
         coord.quarterly = {}
         coord._imported = {}
 
-        async def _fake_notify(*args, **kwargs):
-            return None
-
-        coord._notify_skipped_quarters = _fake_notify
+        coord._notify_skipped_quarters = _async_noop
         coord._running_q_config_changed = MagicMock(return_value=False)
 
         notify_calls: list[tuple] = []
