@@ -1,7 +1,7 @@
 """External tariff database — JSON loader + lookup helpers.
 
-The bundled `data/tariffs.json` is the v0.5 source-of-truth; Phase 6 layers a
-companion-repo runtime fetch on top with the same shape. All math in
+The bundled `data/tariffs.json` is the source-of-truth; a companion-repo
+runtime fetch layers on top with the same shape. All math in
 tariff.py / importer.py / coordinator.py / services.py flows through the
 helpers here so adding a utility or adjusting a federal floor is a JSON-only
 change.
@@ -29,7 +29,7 @@ from typing import Any
 
 _BUNDLED_DATA_PATH = Path(__file__).parent / "data" / "tariffs.json"
 
-# Phase 6: data_coordinator may set an override path pointing at the
+# data_coordinator may set an override path pointing at the
 # .storage/-cached remote tariffs.json. None = bundled.
 _OVERRIDE_PATH: Path | None = None
 
@@ -51,11 +51,11 @@ class ResolvedTariff:
     hkn_rp_kwh: float
     hkn_structure: str              # "additive_optin" | "bundled" | "none"
 
-    # v0.22.0 — schema 1.5.0 dropped `cap_mode`. Cap activation is signaled
-    # solely by a non-empty ``cap_rules`` array at the rate-window level;
-    # the resolver evaluates ``find_rule(cap_rules, kw, ev)`` and exposes
-    # the resulting cap. ``None`` here = no cap (either no ``cap_rules``,
-    # an empty array, or no rule covered (kw, ev)).
+    # Cap activation is signaled solely by a non-empty ``cap_rules`` array
+    # at the rate-window level; the resolver evaluates
+    # ``find_rule(cap_rules, kw, ev)`` and exposes the resulting cap.
+    # ``None`` here = no cap (either no ``cap_rules``, an empty array, or
+    # no rule covered (kw, ev)).
     cap_rp_kwh: float | None
 
     federal_floor_rp_kwh: float | None
@@ -64,7 +64,7 @@ class ResolvedTariff:
     price_floor_rp_kwh: float | None
 
     tariffs_json_version: str
-    tariffs_json_source: str        # "remote" | "bundled" — Phase 6 fills "remote"
+    tariffs_json_source: str        # "remote" | "bundled"
 
     # HT/NT day-of-week + hour windows for fixed_ht_nt utilities. Shape:
     # {"mofr": [start_h, end_h] | None, "sa": ..., "su": ...}. None for any
@@ -79,44 +79,43 @@ class ResolvedTariff:
     # None means no seasonal overlay; tier rates apply year-round.
     seasonal: dict | None = None
 
-    # v0.9.9 — rate-window-level notes filtered to ``at_date``. Each entry:
+    # Rate-window-level notes filtered to ``at_date``. Each entry:
     # ``{"valid_from": iso|None, "valid_to": iso|None, "severity":
     # "info"|"warning"|"error", "text": {lang: str}}``. ``None`` when the
     # rate window has no notes; empty list when notes exist but are all
     # outside the ``at_date`` window.
     notes: tuple[dict, ...] | None = None
 
-    # v0.10.0 — rate-window-level bonuses. Each entry carries
+    # Rate-window-level bonuses. Each entry carries
     # ``{"kind": "additive_rp_kwh"|"multiplier_pct", "name": str,
     # "applies_when": "always"|"opt_in"}`` plus ``rate_rp_kwh`` (additive)
     # or ``multiplier_pct`` (multiplier), and may include ``"note"`` and
-    # ``"when"`` (a strict when_clause). v0.11.0 (Batch D) evaluates the
+    # ``"when"`` (a strict when_clause). The resolver evaluates the
     # ``when`` clause + ``kind`` per hour. ``None`` for "nothing to show" —
     # both missing key and empty array collapse to ``None``.
     bonuses: tuple[dict, ...] | None = None
 
-    # v0.11.0 (Batch D) — declarations of user-supplied toggles for the
-    # active rate window. Each entry follows the schema's ``user_input``
-    # shape: ``{"key": str, "type": "enum"|"boolean", "default": str|bool,
+    # Declarations of user-supplied toggles for the active rate window.
+    # Each entry follows the schema's ``user_input`` shape:
+    # ``{"key": str, "type": "enum"|"boolean", "default": str|bool,
     # "label_de": str, ...}``. Used by config_flow for dynamic form
     # rendering and by the per-hour resolver to default any user choice
     # that wasn't supplied. ``None`` when the rate window declares nothing.
     user_inputs_decl: tuple[dict, ...] | None = None
 
-    # v0.11.0 (Batch D) — power-tier-level conditional HKN overrides.
-    # Each entry carries ``{"when": when_clause, "rp_kwh": float,
-    # "note"?: str}``. First match wins per hour; falls through to the
-    # static ``hkn_rp_kwh`` field. ``None`` when the matched tier
-    # declares no cases.
+    # Power-tier-level conditional HKN overrides. Each entry carries
+    # ``{"when": when_clause, "rp_kwh": float, "note"?: str}``. First
+    # match wins per hour; falls through to the static ``hkn_rp_kwh``
+    # field. ``None`` when the matched tier declares no cases.
     hkn_cases: tuple[dict, ...] | None = None
 
-    # v0.11.0 (Batch D) — the matched tier's ``applies_when`` clause,
-    # retained raw for downstream introspection (e.g. notification
-    # config-block "active because: tariff_model=ht"). ``None`` when the
-    # matched tier has no clause (the unconditional default tier).
+    # The matched tier's ``applies_when`` clause, retained raw for
+    # downstream introspection (e.g. notification config-block "active
+    # because: tariff_model=ht"). ``None`` when the matched tier has no
+    # clause (the unconditional default tier).
     tier_applies_when: dict | None = None
 
-    # v0.22.0 — schema 1.5.0 rate-level HKN defaults. When a tier omits
+    # Schema 1.5.0 rate-level HKN defaults. When a tier omits
     # ``hkn_structure`` / ``hkn_rp_kwh``, the resolver inherits these
     # values into ``hkn_structure`` / ``hkn_rp_kwh`` above. The defaults
     # are also retained verbatim so downstream consumers (curator UIs,
@@ -125,13 +124,12 @@ class ResolvedTariff:
     hkn_structure_default: str = "none"
     hkn_rp_kwh_default: float | None = None
 
-    # v0.23.0 — schema 1.6.0 tier-level bonuses (additive). Concatenated
-    # AFTER rate-level bonuses; ``multiplier_pct`` stacking is multiplicative
+    # Schema 1.6.0 tier-level bonuses (additive). Concatenated AFTER
+    # rate-level bonuses; ``multiplier_pct`` stacking is multiplicative
     # (rate first, then tier compounds on the rate-modified base).
-    # Tier-level seasonal-as-overlay (v0.22.0 ``tier_seasonal``) was dropped:
-    # ``base_model == "fixed_seasonal"`` now signals tier-level seasonal as
-    # the authoritative base price, and the resolver writes that block into
-    # ``seasonal`` directly.
+    # ``base_model == "fixed_seasonal"`` signals tier-level seasonal as
+    # the authoritative base price, and the resolver writes that block
+    # into ``seasonal`` directly.
     tier_bonuses: tuple[dict, ...] | None = None
 
 
@@ -321,7 +319,7 @@ def self_consumption_relevant(
     utility = db.get("utilities", {}).get(utility_key)
     if utility is not None:
         rate = find_active(utility.get("rates") or [], valid_date)
-        # v0.22.0 — schema 1.5.0: cap activation = non-empty `cap_rules`.
+        # Cap activation = non-empty `cap_rules`.
         if rate is not None and rate.get("cap_rules"):
             cap_rules = rate["cap_rules"]
             if find_rule(cap_rules, kw, True) is not find_rule(cap_rules, kw, False):
@@ -393,7 +391,7 @@ def pick_value_label(decl: dict, value: str, lang: str) -> str:
     return str(labels.get(value, value))
 
 
-# v0.17.0 — display labels for tariff model + settlement period enums.
+# Display labels for tariff model + settlement period enums.
 # The schema defines these as raw enum strings (no localisation fields),
 # so we hard-code the display tables here. French falls back to English.
 _TARIFF_MODEL_LABELS: dict[str, dict] = {
@@ -613,8 +611,7 @@ def evaluate_federal_floor(rule: dict, kw: float) -> float | None:
 def floor_label(rule: dict) -> str:
     """Human-readable bucket label rendered from a federal-minimum rule.
 
-    Output in DE (the integration's default; FR/EN translation is a v0.6
-    polish):
+    Output in DE (the integration's default; FR/EN translation pending):
       "<30 kW"
       "30–<150 kW mit Eigenverbrauch"
       "30–<150 kW ohne Eigenverbrauch"
@@ -726,17 +723,17 @@ def resolve_tariff_at(
         )
 
     seasonal = rate.get("seasonal")
-    # v0.23.0 — schema 1.6.0: ``base_model == "fixed_seasonal"`` makes the
-    # tier-level seasonal block the authoritative source of both prices and
-    # the summer/winter calendar (per Q1 decision). Rate-level seasonal is
-    # ignored for these tiers. The schema's allOf rule guarantees the tier
-    # has a seasonal block when this base_model is selected.
+    # ``base_model == "fixed_seasonal"`` makes the tier-level seasonal
+    # block the authoritative source of both prices and the summer/winter
+    # calendar (per Q1 decision). Rate-level seasonal is ignored for these
+    # tiers. The schema's allOf rule guarantees the tier has a seasonal
+    # block when this base_model is selected.
     if tier["base_model"] == "fixed_seasonal":
         seasonal = tier["seasonal"]
-    # Batch D: seasonal blocks now serve two purposes — (1) per-season rate
-    # variation for fixed_flat / fixed_ht_nt (legacy), and (2) season
-    # classification for ``hkn_cases[].when.season`` / ``bonuses[].when.season``
-    # in any base_model. A "classification-only" seasonal block carries
+    # Seasonal blocks serve two purposes — (1) per-season rate variation
+    # for fixed_flat / fixed_ht_nt, and (2) season classification for
+    # ``hkn_cases[].when.season`` / ``bonuses[].when.season`` in any
+    # base_model. A "classification-only" seasonal block carries
     # ``summer_months`` and ``winter_months`` but no rate keys; that's
     # always allowed. A seasonal block with rate keys (summer_rp_kwh /
     # winter_rp_kwh / summer_ht_rp_kwh / etc.) is still incompatible with
@@ -758,8 +755,8 @@ def resolve_tariff_at(
                 f"{tier['base_model']!r}"
             )
 
-    # v0.22.0 — schema 1.5.0: cap activation by non-empty `cap_rules` only.
-    # `[]` (empty array) and missing key both → no cap.
+    # Cap activation by non-empty `cap_rules` only. `[]` (empty array)
+    # and missing key both → no cap.
     cap_rp_kwh: float | None = None
     if rate.get("cap_rules"):
         cap_rule = find_rule(rate["cap_rules"], kw, eigenverbrauch)
@@ -793,10 +790,10 @@ def resolve_tariff_at(
 
     tier_applies_when = tier.get("applies_when") or None
 
-    # v0.22.0 — schema 1.5.0 rate-level HKN defaults. When a tier omits
-    # `hkn_structure` / `hkn_rp_kwh`, the resolver inherits the rate-level
-    # default. Curators dedupe homogeneous tiers in the importer pipeline
-    # by lifting common values to the rate-level default; heterogeneous
+    # Rate-level HKN defaults. When a tier omits `hkn_structure` /
+    # `hkn_rp_kwh`, the resolver inherits the rate-level default.
+    # Curators dedupe homogeneous tiers in the importer pipeline by
+    # lifting common values to the rate-level default; heterogeneous
     # tiers each declare their own. Schema (oneOf: [number, null]) permits
     # null/missing for `hkn_rp_kwh` in {"none", "bundled"} — those tiers
     # don't carry an additive HKN bonus, so the value is "not applicable".
@@ -810,11 +807,9 @@ def resolve_tariff_at(
         raw_hkn = rate_hkn_rp_kwh_default
     hkn_rp_kwh_value = float(raw_hkn) if raw_hkn is not None else 0.0
 
-    # v0.23.0 — schema 1.6.0 tier-level bonuses (additive overlay).
-    # Concatenated after rate-level ``bonuses`` at evaluation time;
-    # ``multiplier_pct`` stacks multiplicatively in iteration order.
-    # The v0.22.0 ``tier_seasonal`` companion field was dropped: see
-    # the seasonal-routing block above.
+    # Tier-level bonuses (additive overlay). Concatenated after
+    # rate-level ``bonuses`` at evaluation time; ``multiplier_pct`` stacks
+    # multiplicatively in iteration order.
     raw_tier_bonuses = tier.get("bonuses")
     tier_bonuses_loaded: tuple[dict, ...] | None = (
         tuple(raw_tier_bonuses) if raw_tier_bonuses else None
@@ -856,7 +851,7 @@ def list_utility_keys(data: dict[str, Any] | None = None) -> list[str]:
 
 
 def _utility_display_name_from(util: dict | None) -> str:
-    """Best-effort display name for a parsed utility dict. v0.17.0."""
+    """Best-effort display name for a parsed utility dict."""
     if not isinstance(util, dict):
         return "—"
     return (
@@ -869,7 +864,7 @@ def _utility_display_name_from(util: dict | None) -> str:
 
 def diff_tariffs_data(old: dict | None, new: dict | None) -> dict:
     """Compare two parsed tariffs.json dicts and return a structured diff
-    surface for the refresh-prices notification (v0.17.0).
+    surface for the refresh-prices notification.
 
     Returns:
         ``{
