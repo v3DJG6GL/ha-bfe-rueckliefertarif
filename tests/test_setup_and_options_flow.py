@@ -1233,6 +1233,13 @@ class TestFirstTimeSetupSplitFlow:
         flow.hass.data = {DOMAIN: {"_tariffs_data": tdc_stub}}
         return flow
 
+    def _set_pick(self, flow, kw):
+        flow._setup_pick = {
+            CONF_ENERGIEVERSORGER: "aew",
+            CONF_VALID_FROM: "2026-04-01",
+            CONF_INSTALLIERTE_LEISTUNG_KWP: kw,
+        }
+
     @pytest.mark.asyncio
     async def test_pick_kw_required_rejected(self):
         flow = self._make_flow("aew")
@@ -1293,11 +1300,7 @@ class TestFirstTimeSetupSplitFlow:
         # remain valid. The fixpreis_rmp dropdown should expose three
         # options — everything except "fixpreis".
         flow = self._make_flow("aew")
-        flow._setup_pick = {
-            CONF_ENERGIEVERSORGER: "aew",
-            CONF_VALID_FROM: "2026-04-01",
-            CONF_INSTALLIERTE_LEISTUNG_KWP: 50.0,
-        }
+        self._set_pick(flow, 50.0)
         result = await flow.async_step_tariff_details(None)
         assert result["step_id"] == "tariff_details"
         for k, v in result["data_schema"].schema.items():
@@ -1314,11 +1317,7 @@ class TestFirstTimeSetupSplitFlow:
         # (fixed_flat 2..30, rmp_quartal 2..3000, fixed_seasonal 0..∞ ×2),
         # so the kw-aware filter should expose all four enum options.
         flow = self._make_flow("aew")
-        flow._setup_pick = {
-            CONF_ENERGIEVERSORGER: "aew",
-            CONF_VALID_FROM: "2026-04-01",
-            CONF_INSTALLIERTE_LEISTUNG_KWP: 15.0,
-        }
+        self._set_pick(flow, 15.0)
         result = await flow.async_step_tariff_details(None)
         for k, v in result["data_schema"].schema.items():
             if str(k) == "fixpreis_rmp":
@@ -1336,11 +1335,7 @@ class TestFirstTimeSetupSplitFlow:
         # to entities AND stash the pre-built OPT_CONFIG_HISTORY records
         # in self._setup_history (consumed by async_step_entities).
         flow = self._make_flow("aew")
-        flow._setup_pick = {
-            CONF_ENERGIEVERSORGER: "aew",
-            CONF_VALID_FROM: "2026-04-01",
-            CONF_INSTALLIERTE_LEISTUNG_KWP: 15.0,
-        }
+        self._set_pick(flow, 15.0)
         result = await flow.async_step_tariff_details(
             {
                 CONF_EIGENVERBRAUCH_AKTIVIERT: True,
