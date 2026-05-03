@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, date
+from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING
 
 from .bfe import BfePrice, PriceNotYetPublishedError, fetch_monthly, fetch_quarterly
@@ -383,10 +383,10 @@ async def _reimport_quarter(
         old_first_post = None
     else:
         anchor = await read_compensation_anchor(
-            hass, comp_id, q_start - _one_hour()
+            hass, comp_id, q_start - timedelta(hours=1)
         )
         post_sums = await read_post_quarter_sums(
-            hass, comp_id, q_end, q_end + _one_hour() * 24 * 365
+            hass, comp_id, q_end, q_end + timedelta(days=365)
         )
         old_first_post = post_sums[0][1] if post_sums else None
 
@@ -904,12 +904,6 @@ def _record_snapshot(
     hass.async_create_task(coordinator._async_save_state())
 
 
-def _one_hour() -> timedelta:
-    from datetime import timedelta
-
-    return timedelta(hours=1)
-
-
 async def _reimport_all_history(hass: HomeAssistant) -> dict:
     """Re-import every quarter BFE has published, then estimate the running quarter.
 
@@ -1120,7 +1114,7 @@ async def _import_running_quarter_estimate(
         anchor = anchor_override
     else:
         anchor = await read_compensation_anchor(
-            hass, comp_id, q_start_utc - _one_hour()
+            hass, comp_id, q_start_utc - timedelta(hours=1)
         )
 
     hour_records: list[HourRecord] = []
