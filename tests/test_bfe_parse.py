@@ -29,26 +29,27 @@ def monthly_csv() -> str:
 
 
 class TestQuarterlyParse:
-    def test_parses_known_rows(self, quarterly_csv):
+    @pytest.mark.parametrize(
+        ("quarter", "expected_chf_per_mwh", "days"),
+        [
+            # Q1 2026 = 102.66 CHF/MWh (verified against briefing)
+            pytest.param(Quarter(2026, 1), 102.66, 90, id="q1_2026"),
+            pytest.param(Quarter(2024, 1), 61.97, None, id="q1_2024"),
+            pytest.param(Quarter(2025, 1), 103.80, None, id="q1_2025"),
+        ],
+    )
+    def test_parses_quarterly_prices(self, quarterly_csv, quarter, expected_chf_per_mwh, days):
         prices = parse_quartalspreise(quarterly_csv)
-        # Q1 2026 = 102.66 CHF/MWh (verified against briefing)
-        assert Quarter(2026, 1) in prices
-        assert prices[Quarter(2026, 1)].chf_per_mwh == pytest.approx(102.66)
-        assert prices[Quarter(2026, 1)].days == 90
+        assert quarter in prices
+        assert prices[quarter].chf_per_mwh == pytest.approx(expected_chf_per_mwh)
+        if days is not None:
+            assert prices[quarter].days == days
 
     def test_parses_multiple_years(self, quarterly_csv):
         prices = parse_quartalspreise(quarterly_csv)
         assert Quarter(2024, 1) in prices
         assert Quarter(2024, 2) in prices
         assert Quarter(2025, 1) in prices
-
-    def test_q1_2024(self, quarterly_csv):
-        prices = parse_quartalspreise(quarterly_csv)
-        assert prices[Quarter(2024, 1)].chf_per_mwh == pytest.approx(61.97)
-
-    def test_q1_2025(self, quarterly_csv):
-        prices = parse_quartalspreise(quarterly_csv)
-        assert prices[Quarter(2025, 1)].chf_per_mwh == pytest.approx(103.80)
 
 
 class TestMonthlyParse:
